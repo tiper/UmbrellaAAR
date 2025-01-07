@@ -88,11 +88,29 @@ When developing a multi-module Kotlin Multiplatform project with an Android libr
 
 Add the repository on your `settings.gradle` (Kotlin DSL example):
 
+GitHub (requires authentication):
+> **Note**: GitHub packages still requires authentication althought the pakcages are completely public.
 ```kotlin
 pluginManagement {
    repositories {
       maven {
          url = uri("https://maven.pkg.github.com/tiper/UmbrellaAAR")
+         credentials {
+            username = "<your_github_username>"
+            password = "<your_github_token>"
+         }
+      }
+   }
+}
+```
+
+Jitpack (no authentication) :
+```kotlin
+pluginManagement {
+   repositories {
+      maven {
+         url = uri("https://jitpack.io")
+         content { includeGroup("com.github.tiper.umbrellaaar") }
       }
    }
 }
