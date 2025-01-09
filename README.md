@@ -253,3 +253,16 @@ Bytecode manipulation is extremely powerful but can be hazardous:
 
 **Enjoy your single, merged artifact—just keep in mind that merging local modules introduces complexity that must be managed through careful testing and naming conventions!**
 
+```
+When the module shines, we shine together
+Told you I'll be here forever
+Said I'll always be your friend
+Took an oath, I'ma stick it out to the end
+Now that it's raining more than ever
+Know that we'll still have each other
+You can stand under my umbrella
+You can stand under my umbrella, AAR, AAR, AAR, AAR, AAR
+Under my umbrella, ella, ella, AAR, AAR, AAR
+Under my umbrella, ella, ella, AAR, AAR, AAR
+Under my umbrella, ella, ella, AAR, AAR, AAR, AAR, AAR, AAR
+```
