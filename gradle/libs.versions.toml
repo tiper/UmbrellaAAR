@@ -8,6 +8,5 @@ android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref
 android-tools-common = { module = "com.android.tools:common", version.ref = "android-tools" }
 asm-commons = { module = "org.ow2.asm:asm-commons", version.ref = "asm-commons" }
 
-
 [plugins]
 android-library = { id = "com.android.library", version.ref = "agp" }
