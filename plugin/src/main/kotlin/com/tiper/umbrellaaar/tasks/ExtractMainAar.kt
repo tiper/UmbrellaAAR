@@ -25,6 +25,10 @@ internal abstract class ExtractMainAar : DefaultTask() {
     @get:OutputDirectory
     abstract val unpackedAarDir: DirectoryProperty
 
+    init {
+        outputs.upToDateWhen { false }
+    }
+
     @TaskAction
     fun execute() {
         val outDir = classesOutputDir.get().asFile
@@ -39,6 +43,6 @@ internal abstract class ExtractMainAar : DefaultTask() {
         aarFile.extractJar(to = temporaryDir)?.unzip(to = outDir) {
             !it.isDirectory && it.name.endsWith(".class")
         }
-        aarFile.unzip(aarDir) { true }
+        aarFile.unzip(aarDir) { !it.isDirectory }
     }
 }

@@ -54,13 +54,7 @@ internal abstract class MergeResources : DefaultTask() {
                         to = mainManifest, packageOverride = mainManifest.removePackage(),
                     )
 
-                    destFile.exists() -> srcFile.duplicate(
-                        to = destFile, name = subLibFolder.name,
-                    ).also {
-                        logger.warn(
-                            "Resource duplicate detected: ${destFile.relativeTo(mainResDir)}."
-                        )
-                    }
+                    destFile.exists() -> throw GradleException("Resource duplicate detected: ${destFile.name}.")
 
                     else -> destFile.parentFile.mkdirs().also {
                         srcFile.copyTo(destFile, overwrite = true)

@@ -79,7 +79,7 @@ class UmbrellaAar : Plugin<Project> {
         val extractResources = tasks.register<ExtractResources>("extract${buildTypeCapitalized}Resources") {
             dependsOn(ensureDependencies)
             dependencyAars.from(ensureDependencies.map { it.outputs.files })
-            dependencyResOutputDir.convention(
+            resourcesOutputDir.convention(
                 layout.buildDirectory.dir("intermediates/umbrellaaar/$buildType/dependencies/res")
             )
         }
@@ -96,7 +96,7 @@ class UmbrellaAar : Plugin<Project> {
 
         val mergeResources = tasks.register<MergeResources>("merge${buildTypeCapitalized}UmbrellaAarResources") {
             dependsOn(extractResources, extractMain)
-            dependencyResDir.set(extractResources.flatMap { it.dependencyResOutputDir })
+            dependencyResDir.set(extractResources.flatMap { it.resourcesOutputDir })
             mainAarUnpackedDir.set(extractMain.flatMap { it.unpackedAarDir })
         }
 

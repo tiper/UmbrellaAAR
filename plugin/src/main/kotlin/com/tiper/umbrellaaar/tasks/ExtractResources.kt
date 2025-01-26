@@ -20,11 +20,11 @@ internal abstract class ExtractResources : DefaultTask() {
     abstract val dependencyAars: ConfigurableFileCollection
 
     @get:OutputDirectory
-    abstract val dependencyResOutputDir: DirectoryProperty
+    abstract val resourcesOutputDir: DirectoryProperty
 
     @TaskAction
     fun execute() {
-        val baseDir = dependencyResOutputDir.get().asFile
+        val baseDir = resourcesOutputDir.get().asFile
         baseDir.deleteRecursively()
         baseDir.mkdirs()
 
