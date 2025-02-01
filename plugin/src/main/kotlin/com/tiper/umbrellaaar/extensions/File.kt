@@ -5,29 +5,27 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
-internal fun File.extractJar(to: File): File? {
-    if (exists()) {
-        ZipFile(this).use { zip ->
-            zip.getEntry("classes.jar")?.let { entry ->
-                return File(to, "${nameWithoutExtension}-classes.jar").apply {
-                    zip.getInputStream(entry).use { outputStream().use(it::copyTo) }
-                }
-            }
-        }
-    }
-    return null
-}
-
-internal fun File.unzip(to: File, predicate: (ZipEntry) -> Boolean = { true }) {
+internal fun File.unzip(
+    to: File,
+    transformer: (ByteArray) -> ByteArray = { it },
+    predicate: ZipFile.(ZipEntry) -> Boolean = { true },
+): File {
     ZipFile(this).use { zip ->
         zip.entries().asSequence()
-            .filter(predicate)
+            .filter { zip.predicate(it) }
             .forEach { entry ->
-                zip.getInputStream(entry).use {
-                    File(to, entry.name).apply { parentFile.mkdirs() }.outputStream().use(it::copyTo)
+                zip.getInputStream(entry).use { input ->
+                    File(to, entry.name).apply { parentFile.mkdirs() }.outputStream().use { output ->
+                        output.write(
+                            input.readBytes().let {
+                                if (entry.name.endsWith(".class")) transformer(it) else it
+                            }
+                        )
+                    }
                 }
             }
     }
+    return this
 }
 
 internal fun File.zip(to: File) {

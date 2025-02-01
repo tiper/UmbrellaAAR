@@ -6,16 +6,21 @@ import com.android.utils.ILogger
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.logging.Logger
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.RELATIVE
 import org.gradle.api.tasks.TaskAction
 import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 @CacheableTask
-internal abstract class MergeResources : DefaultTask() {
+abstract class MergeDependencies : DefaultTask() {
 
     private companion object {
         val pattern = """\s+package\s*=\s*"([^"]+)"""".toRegex()
@@ -23,26 +28,36 @@ internal abstract class MergeResources : DefaultTask() {
 
     @get:InputDirectory
     @get:PathSensitive(RELATIVE)
-    abstract val dependencyResDir: DirectoryProperty
+    abstract val dependencies: DirectoryProperty
 
     @get:InputDirectory
     @get:PathSensitive(RELATIVE)
-    abstract val mainAarUnpackedDir: DirectoryProperty
+    abstract val mainAarDir: DirectoryProperty
+
+    @get:OutputFile
+    abstract val mergedJar: RegularFileProperty
+
+    init {
+        outputs.upToDateWhen { false }
+    }
 
     @TaskAction
     fun execute() {
-        val mainResDir = mainAarUnpackedDir.get().asFile
-        val mainManifest = File(mainResDir, "AndroidManifest.xml")
+        val main = mainAarDir.get().asFile
+        val manifest = File(main, "AndroidManifest.xml")
 
-        dependencyResDir.get().asFile.listFiles()?.forEach { subLibFolder ->
+        dependencies.get().asFile.listFiles()?.forEach { subLibFolder ->
             if (!subLibFolder.isDirectory) return@forEach
 
             subLibFolder.walk().filter { it.isFile }.forEach { srcFile ->
                 val relativePath = srcFile.relativeTo(subLibFolder).path.replace("\\", "/")
-                val destFile = File(mainResDir, relativePath)
+                val destFile = File(main, relativePath)
 
                 when {
                     relativePath.startsWith("res/values") -> srcFile.copyValues(
+                        owner = subLibFolder.name, to = destFile,
+                    )
+                    relativePath.endsWith(".kotlin_module") -> srcFile.copyValues(
                         owner = subLibFolder.name, to = destFile,
                     )
 
@@ -51,7 +66,7 @@ internal abstract class MergeResources : DefaultTask() {
                     )
 
                     relativePath.endsWith("AndroidManifest.xml") -> srcFile.mergeManifest(
-                        to = mainManifest, packageOverride = mainManifest.removePackage(),
+                        to = manifest, packageOverride = manifest.removePackage(),
                     )
 
                     destFile.exists() -> throw GradleException("Resource duplicate detected: ${destFile.name}.")
@@ -63,7 +78,22 @@ internal abstract class MergeResources : DefaultTask() {
             }
         }
 
-        logger.lifecycle("Merged dependency `res/` folders into: ${mainResDir.absolutePath}")
+        logger.lifecycle("Dependencies merged into: ${main.absolutePath}")
+        val jar = mergedJar.get().asFile.apply {
+            if (exists()) delete()
+        }
+        val classes = File(main, "classes")
+        logger.lifecycle("Building classes jar.")
+        ZipOutputStream(FileOutputStream(jar)).use { zos ->
+            classes.walk().filter { it.isFile }.forEach { classFile ->
+                val entryName = classFile.relativeTo(classes).path.replace("\\", "/")
+                zos.putNextEntry(ZipEntry(entryName))
+                classFile.inputStream().use { it.copyTo(zos) }
+                zos.closeEntry()
+            }
+        }
+        classes.deleteRecursively()
+        logger.lifecycle("classes jar created: $jar")
     }
 
     private fun File.removePackage(): String {
@@ -148,10 +178,5 @@ internal abstract class MergeResources : DefaultTask() {
     private fun File.copyR(to: File) {
         if (to.exists()) to.appendText(readText())
         else copyTo(to.also { it.parentFile.mkdirs() }, overwrite = true)
-    }
-
-    private fun File.duplicate(to: File, name: String) {
-        val newName = "$name-${to.nameWithoutExtension}.${to.extension}"
-        copyTo(File(to.parentFile, newName).also { it.parentFile.mkdirs() }, overwrite = true)
     }
 }

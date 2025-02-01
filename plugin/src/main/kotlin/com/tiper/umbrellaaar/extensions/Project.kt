@@ -8,6 +8,7 @@ internal fun Project.findAarOrAssembleTask(buildType: String) = provider {
     listOf(
         "bundle${buildType}Aar",
         "assemble${buildType}",
+        "jvmJar",
         "assemble"
     ).firstNotNullOfOrNull(tasks::findByName)
 }

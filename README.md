@@ -17,15 +17,8 @@ Below, you’ll find motivations, usage examples, advantages, disadvantages, and
    1. [Applying the Plugin](#applying-the-plugin)
    2. [Configuration & Tasks](#configuration--tasks)
 5. [Examples](#examples)
-6. [How It Works](#how-it-works)
-   1. [Extracting and Merging Resources](#extracting-and-merging-resources)
-   2. [Merging Classes](#merging-classes)
-   3. [Relocating R Classes](#relocating-r-classes)
-   4. [Bundling the Fat AAR](#bundling-the-umbrellaaar)
-   5. [Merging Sources](#merging-sources)
-   6. [ASM Considerations](#asm-considerations)
-7. [Recommendations](#recommendations)
-8. [License](#license)
+6. [Recommendations](#recommendations)
+7. [License](#license)
 
 ---
 
@@ -34,7 +27,7 @@ Below, you’ll find motivations, usage examples, advantages, disadvantages, and
 When developing a multi-module Kotlin Multiplatform project with an Android library target, you might have multiple local modules that depend on each other. Typically, you would build each library and distribute them separately. However, there are times you want to distribute just **one** AAR that includes all local sub-libraries:
 
 - **Single Artifact for Internal Distribution**: Generate one `.aar` containing everything, so internal teams don’t have to manage many modules.
-- **Unified Release**: If all modules are versioned, tested, and released in lockstep, a single “fat” artifact may simplify versioning.
+- **Unified Release**: If all modules are versioned, tested, and released in lockstep, a single “fat”/"umbrella" artifact may simplify versioning.
 - **Simplify for Consumers**: Provide a single library that includes local submodule code, so consumers don’t have to add multiple modules from your project.
 - **Optimized Multiplatform Development**: Allows Kotlin Multiplatform projects to be developed as multi-module setups to take advantage of Gradle’s parallel compilation capabilities, reducing build times.
 - **XCFramework Inspiration**: Inspired by how Kotlin Multiplatform XCFrameworks are built, but with a twist: only internal modules are merged. External dependencies are left for the consumer to resolve, avoiding conflicts and taking advantage of dependency resolution optimizations.
@@ -199,39 +192,6 @@ build/outputs/umbrellaaar/myMainLibrary-debug-sources.jar
 
 ---
 
-## How It Works
-
-### Extracting and Merging Resources
-
-Each local library’s `.aar` is extracted, and the files under `res/` are combined with your main library’s resources. The plugin attempts to handle collisions, where possible, though you should avoid conflicting resource names in your modules.
-
-### Merging Classes
-
-All `.jar` files from the local modules are extracted. These classes are merged into one `.jar`, which is then packed into the final AAR.
-
-### Relocating R Classes
-
-Local modules have their own `R` classes. This plugin employs [ASM (ObjectWeb’s Bytecode Manipulation Library)](https://asm.ow2.io/) to relocate those `R` classes to your main library’s package. This helps ensure that references to sub-library resources remain intact once everything is merged.
-
-### Bundling the Fat AAR
-
-After resources and classes are merged (with `R` classes relocated), the plugin re-zips the final directory into a single `.aar`. This artifact contains the local sub-libraries, classes, and resources.
-
-### Merging Sources
-
-The plugin can optionally produce a combined source JAR: it extracts `.java`/`.kt` files from each local module’s source JAR and merges them with the main module’s sources, helpful for debugging.
-
-### ASM Considerations
-
-Bytecode manipulation is extremely powerful but can be hazardous:
-
-- If a local module uses reflection or dynamic class loading, relocated classes might not be found under their new names.
-- Resource collisions or unusual build logic can break merging steps.
-
-**In short**: Thoroughly test your final `.aar` after merging local libraries, especially if your modules have advanced or custom code.
-
----
-
 ## Recommendations
 
 1. **Keep Local Sub-libraries Minimal**  
@@ -248,6 +208,13 @@ Bytecode manipulation is extremely powerful but can be hazardous:
 
 5. **Be Cautious with Versioning**  
    Ensure all local modules are on the same version schedule. Mismatched versions can be tricky to handle once merged.
+
+6. **ASM Considerations**  
+   Bytecode manipulation is extremely powerful but can be hazardous:
+      - If a local module uses reflection or dynamic class loading, relocated classes might not be found under their new names.
+      - Resource collisions or unusual build logic can break merging steps.
+   
+   ***In short***: Thoroughly test your final `.aar` after merging local libraries, especially if your modules have advanced or custom code.
 
 ---
 
