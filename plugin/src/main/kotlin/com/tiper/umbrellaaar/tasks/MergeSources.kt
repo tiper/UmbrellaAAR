@@ -41,8 +41,6 @@ internal abstract class MergeSources : DefaultTask() {
             }
         }
 
-        logger.lifecycle("Merging sources into: $outputJar")
-
         ZipOutputStream(FileOutputStream(outputJar)).use { zos ->
             // Dep sources
             val depRoot = dependencySources.get().asFile

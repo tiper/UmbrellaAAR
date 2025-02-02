@@ -78,12 +78,10 @@ abstract class MergeDependencies : DefaultTask() {
             }
         }
 
-        logger.lifecycle("Dependencies merged into: ${main.absolutePath}")
         val jar = mergedJar.get().asFile.apply {
             if (exists()) delete()
         }
         val classes = File(main, "classes")
-        logger.lifecycle("Building classes jar.")
         ZipOutputStream(FileOutputStream(jar)).use { zos ->
             classes.walk().filter { it.isFile }.forEach { classFile ->
                 val entryName = classFile.relativeTo(classes).path.replace("\\", "/")
@@ -93,7 +91,6 @@ abstract class MergeDependencies : DefaultTask() {
             }
         }
         classes.deleteRecursively()
-        logger.lifecycle("classes jar created: $jar")
     }
 
     private fun File.removePackage(): String {

@@ -27,6 +27,6 @@ abstract class BundleUmbrellaAar : DefaultTask() {
         val outAar = umbrellAarOutput.get().asFile.apply { parentFile.mkdirs() }
 
         unpackedDir.zip(to = outAar)
-        logger.lifecycle("Created fat AAR: ${outAar.absolutePath}")
+        logger.lifecycle("Created UmbrellaAar: ${outAar.absolutePath}")
     }
 }
