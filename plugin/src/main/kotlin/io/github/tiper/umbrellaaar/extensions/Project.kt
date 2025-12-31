@@ -1,4 +1,4 @@
-package com.tiper.umbrellaaar.extensions
+package io.github.tiper.umbrellaaar.extensions
 
 import org.gradle.api.Project
 import org.gradle.api.provider.Provider

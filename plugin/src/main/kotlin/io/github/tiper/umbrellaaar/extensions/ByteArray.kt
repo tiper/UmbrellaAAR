@@ -1,4 +1,4 @@
-package com.tiper.umbrellaaar.extensions
+package io.github.tiper.umbrellaaar.extensions
 
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassWriter

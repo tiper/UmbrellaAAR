@@ -5,8 +5,8 @@ plugins {
     id("maven-publish")
 }
 
-group = "com.github.tiper.umbrellaaar"
-version = "1.2.0"
+group = "io.github.tiper"
+version = "1.2.1"
 
 java {
     toolchain {
@@ -21,10 +21,25 @@ dependencies {
 }
 
 gradlePlugin {
+    website = "https://github.com/tiper/UmbrellaAAR"
+    vcsUrl = "https://github.com/tiper/UmbrellaAAR"
     plugins {
         create("umbrellaaar") {
-            id = "com.github.tiper.umbrellaaar"
-            implementationClass = "com.tiper.umbrellaaar.UmbrellaAar"
+            id = "io.github.tiper.umbrellaaar"
+            implementationClass = "io.github.tiper.umbrellaaar.UmbrellaAar"
+            displayName = "Umbrella AAR Plugin"
+            description = "Bundles multiple Android modules—including those from Kotlin Multiplatform projects—into a single AAR for easier distribution. Supports module exclusion, dependency extraction, and source merging for Android targets."
+            tags = listOf(
+                "kmp",
+                "kotlin-multiplatform",
+                "android",
+                "aar",
+                "bundle",
+                "multimodule",
+                "dependency-management",
+                "distribution",
+                "gradle-plugin",
+            )
         }
     }
 }

@@ -1,16 +1,16 @@
-package com.tiper.umbrellaaar
+package io.github.tiper.umbrellaaar
 
 import com.android.build.gradle.LibraryExtension
-import com.tiper.umbrellaaar.extensions.findAarOrAssembleTask
-import com.tiper.umbrellaaar.extensions.findAllProjectDependencies
-import com.tiper.umbrellaaar.extensions.findSourcesJarTask
-import com.tiper.umbrellaaar.extensions.getMainAarProvider
-import com.tiper.umbrellaaar.tasks.BundleUmbrellaAar
-import com.tiper.umbrellaaar.tasks.ExtractDependencies
-import com.tiper.umbrellaaar.tasks.ExtractMainAar
-import com.tiper.umbrellaaar.tasks.ExtractSources
-import com.tiper.umbrellaaar.tasks.MergeDependencies
-import com.tiper.umbrellaaar.tasks.MergeSources
+import io.github.tiper.umbrellaaar.extensions.findAarOrAssembleTask
+import io.github.tiper.umbrellaaar.extensions.findAllProjectDependencies
+import io.github.tiper.umbrellaaar.extensions.findSourcesJarTask
+import io.github.tiper.umbrellaaar.extensions.getMainAarProvider
+import io.github.tiper.umbrellaaar.tasks.BundleUmbrellaAar
+import io.github.tiper.umbrellaaar.tasks.ExtractDependencies
+import io.github.tiper.umbrellaaar.tasks.ExtractMainAar
+import io.github.tiper.umbrellaaar.tasks.ExtractSources
+import io.github.tiper.umbrellaaar.tasks.MergeDependencies
+import io.github.tiper.umbrellaaar.tasks.MergeSources
 import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project

@@ -1,4 +1,4 @@
-package com.tiper.umbrellaaar.extensions
+package io.github.tiper.umbrellaaar.extensions
 
 import java.io.File
 import java.util.zip.ZipEntry

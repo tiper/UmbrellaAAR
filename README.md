@@ -103,7 +103,7 @@ pluginManagement {
    repositories {
       maven {
          url = uri("https://jitpack.io")
-         content { includeGroup("com.github.tiper.umbrellaaar") }
+         content { includeGroup("io.github.tiper.umbrellaaar") }
       }
    }
 }
@@ -113,7 +113,7 @@ Add the plugin in your module-level `build.gradle` (Kotlin DSL example):
 
 ```kotlin
 plugins {
-    id("com.github.tiper.umbrellaaar")
+    id("io.github.tiper.umbrellaaar")
 }
 ```
 
@@ -156,7 +156,7 @@ plugins {
 // In your library module’s build.gradle.kts:
 plugins {
     id("com.android.library")
-    id("com.github.tiper.umbrellaaar")
+    id("io.github.tiper.umbrellaaar")
 }
 
 android {

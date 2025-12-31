@@ -1,6 +1,6 @@
-package com.tiper.umbrellaaar.tasks
+package io.github.tiper.umbrellaaar.tasks
 
-import com.tiper.umbrellaaar.extensions.unzip
+import io.github.tiper.umbrellaaar.extensions.unzip
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty

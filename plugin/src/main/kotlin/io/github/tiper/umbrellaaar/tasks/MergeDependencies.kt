@@ -1,4 +1,4 @@
-package com.tiper.umbrellaaar.tasks
+package io.github.tiper.umbrellaaar.tasks
 
 import com.android.build.gradle.internal.tasks.manifest.mergeManifests
 import com.android.manifmerger.ManifestProvider
