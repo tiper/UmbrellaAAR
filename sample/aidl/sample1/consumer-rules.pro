@@ -1,0 +1,1 @@
+# proguard export file from :aidl:sample1 module

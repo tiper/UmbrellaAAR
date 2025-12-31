@@ -4,11 +4,11 @@ plugins {
     `kotlin-dsl`
     id("com.gradle.plugin-publish") version "2.0.0"
     id("signing")
-    id("com.vanniktech.maven.publish") version "0.34.0"
+    alias(libs.plugins.vanniktech.maven.publish)
 }
 
 group = "io.github.tiper"
-version = "1.3.0"
+version = "2.0.0"
 
 java {
     toolchain {
@@ -41,6 +41,23 @@ gradlePlugin {
                 "dependency-management",
                 "distribution",
                 "gradle-plugin",
+            )
+        }
+        create("umbrellaaarpom") {
+            id = "io.github.tiper.umbrellaaar.pom"
+            implementationClass = "io.github.tiper.umbrellaaar.UmbrellaAarPom"
+            displayName = "Umbrella AAR POM Generator"
+            description = "Generates a Maven POM file for the bundled Umbrella AAR, accurately reflecting resolved Android dependencies from Kotlin Multiplatform projects and supporting advanced exclusion scenarios."
+            tags = listOf(
+                "kmp",
+                "kotlin-multiplatform",
+                "android",
+                "aar",
+                "pom",
+                "maven",
+                "dependency-management",
+                "gradle-plugin",
+                "multiplatform",
             )
         }
     }

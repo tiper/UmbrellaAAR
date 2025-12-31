@@ -3,6 +3,7 @@ package io.github.tiper.umbrellaaar.tasks
 import com.android.build.gradle.internal.tasks.manifest.mergeManifests
 import com.android.manifmerger.ManifestProvider
 import com.android.utils.ILogger
+import io.github.tiper.umbrellaaar.extensions.normalizePath
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.DirectoryProperty
@@ -45,12 +46,13 @@ abstract class MergeDependencies : DefaultTask() {
     fun execute() {
         val main = mainAarDir.get().asFile
         val manifest = File(main, "AndroidManifest.xml")
+        var filesProcessed = 0
 
         dependencies.get().asFile.listFiles()?.forEach { subLibFolder ->
             if (!subLibFolder.isDirectory) return@forEach
 
             subLibFolder.walk().filter { it.isFile }.forEach { srcFile ->
-                val relativePath = srcFile.relativeTo(subLibFolder).path.replace("\\", "/")
+                val relativePath = srcFile.relativeTo(subLibFolder).path.normalizePath()
                 val destFile = File(main, relativePath)
 
                 when {
@@ -61,36 +63,48 @@ abstract class MergeDependencies : DefaultTask() {
                         owner = subLibFolder.name, to = destFile,
                     )
 
-                    relativePath.endsWith("R.txt") -> srcFile.copyR(
+                    relativePath.endsWith("R.txt") -> srcFile.append(
                         to = destFile,
+                    )
+
+                    relativePath.endsWith(".pro") -> srcFile.append(
+                        to = File(main, "consumer-rules.pro"),
                     )
 
                     relativePath.endsWith("AndroidManifest.xml") -> srcFile.mergeManifest(
                         to = manifest, packageOverride = manifest.removePackage(),
                     )
 
+                    relativePath.endsWith("proguard.txt") -> srcFile.append(
+                        to = destFile,
+                    )
+
                     destFile.exists() -> throw GradleException("Resource duplicate detected: ${destFile.name}.")
 
-                    else -> destFile.parentFile.mkdirs().also {
+                    else -> {
+                        destFile.parentFile?.mkdirs()
                         srcFile.copyTo(destFile, overwrite = true)
                     }
                 }
+                filesProcessed++
             }
         }
 
         val jar = mergedJar.get().asFile.apply {
             if (exists()) delete()
+            parentFile.mkdirs()
         }
         val classes = File(main, "classes")
         ZipOutputStream(FileOutputStream(jar)).use { zos ->
             classes.walk().filter { it.isFile }.forEach { classFile ->
-                val entryName = classFile.relativeTo(classes).path.replace("\\", "/")
+                val entryName = classFile.relativeTo(classes).path.normalizePath()
                 zos.putNextEntry(ZipEntry(entryName))
                 classFile.inputStream().use { it.copyTo(zos) }
                 zos.closeEntry()
             }
         }
         classes.deleteRecursively()
+        logger.lifecycle("Merged dependencies into main AAR (processed $filesProcessed files)")
     }
 
     private fun File.removePackage(): String {
@@ -172,8 +186,8 @@ abstract class MergeDependencies : DefaultTask() {
         copyTo(File(to.parentFile, newName).also { it.parentFile.mkdirs() }, overwrite = true)
     }
 
-    private fun File.copyR(to: File) {
-        if (to.exists()) to.appendText(readText())
+    private fun File.append(to: File) {
+        if (to.exists()) to.appendText("\n" + readText())
         else copyTo(to.also { it.parentFile.mkdirs() }, overwrite = true)
     }
 }

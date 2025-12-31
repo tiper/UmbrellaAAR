@@ -19,4 +19,7 @@ android {
             path("CMakeLists.txt")
         }
     }
+    defaultConfig {
+        consumerProguardFiles("consumer-rules.pro")
+    }
 }
