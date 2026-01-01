@@ -2,15 +2,17 @@ import org.gradle.jvm.toolchain.JavaLanguageVersion.of
 
 plugins {
     `kotlin-dsl`
-    id("maven-publish")
+    id("com.gradle.plugin-publish") version "2.0.0"
+    id("signing")
+    id("com.vanniktech.maven.publish") version "0.34.0"
 }
 
 group = "io.github.tiper"
-version = "1.2.1"
+version = "1.3.0"
 
 java {
     toolchain {
-        languageVersion.set(of(11))
+        languageVersion = of(11)
     }
 }
 
@@ -50,27 +52,45 @@ publishing {
             name = "GitHubPackages"
             url = uri("https://maven.pkg.github.com/tiper/UmbrellaAAR")
             credentials {
-                username = providers.environmentVariable("GITHUB_USER").getOrElse("")
-                password = providers.environmentVariable("GITHUB_TOKEN").getOrElse("")
+                username = providers.environmentVariable("GITHUB_USER").orNull
+                password = providers.environmentVariable("GITHUB_TOKEN").orNull
             }
         }
     }
-    publications.withType<MavenPublication> {
-        pom {
-            description.set("Gradle plugin for Kotlin Multiplatform that merges modules from the same project into a single AAR.")
-            licenses {
-                license {
-                    name.set("Apache License 2.0")
-                    url.set("https://api.github.com/licenses/apache-2.0")
-                }
+}
+
+signing {
+    useInMemoryPgpKeys(
+        providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKey").orNull,
+        providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKeyPassword").orNull
+    )
+}
+
+mavenPublishing {
+    publishToMavenCentral()
+    coordinates(artifactId = "umbrellaaar")
+    pom {
+        name = "UmbrellaAAR"
+        description = "Gradle plugin for Kotlin Multiplatform that merges modules from the same project into a single AAR."
+        inceptionYear = "2024"
+        url = "https://github.com/tiper/UmbrellaAAR"
+        licenses {
+            license {
+                name = "Apache License 2.0"
+                url = "https://api.github.com/licenses/apache-2.0"
             }
-            developers {
-                developer {
-                    id.set("tiper")
-                    name.set("Tiago Pereira")
-                    email.set("1698241+tiper@users.noreply.github.com")
-                }
+        }
+        developers {
+            developer {
+                id = "tiper"
+                name = "Tiago Pereira"
+                email = "1698241+tiper@users.noreply.github.com"
             }
+        }
+        scm {
+            url = "https://github.com/tiper/UmbrellaAAR"
+            connection = "scm:git:git://github.com/tiper/UmbrellaAAR.git"
+            developerConnection = "scm:git:ssh://github.com/tiper/UmbrellaAAR.git"
         }
     }
 }
