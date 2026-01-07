@@ -2,6 +2,7 @@ import org.gradle.jvm.toolchain.JavaLanguageVersion.of
 
 plugins {
     `kotlin-dsl`
+    alias(libs.plugins.ktlint)
 }
 
 java {
@@ -13,6 +14,7 @@ java {
 dependencies {
     compileOnly(libs.android.gradle.plugin)
     compileOnly(libs.kotlin.gradle.plugin)
+    compileOnly(libs.ktlint.gradle.plugin)
 }
 
 gradlePlugin {
@@ -34,4 +36,8 @@ gradlePlugin {
             implementationClass = "io.github.tiper.gradle.AndroidTest"
         }
     }
+}
+
+ktlint {
+    version = libs.versions.ktlint.asProvider()
 }

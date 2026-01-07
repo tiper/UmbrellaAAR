@@ -5,11 +5,6 @@ plugins {
 
 kotlin {
     androidTarget()
-    sourceSets {
-        commonMain.dependencies {
-
-        }
-    }
 }
 
 android {

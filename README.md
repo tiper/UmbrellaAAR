@@ -2,7 +2,13 @@
 
 <img src="logo.png" alt="UmbrellaAAR Logo" width="200" />
 
-**UmbrellaAAR** is a Gradle plugin for Kotlin Multiplatform that merges **local** Android sub-libraries (modules) targets from the same project into a single AAR. This helps produce a consolidated artifact when you have multiple Android library modules internally but want to distribute them as a single `.aar`. **Note that this version of the plugin does not include external third-party AARs**—only sub-libraries that exist within the same multi-module project can be merged.
+[![Gradle Plugin Portal](https://img.shields.io/maven-metadata/v/https/plugins.gradle.org/m2/io/github/tiper/umbrellaaar/io.github.tiper.umbrellaaar.gradle.plugin/maven-metadata.xml.svg?colorB=007ec6&label=gradlePluginPortal)](https://plugins.gradle.org/plugin/io.github.tiper.umbrellaaar)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.tiper/umbrellaaar)](https://central.sonatype.com/search?q=g%3Aio.github.tiper)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Kotlin](https://img.shields.io/badge/Kotlin-1.9.10-blue.svg)](https://kotlinlang.org/)
+[![Android](https://img.shields.io/badge/Android-34-green.svg)](https://developer.android.com/)
+
+Gradle plugin for Kotlin Multiplatform that merges **local** Android sub-libraries (modules) targets from the same project into a single AAR. This helps produce a consolidated artifact when you have multiple Android library modules internally but want to distribute them as a single `.aar`. **Note that this version of the plugin does not include external third-party AARs**—only sub-libraries that exist within the same multi-module project can be merged.
 
 Below, you’ll find motivations, usage examples, advantages, disadvantages, and key notes about the risks of using ASM to relocate classes and resources.
 
@@ -136,7 +142,7 @@ pluginManagement {
 
 ### Configuration & Tasks
 
-1. **Local Dependencies**  
+1. **Local Dependencies**
    Add your **local** library modules in the plugin's dedicated configuration (e.g., `export`) so the plugin knows which modules to merge. For instance:
 
    ```kotlin
@@ -179,7 +185,7 @@ pluginManagement {
    - Collect dependencies from all merged modules
 
    **Excluding Dependencies from POM**:
-   
+
    You can exclude specific dependencies from the generated POM using standard Gradle exclusion syntax:
 
    ```kotlin
@@ -355,4 +361,22 @@ You can stand under my umbrella, AAR, AAR, AAR, AAR, AAR
 Under my umbrella, ella, ella, AAR, AAR, AAR
 Under my umbrella, ella, ella, AAR, AAR, AAR
 Under my umbrella, ella, ella, AAR, AAR, AAR, AAR, AAR, AAR
+```
+
+## License
+
+```
+Copyright 2024 Tiago Pereira
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ```
