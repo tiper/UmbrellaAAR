@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
     ktlint:
-      runs-on: macos-latest
+      runs-on: ubuntu-latest
       steps:
         - name: Checkout
           uses: actions/checkout@v4.2.2
@@ -25,6 +25,19 @@ jobs:
             cache: "gradle"
           env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        - name: Cache
+          uses: actions/cache@v4.2.0
+          with:
+            path: |
+              ~/.konan
+              /usr/local/lib/android/sdk/ndk
+            key: ${{ runner.os }}-kotlin-native-ndk-${{ hashFiles(
+              'gradle/libs.versions.toml',
+              'gradle.properties'
+              ) }}
+            restore-keys: |
+              ${{ runner.os }}-kotlin-native-ndk-
 
         - name: Run ktlint Check
           run: ./gradlew :build-logic:plugins:ktlintCheck ktlintCheck
