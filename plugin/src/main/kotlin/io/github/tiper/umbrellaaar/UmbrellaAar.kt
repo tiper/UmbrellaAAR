@@ -1,9 +1,11 @@
 package io.github.tiper.umbrellaaar
 
 import com.android.build.gradle.LibraryExtension
+import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.findAarOrAssembleTask
 import io.github.tiper.umbrellaaar.extensions.findAllProjectDependencies
 import io.github.tiper.umbrellaaar.extensions.findSourcesJarTask
+import io.github.tiper.umbrellaaar.extensions.getExcludedModuleNames
 import io.github.tiper.umbrellaaar.extensions.getMainAarProvider
 import io.github.tiper.umbrellaaar.tasks.BundleUmbrellaAar
 import io.github.tiper.umbrellaaar.tasks.ExtractDependencies
@@ -15,70 +17,72 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
-import org.gradle.api.artifacts.ProjectDependency
+import org.gradle.api.provider.Provider
 import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
-import org.gradle.kotlin.dsl.withType
 
+@Suppress("unused")
 class UmbrellaAar : Plugin<Project> {
-    companion object {
-        private const val UMBRELLAAR_CONFIG = "export"
-    }
 
     private fun Project.setup(
         buildType: String,
         config: Configuration,
-        android: LibraryExtension,
+        namespace: Provider<String?>,
     ) {
-        val buildTypeCapitalized =  buildType.replaceFirstChar { it.uppercaseChar() }
-        val ensureDependencies = tasks.register("ensure${buildTypeCapitalized}DependenciesBuilt") {
-            group = "build"
-            description = "Ensures $buildType dependencies produce AAR/JAR outputs if they have them."
-        }
-        val ensureSourcesDependencies = tasks.register("ensure${buildTypeCapitalized}SourcesDependenciesBuilt") {
-            group = "build"
-            description = "Ensures $buildType dependencies produce sources-jar outputs if they have them."
-        }
-
-        gradle.projectsEvaluated {
-            val excludedModules = config.dependencies
-                .withType<ProjectDependency>()
-                .flatMap { it.excludeRules }
-                .mapNotNull { it.module }
-                .toSet()
-
-            config.findAllProjectDependencies().forEach { depProject ->
-                val task = depProject.findAarOrAssembleTask(buildTypeCapitalized)
-                ensureDependencies.configure {
-                    dependsOn(task)
-                    if (!excludedModules.contains(depProject.name)) {
-                        outputs.files(task.map { it.outputs.files })
-                    }
-                }
-
-                val sourcesTask = depProject.findSourcesJarTask(buildTypeCapitalized)
-                ensureSourcesDependencies.configure {
-                    dependsOn(sourcesTask)
-                    if (!excludedModules.contains(depProject.name)) {
-                        outputs.files(sourcesTask.map { it.outputs.files })
-                    }
-                }
-            }
-        }
+        val buildTypeCapitalized = buildType.capitalize()
 
         val extractDependencies = tasks.register<ExtractDependencies>("extract${buildTypeCapitalized}Dependencies") {
-            dependsOn(ensureDependencies)
-            mainNamespace.convention(provider { android.namespace })
-            dependencies.from(ensureDependencies.map { it.outputs.files })
+            mainNamespace.convention(namespace)
             outputDir.convention(
-                layout.buildDirectory.dir("intermediates/umbrellaaar/$buildType/dependencies")
+                layout.buildDirectory.dir("$INTERMEDIATES_PATH/$buildType/dependencies")
             )
         }
+
+        val extractSources = tasks.register<ExtractSources>("extract${buildTypeCapitalized}Sources") {
+            extractedSourcesDir.convention(
+                layout.buildDirectory.dir("$INTERMEDIATES_PATH/$buildType/extracted-sources")
+            )
+        }
+
+        val excludedModulesProvider = provider { config.getExcludedModuleNames() }
+        val allProjectsProvider = provider { config.findAllProjectDependencies() }
+        val filteredProjectsProvider = provider {
+            val excludedModules = excludedModulesProvider.get()
+            allProjectsProvider.get().filter { it.name !in excludedModules }
+        }
+
+        extractDependencies.configure {
+            dependencies.from(
+                filteredProjectsProvider.map { projects ->
+                    projects.map { project ->
+                        project.findAarOrAssembleTask(buildTypeCapitalized).let {
+                            dependsOn(it)
+                            it.get().outputs.files
+                        }
+                    }
+                }
+            )
+        }
+
+        extractSources.configure {
+            dependencySourcesJars.from(
+                filteredProjectsProvider.map { projects ->
+                    projects.map { project ->
+                        project.findSourcesJarTask(buildTypeCapitalized).let {
+                            dependsOn(it)
+                            it.get().outputs.files
+                        }
+                    }
+                }
+            )
+        }
+
+        val aarProvider = getMainAarProvider(buildTypeCapitalized)
         val extractMain = tasks.register<ExtractMainAar>("extract${buildTypeCapitalized}MainClasses") {
             dependsOn("bundle${buildTypeCapitalized}Aar")
-            mainAar.set(layout.file(getMainAarProvider(buildTypeCapitalized)))
+            mainAar.set(layout.file(aarProvider))
             unpackedAarDir.convention(
-                layout.buildDirectory.dir("intermediates/umbrellaaar/$buildType/merged")
+                layout.buildDirectory.dir("$INTERMEDIATES_PATH/$buildType/merged")
             )
         }
 
@@ -87,49 +91,30 @@ class UmbrellaAar : Plugin<Project> {
             dependencies.set(extractDependencies.flatMap { it.outputDir })
             mainAarDir.set(extractMain.flatMap { it.unpackedAarDir })
             mergedJar.convention(
-                layout.buildDirectory.file("intermediates/umbrellaaar/$buildType/merged/classes.jar")
+                layout.buildDirectory.file("$INTERMEDIATES_PATH/$buildType/merged/classes.jar")
             )
         }
 
         tasks.register<BundleUmbrellaAar>("bundle${buildTypeCapitalized}UmbrellaAar") {
             group = "umbrellaaar"
+            description = "Bundles all merged dependencies into a single AAR for $buildType"
             dependsOn(mergeDependencies)
             unpackedMainAar.set(extractMain.flatMap { it.unpackedAarDir })
-            umbrellAarOutput.convention(
-                layout.buildDirectory.file(
-                    provider {
-                        "outputs/umbrellaaar/${
-                            layout.file(
-                                getMainAarProvider(buildTypeCapitalized)
-                            ).get().asFile.name
-                        }"
-                    }
-                )
+            umbrellaAarOutput.convention(
+                layout.buildDirectory.file("$OUTPUTS_PATH/${project.name}-${buildType}.aar")
             )
         }
 
-        val extractSources = tasks.register<ExtractSources>("extract${buildTypeCapitalized}Sources") {
-            dependsOn(ensureSourcesDependencies)
-            dependencySourcesJars.from(ensureSourcesDependencies.map { it.outputs.files })
-            extractedSourcesDir.convention(
-                layout.buildDirectory.dir("intermediates/umbrellaaar/$buildType/extracted-sources")
-            )
-        }
         val mergeSources = tasks.register<MergeSources>("merge${buildTypeCapitalized}UmbrellaAarSources") {
-            val mainSourcesJar = tasks.named("android${buildTypeCapitalized}SourcesJar")
-            dependsOn(extractSources, mainSourcesJar)
+            dependsOn(extractSources)
             dependencySources.set(extractSources.flatMap { it.extractedSourcesDir })
-            mainSourcesJars.from(mainSourcesJar.map { it.outputs.files })
+            findSourcesJarTask(buildTypeCapitalized).orNull?.let {
+                dependsOn(it)
+                mainSourcesJars.from(it.outputs.files)
+            } ?: logger.warn("[UmbrellaAar] No sources jar task found in main project for build type $buildTypeCapitalized")
+
             mergedSourcesJar.convention(
-                layout.buildDirectory.file(
-                    provider {
-                        "outputs/umbrellaaar/${
-                            layout.file(
-                                getMainAarProvider(buildTypeCapitalized)
-                            ).get().asFile.nameWithoutExtension
-                        }-sources.jar"
-                    }
-                )
+                layout.buildDirectory.file("$OUTPUTS_PATH/${project.name}-${buildType}-sources.jar")
             )
         }
 
@@ -143,13 +128,15 @@ class UmbrellaAar : Plugin<Project> {
 
     override fun apply(target: Project) = with(target) {
         plugins.withId("com.android.library") {
-            val config = configurations.create(UMBRELLAAR_CONFIG) {
+            val config = configurations.create(UMBRELLA_AAR_CONFIG) {
                 isCanBeResolved = true
                 isCanBeConsumed = false
             }
 
             val androidExt = extensions.getByType<LibraryExtension>()
-            androidExt.buildTypes.forEach { setup(it.name, config, androidExt) }
+            androidExt.buildTypes.forEach {
+                setup(it.name, config, provider { androidExt.namespace })
+            }
         }
     }
 }

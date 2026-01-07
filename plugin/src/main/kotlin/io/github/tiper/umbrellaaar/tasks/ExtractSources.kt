@@ -8,14 +8,14 @@ import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity.RELATIVE
+import org.gradle.api.tasks.PathSensitivity.NONE
 import org.gradle.api.tasks.TaskAction
 
 @CacheableTask
 internal abstract class ExtractSources : DefaultTask() {
 
     @get:InputFiles
-    @get:PathSensitive(RELATIVE)
+    @get:PathSensitive(NONE)
     abstract val dependencySourcesJars: ConfigurableFileCollection
 
     @get:OutputDirectory
@@ -24,15 +24,22 @@ internal abstract class ExtractSources : DefaultTask() {
     @TaskAction
     fun execute() {
         val outDir = extractedSourcesDir.get().asFile.also { it.mkdirs() }
+        var jarsProcessed = 0
+        var filesExtracted = 0
+
         dependencySourcesJars.forEach { jarFile ->
             if (jarFile.extension == "jar") {
-                logger.lifecycle("Extracting sources from: ${jarFile.name}")
+                logger.debug("Extracting sources from: ${jarFile.name}")
                 jarFile.unzip(to = outDir) {
-                    !it.isDirectory && (it.name.endsWith(".java") || it.name.endsWith(".kt"))
+                    val shouldInclude = !it.isDirectory && (it.name.endsWith(".java") || it.name.endsWith(".kt"))
+                    if (shouldInclude) filesExtracted++
+                    shouldInclude
                 }
+                jarsProcessed++
             } else {
-                logger.lifecycle("Ignoring non-jar file: ${jarFile.name}")
+                logger.debug("Ignoring non-jar file: ${jarFile.name}")
             }
         }
+        logger.lifecycle("Extracted sources: $filesExtracted files from $jarsProcessed JARs")
     }
 }

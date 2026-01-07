@@ -10,6 +10,7 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.RELATIVE
 import org.gradle.api.tasks.TaskAction
+import java.util.Locale.ROOT
 
 @CacheableTask
 abstract class BundleUmbrellaAar : DefaultTask() {
@@ -19,14 +20,17 @@ abstract class BundleUmbrellaAar : DefaultTask() {
     abstract val unpackedMainAar: DirectoryProperty
 
     @get:OutputFile
-    abstract val umbrellAarOutput: RegularFileProperty
+    abstract val umbrellaAarOutput: RegularFileProperty
 
     @TaskAction
     fun execute() {
         val unpackedDir = unpackedMainAar.get().asFile
-        val outAar = umbrellAarOutput.get().asFile.apply { parentFile.mkdirs() }
+        val outAar = umbrellaAarOutput.get().asFile.apply { parentFile.mkdirs() }
 
         unpackedDir.zip(to = outAar)
-        logger.lifecycle("Created UmbrellaAar: ${outAar.absolutePath}")
+
+        val fileSizeBytes = outAar.length()
+        val fileSizeMb = fileSizeBytes / (1024.0 * 1024.0)
+        logger.lifecycle("Created UmbrellaAar: ${outAar.name} (${String.format(ROOT, "%.2f", fileSizeMb)} MB, $fileSizeBytes bytes)")
     }
 }

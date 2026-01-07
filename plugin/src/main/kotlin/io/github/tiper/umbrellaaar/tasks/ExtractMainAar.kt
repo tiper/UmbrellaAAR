@@ -8,7 +8,7 @@ import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity.RELATIVE
+import org.gradle.api.tasks.PathSensitivity.NONE
 import org.gradle.api.tasks.TaskAction
 import java.io.File
 
@@ -16,15 +16,11 @@ import java.io.File
 abstract class ExtractMainAar : DefaultTask() {
 
     @get:InputFile
-    @get:PathSensitive(RELATIVE)
+    @get:PathSensitive(NONE)  // Use content-based hashing, not path-based
     abstract val mainAar: RegularFileProperty
 
     @get:OutputDirectory
     abstract val unpackedAarDir: DirectoryProperty
-
-    init {
-        outputs.upToDateWhen { false }
-    }
 
     @TaskAction
     fun execute() {
@@ -33,6 +29,7 @@ abstract class ExtractMainAar : DefaultTask() {
         aarDir.mkdirs()
 
         val aarFile = mainAar.get().asFile
+        logger.lifecycle("Extracting main AAR: ${aarFile.name}")
         aarFile.unzip(aarDir) { entry ->
             if (entry.name == "classes.jar") {
                 File(aarDir, "classes.jar").apply {
@@ -42,5 +39,6 @@ abstract class ExtractMainAar : DefaultTask() {
             }
             !entry.isDirectory
         }
+        logger.lifecycle("Extracted main AAR to: ${aarDir.absolutePath}")
     }
 }

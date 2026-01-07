@@ -11,7 +11,7 @@ import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity.RELATIVE
+import org.gradle.api.tasks.PathSensitivity.NONE
 import org.gradle.api.tasks.TaskAction
 import java.io.File
 
@@ -22,7 +22,7 @@ abstract class ExtractDependencies : DefaultTask() {
     abstract val mainNamespace: Property<String>
 
     @get:InputFiles
-    @get:PathSensitive(RELATIVE)
+    @get:PathSensitive(NONE)
     abstract val dependencies: ConfigurableFileCollection
 
     @get:OutputDirectory
@@ -34,29 +34,57 @@ abstract class ExtractDependencies : DefaultTask() {
         baseDir.deleteRecursively()
         baseDir.mkdirs()
 
+        if (dependencies.files.isEmpty()) {
+            logger.warn("No dependencies to extract")
+            return
+        }
+
+        val namespace = mainNamespace.get().replace('.', '/')
+        var aarsProcessed = 0
+        var jarsProcessed = 0
+
+        logger.lifecycle("Extracting dependencies from ${dependencies.files.size} archives")
         dependencies.files.forEach { file ->
             when(file.extension) {
-                "aar" -> file.unzip(to = File(baseDir, file.nameWithoutExtension).also { it.mkdirs() }) { entry ->
-                    if (entry.name == "classes.jar") {
-                        File(baseDir, "classes.jar").apply {
-                            getInputStream(entry).use { outputStream().use(it::copyTo) }
-                        }.unzip(
-                            to = File(baseDir, "${file.nameWithoutExtension}/classes"),
-                            transformer = {
-                                it.transformClass(mainNamespace.get().replace('.', '/'))
+                "aar" -> {
+                    try {
+                        logger.debug("Extracting AAR: ${file.name}")
+                        file.unzip(to = File(baseDir, file.nameWithoutExtension).also { it.mkdirs() }) { entry ->
+                            if (entry.name == "classes.jar") {
+                                File(baseDir, "classes.jar").apply {
+                                    getInputStream(entry).use { outputStream().use(it::copyTo) }
+                                }.unzip(
+                                    to = File(baseDir, "${file.nameWithoutExtension}/classes"),
+                                    transformer = {
+                                        it.transformClass(namespace)
+                                    }
+                                ) { !it.isDirectory }.delete()
+                                return@unzip false
                             }
-                        ) { !it.isDirectory }.delete()
-                        return@unzip false
+                            else !entry.isDirectory
+                                    && entry.name.endsWith("aar-metadata.properties").not()
+                                    && entry.name.endsWith("classes.jar").not()
+                        }
+                        aarsProcessed++
+                    } catch (e: Exception) {
+                        logger.warn("Failed to extract AAR ${file.name}: ${e.message}")
                     }
-                    else !entry.isDirectory
-                            && entry.name.endsWith("aar-metadata.properties").not()
-                            && entry.name.endsWith("classes.jar").not()
                 }
-                "jar" -> file.unzip(to = File(baseDir, "${file.nameWithoutExtension}/classes")) {
-                    !it.isDirectory && !it.name.endsWith("MANIFEST.MF")
+                "jar" -> {
+                    try {
+                        logger.debug("Extracting JAR: ${file.name}")
+                        file.unzip(to = File(baseDir, "${file.nameWithoutExtension}/classes")) {
+                            !it.isDirectory && !it.name.endsWith("MANIFEST.MF")
+                        }
+                        jarsProcessed++
+                    } catch (e: Exception) {
+                        logger.warn("Failed to extract JAR ${file.name}: ${e.message}")
+                    }
                 }
-                else -> logger.lifecycle("Ignoring non-JAR/AAR file: ${file.name}")
+                else -> logger.debug("Ignoring non-JAR/AAR file: ${file.name}")
             }
         }
+
+        logger.lifecycle("Extracted dependencies: $aarsProcessed AARs, $jarsProcessed JARs")
     }
 }

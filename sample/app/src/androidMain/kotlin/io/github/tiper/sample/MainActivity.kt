@@ -28,10 +28,8 @@ import io.github.tiper.sample.jni2.NativeLib as NativeLib2
 
 class MainActivity : ComponentActivity() {
 
-    // AIDL Service 1
     private var myAidlService1: IMyAidlService1? = null
 
-    // AIDL Service 2
     private var myAidlService2: IMyAidlService2? = null
 
     // Service connection for AIDL Service 1
@@ -100,7 +98,6 @@ class MainActivity : ComponentActivity() {
         }
         bindService(intent2, connection2, BIND_AUTO_CREATE)
 
-        // Set up Compose UI
         setContent {
             BackHandler { }
             MyApplicationTheme {
@@ -125,7 +122,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Greeting Composable
 @Composable
 fun Greeting(name: String, modifier: Modifier = Modifier) {
     Text(

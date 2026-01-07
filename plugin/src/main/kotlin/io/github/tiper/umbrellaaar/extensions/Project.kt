@@ -16,6 +16,8 @@ internal fun Project.findAarOrAssembleTask(buildType: String) = provider {
 internal fun Project.findSourcesJarTask(buildType: String)= provider {
     listOf(
         "android${buildType}SourcesJar",
+        "${buildType}SourcesJar",
+        "androidSourcesJar",
         "jvmSourcesJar",
         "sourcesJar"
     ).firstNotNullOfOrNull(tasks::findByName)
