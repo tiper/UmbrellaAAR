@@ -1,0 +1,30 @@
+name: Ktlint
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    ktlint:
+      runs-on: macos-latest
+      steps:
+        - name: Checkout
+          uses: actions/checkout@v4.2.2
+          with:
+            submodules: true
+
+        - name: Setup Java
+          uses: actions/setup-java@v4.6.0
+          with:
+            distribution: "jetbrains"
+            java-version: 17
+            cache: "gradle"
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        - name: Run ktlint Check
+          run: ./gradlew :build-logic:plugins:ktlintCheck ktlintCheck

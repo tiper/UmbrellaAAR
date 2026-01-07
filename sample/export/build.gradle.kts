@@ -38,10 +38,9 @@ android {
 signing {
     useInMemoryPgpKeys(
         providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKey").orNull,
-        providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKeyPassword").orNull
+        providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKeyPassword").orNull,
     )
 }
-
 
 mavenPublishing {
     // Uncomment this if you want to test with signing

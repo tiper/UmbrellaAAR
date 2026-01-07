@@ -14,9 +14,6 @@ kotlin {
         all {
             languageSettings.optIn("kotlin.experimental.ExperimentalObjCName")
         }
-        commonMain.dependencies {
-
-        }
     }
 }
 

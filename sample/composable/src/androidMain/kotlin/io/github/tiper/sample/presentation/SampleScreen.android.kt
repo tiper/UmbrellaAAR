@@ -7,6 +7,6 @@ import androidx.compose.ui.res.stringResource
 @Composable
 fun SampleScreenAndroid() {
     Text(
-        text = stringResource(R.string.composable_string_android)
+        text = stringResource(R.string.composable_string_android),
     )
 }

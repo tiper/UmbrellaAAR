@@ -33,9 +33,9 @@ include(
     ":sample:aidl:sample1",
     ":sample:aidl:sample2",
     ":sample:composable",
-    ":sample:export",
+//    ":sample:export",
     ":sample:jni:sample1",
     ":sample:jni:sample2",
     ":sample:viewmodel",
-    ":sample:app",
+//    ":sample:app",
 )

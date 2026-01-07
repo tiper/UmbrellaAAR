@@ -6,12 +6,8 @@ import android.os.IBinder
 
 class MyAidlService : Service() {
     private val binder = object : IMyAidlService.Stub() {
-        override fun getMessage(): String {
-            return "Hello from AIDL Service 2!"
-        }
+        override fun getMessage(): String = "Hello from AIDL Service 2!"
     }
 
-    override fun onBind(intent: Intent): IBinder {
-        return binder
-    }
+    override fun onBind(intent: Intent): IBinder = binder
 }

@@ -7,6 +7,6 @@ import org.jetbrains.compose.resources.stringResource
 @Composable
 fun SampleScreenCommon() {
     Text(
-        text = stringResource(Res.string.composable_string)
+        text = stringResource(Res.string.composable_string),
     )
 }

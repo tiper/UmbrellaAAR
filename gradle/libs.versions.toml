@@ -6,6 +6,8 @@ asm-commons = "9.6" # https://asm.ow2.io/versions.html
 compose = "1.6.11" # https://github.com/JetBrains/compose-multiplatform/releases
 compose-lifecycle = "2.8.0" # https://github.com/JetBrains/compose-multiplatform/releases
 kotlin = "1.9.23" # https://github.com/JetBrains/kotlin/releases
+ktlint = "1.8.0" # https://github.com/pinterest/ktlint/releases
+ktlint-gradle = "14.0.1" # https://github.com/JLLeitschuh/ktlint-gradle/releases
 umbrellaaar = "2.0.0" # https://github.com/tiper/UmbrellaAAR/releases
 
 [libraries]
@@ -15,6 +17,7 @@ androidx-activity-compose = { module = "androidx.activity:activity-compose", ver
 asm-commons = { module = "org.ow2.asm:asm-commons", version.ref = "asm-commons" }
 compose-viewmodel = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "compose-lifecycle" }
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+ktlint-gradle-plugin = { module = "org.jlleitschuh.gradle:ktlint-gradle", version.ref = "ktlint-gradle" }
 sample-export = { module = "io.github.tiper.sample:framework", version = "0.0.1" }
 
 
@@ -25,6 +28,7 @@ android-library-tiper = { id = "io.github.tiper.android.library" }
 compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-multiplatform-tiper = { id = "io.github.tiper.kotlin.multiplatform" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-gradle" }
 umbrella-aar = { id = "io.github.tiper.umbrellaaar", version.ref = "umbrellaaar" }
 umbrella-aar-pom = { id = "io.github.tiper.umbrellaaar.pom", version.ref = "umbrellaaar" }
 vanniktech-maven-publish = { id = "com.vanniktech.maven.publish", version = "0.34.0" }

@@ -13,9 +13,11 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinAndroidTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompileCommon
+import org.jlleitschuh.gradle.ktlint.KtlintExtension
 
 class KotlinMultiplatform : Plugin<Project> {
     override fun apply(target: Project) = with(target) {
+        pluginManager.apply("org.jlleitschuh.gradle.ktlint")
         pluginManager.apply("org.jetbrains.kotlin.multiplatform")
         configureJava()
         extensions.configure<KotlinMultiplatformExtension> {
@@ -27,6 +29,15 @@ class KotlinMultiplatform : Plugin<Project> {
             targets.addArgs("-Xexpect-actual-classes")
             targets.withType<KotlinNativeTarget>().addArgs("-Xexport-kdoc")
         }
+        if (pluginManager.hasPlugin("com.android.library")) {
+            extensions.configure<KtlintExtension> {
+                android = true
+            }
+        } else if (pluginManager.hasPlugin("com.android.application")) {
+            extensions.configure<KtlintExtension> {
+                android = true
+            }
+        }
         fixArchiveName()
         extensions.configure<KotlinMultiplatformExtension> {
             metadata {
@@ -34,12 +45,11 @@ class KotlinMultiplatform : Plugin<Project> {
                     val compilation = name
                     compileTaskProvider.configure {
                         if (this is KotlinCompileCommon) {
-                            moduleName = "${libraryName}_${compilation}"
+                            moduleName = "${libraryName}_$compilation"
                         }
                     }
                 }
             }
         }
     }
-
 }
