@@ -1,26 +1,32 @@
 package io.github.tiper.umbrellaaar
 
 import com.android.build.api.attributes.BuildTypeAttr
+import com.android.build.api.attributes.BuildTypeAttr.Companion.ATTRIBUTE
 import com.android.build.gradle.LibraryExtension
+import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.capitalize
+import io.github.tiper.umbrellaaar.extensions.cleanPlatformSuffixes
 import io.github.tiper.umbrellaaar.extensions.findAllProjectDependencies
-import io.github.tiper.umbrellaaar.extensions.getExcludedExternalDependencies
-import io.github.tiper.umbrellaaar.extensions.getExcludedModuleNames
 import io.github.tiper.umbrellaaar.extensions.isApplicable
+import io.github.tiper.umbrellaaar.extensions.isExcluded
 import io.github.tiper.umbrellaaar.extensions.isRelevantForDependencies
 import io.github.tiper.umbrellaaar.pom.Collector
+import io.github.tiper.umbrellaaar.pom.Collector.Dependency
 import io.github.tiper.umbrellaaar.pom.Collector.Dependency.Companion.fromCoordinate
+import io.github.tiper.umbrellaaar.pom.configureKotlinPlatformAttribute
 import io.github.tiper.umbrellaaar.tasks.CollectExternalDependencies
 import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.ProjectDependency
-import org.gradle.api.attributes.Attribute
+import org.gradle.api.attributes.Category
 import org.gradle.api.attributes.Category.CATEGORY_ATTRIBUTE
 import org.gradle.api.attributes.Category.LIBRARY
+import org.gradle.api.attributes.Usage
 import org.gradle.api.attributes.Usage.JAVA_RUNTIME
 import org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE
+import org.gradle.api.attributes.java.TargetJvmEnvironment
 import org.gradle.api.attributes.java.TargetJvmEnvironment.ANDROID
 import org.gradle.api.attributes.java.TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE
 import org.gradle.api.publish.PublishingExtension
@@ -28,15 +34,11 @@ import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.publish.maven.plugins.MavenPublishPlugin
 import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.getByType
-import org.gradle.kotlin.dsl.named
 import org.gradle.kotlin.dsl.register
 import org.gradle.kotlin.dsl.withType
 
 @Suppress("unused")
 class UmbrellaAarPom : Plugin<Project> {
-    companion object {
-        private val PLATFORM_ATTR = Attribute.of("org.jetbrains.kotlin.platform.type", String::class.java)
-    }
 
     private fun Project.setup(
         buildType: String,
@@ -44,27 +46,20 @@ class UmbrellaAarPom : Plugin<Project> {
     ) {
         val buildTypeCapitalized = buildType.capitalize()
 
-        val collectDeps =
-            tasks.register<CollectExternalDependencies>("collect${buildTypeCapitalized}ExternalDependencies") {
-                group = "umbrellaaar"
-                description = "Collects external dependencies from all merged modules for $buildType"
-                outputFile.convention(
-                    layout.buildDirectory.file("$INTERMEDIATES_PATH/$buildType/external-deps.txt"),
-                )
-            }
+        val collectDeps = tasks.register<CollectExternalDependencies>("collect${buildTypeCapitalized}ExternalDependencies") {
+            group = "umbrellaaar"
+            description = "Collects external dependencies from all merged modules for $buildType"
+            outputFile.convention(layout.buildDirectory.file("$INTERMEDIATES_PATH/$buildType/$EXTERNAL_DEPENDENCIES_FILE"))
+        }
 
-        val excludedModulesProvider = provider { config.getExcludedModuleNames() }
-        val excludedDependenciesProvider = provider { config.getExcludedExternalDependencies() }
-        val allProjectDepsProvider = provider { config.findAllProjectDependencies() }
-
-        val allDependenciesProvider =
-            provider {
-                val excludedModules = excludedModulesProvider.get()
-                val excludedDependencies = excludedDependenciesProvider.get()
-                val allProjectDeps = allProjectDepsProvider.get()
-                val filteredProjectDeps = allProjectDeps.filter { it.name !in excludedModules }.toSet()
-                collectExternalDependencies(filteredProjectDeps, buildType, excludedDependencies)
-            }
+        val allDependenciesProvider = provider {
+            val rules = config.allExcludeRules()
+            collectExternalDependencies(
+                buildType = buildType,
+                modules = config.findAllProjectDependencies().filterNot { it.isExcluded(rules) }.toSet(),
+                config = config,
+            )
+        }
 
         collectDeps.configure {
             dependencies.set(allDependenciesProvider)
@@ -74,7 +69,7 @@ class UmbrellaAarPom : Plugin<Project> {
             dependsOn(collectDeps)
         }
 
-        val depsFileProvider = layout.buildDirectory.file("$INTERMEDIATES_PATH/$buildType/external-deps.txt")
+        val depsFileProvider = layout.buildDirectory.file("$INTERMEDIATES_PATH/$buildType/$EXTERNAL_DEPENDENCIES_FILE")
 
         plugins.withType<MavenPublishPlugin> {
             extensions.configure<PublishingExtension> {
@@ -85,215 +80,188 @@ class UmbrellaAarPom : Plugin<Project> {
                         classifier = "sources"
                     }
                     pom.withXml {
-                        val depsFile = depsFileProvider.get().asFile
-                        if (!depsFile.exists()) {
-                            throw GradleException(
-                                "External dependencies file not found: $depsFile. " +
-                                    "Make sure to run 'bundle${buildTypeCapitalized}UmbrellaAar' task first",
-                            )
-                        }
-
-                        val dependencies =
-                            depsFile
-                                .readLines()
-                                .filter { it.isNotBlank() }
-                                .mapNotNull(::fromCoordinate)
-
-                        if (dependencies.isNotEmpty()) {
-                            val depsNode = asNode().appendNode("dependencies")
-                            dependencies.forEach { dep ->
-                                depsNode.appendNode("dependency").apply {
-                                    appendNode("groupId", dep.group)
-                                    appendNode("artifactId", dep.name)
-                                    appendNode("version", dep.version)
-                                    appendNode("scope", dep.scope)
+                        depsFileProvider.get().asFile.apply {
+                            if (!exists()) {
+                                throw GradleException(
+                                    "External dependencies file not found: $this. " +
+                                        "Make sure to run 'bundle${buildTypeCapitalized}UmbrellaAar' task first",
+                                )
+                            }
+                        }.readLines().filter { it.isNotBlank() }.mapNotNull(::fromCoordinate).let { dependencies ->
+                            if (dependencies.isNotEmpty()) {
+                                val dependenciesNode = asNode().appendNode("dependencies")
+                                dependencies.forEach {
+                                    dependenciesNode.appendNode("dependency").apply {
+                                        appendNode("groupId", it.group)
+                                        appendNode("artifactId", it.name)
+                                        appendNode("version", it.version)
+                                        appendNode("scope", it.scope)
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // Ensure the collection task runs before POM generation
-                    tasks
-                        .matching {
-                            it.name == "generatePomFileFor${publicationName.replaceFirstChar { c -> c.uppercaseChar() }}Publication"
-                        }.configureEach {
-                            dependsOn(collectDeps)
-                        }
+                    // Make sure the collection task runs before POM generation
+                    tasks.matching {
+                        it.name == "generatePomFileFor${publicationName.replaceFirstChar { c -> c.uppercaseChar() }}Publication"
+                    }.configureEach {
+                        dependsOn(collectDeps)
+                    }
                 }
             }
         }
     }
 
     private fun Project.collectExternalDependencies(
-        projectDeps: Set<Project>,
         buildType: String,
-        excludedDependencies: Set<String> = emptySet(),
+        modules: Set<Project>,
+        config: Configuration,
     ): List<String> {
-        val collector = Collector()
-        val allProjects = setOf(this) + projectDeps
-
-        val declaredDependencies = mutableMapOf<String, Pair<String, org.gradle.api.artifacts.Dependency>>()
-        allProjects
-            .asSequence()
+        val rules = config.allExcludeRules()
+        val declaredDependencies = (setOf(this) + modules).asSequence()
             .flatMap { it.configurations.asSequence() }
             .filter { it.isRelevantForDependencies() && it.isApplicable(buildType) }
-            .forEach { conf ->
-                try {
-                    conf.dependencies.filterNot { it is ProjectDependency }.forEach { dep ->
-                        val depKey = "${dep.group}:${dep.name}"
-                        if (!isExcluded(depKey, excludedDependencies)) {
-                            declaredDependencies[depKey] = conf.name to dep
-                        }
-                    }
-                } catch (e: Exception) {
-                    logger.debug("[UmbrellaAarPom] Could not process configuration ${conf.name}: ${e.message}")
+            .flatMap { conf ->
+                runCatching {
+                    conf.dependencies
+                        .filterNot { it is ProjectDependency }
+                        .filterNot { it.isExcluded(rules) }
+                }.getOrElse {
+                    logger.debug("[UmbrellaAarPom] Could not process configuration ${conf.name}: ${it.message}")
+                    emptyList()
                 }
             }
+            .associateBy { "${it.group}:${it.name}" }
 
         logger.lifecycle(
-            "[UmbrellaAarPom] Collected ${declaredDependencies.size} declared dependencies" +
-                if (excludedDependencies.isNotEmpty()) " (excluding ${excludedDependencies.size})" else "",
+            "[UmbrellaAarPom] Collected ${declaredDependencies.size} dependencies" +
+                if (rules.isNotEmpty()) " (${rules.size} exclusion rules applied)" else "",
         )
 
-        // Resolve with Android attributes to get multiplatform → Android mappings
-        val resolvedVariants =
-            resolveWithAndroidVariants(
-                declaredDependencies.values.map { it.second },
-                buildType,
-            )
+        val resolved = resolveWithAndroidAttributes(buildType, declaredDependencies.values)
+        val collector = Collector()
+        resolved.forEach(collector::add)
 
-        // Apply resolved variants or use original dependencies
-        var resolvedCount = 0
-        var unchangedCount = 0
-        val resolutionLogs = mutableListOf<String>()
-
-        declaredDependencies.forEach { (depKey, configAndDep) ->
-            val (configName, dep) = configAndDep
-
-            // If Gradle resolved this to a different group, use the resolved version
-            val resolved = resolvedVariants[depKey]
-            if (resolved != null && depKey != "${resolved.group}:${resolved.name}") {
-                resolutionLogs.add("  - $depKey:${dep.version} → ${resolved.group}:${resolved.name}:${resolved.version}")
-                collector.addAsAndroidResolved(resolved)
-                resolvedCount++
-            } else {
-                // No resolution, use original
-                collector.add(configName, dep)
-                unchangedCount++
-            }
+        val kept = declaredDependencies.keys - resolved.map { "${it.group}:${it.name}" }.toSet()
+        if (kept.isNotEmpty()) {
+            logger.lifecycle("[UmbrellaAarPom] Kept ${kept.size} dependencies")
+            logger.debug("[UmbrellaAarPom] Kept: $kept")
         }
 
-        val stats = collector.getStatistics()
-        logger.lifecycle("[UmbrellaAarPom] Resolved: $resolvedCount dependencies to Android variants, $unchangedCount unchanged")
-        resolutionLogs.forEach { logger.lifecycle(it) }
-        logger.lifecycle(
-            "[UmbrellaAarPom] Final POM: ${stats.totalCount} dependencies (${stats.androidCount} android, ${stats.commonCount} common)",
-        )
-
+        logger.lifecycle("[UmbrellaAarPom] POM will include ${collector.getStatistics().totalCount} dependencies")
         return collector.getDependencies()
     }
 
-    /**
-     * Resolves dependencies with Android variant attributes.
-     * Returns a map of declared group:name -> resolved Dependency.
-     *
-     * Only processes JetBrains multiplatform dependencies (org.jetbrains.compose.*, org.jetbrains.androidx.*)
-     * and maps them to their AndroidX equivalents.
-     */
-    private fun Project.resolveWithAndroidVariants(
-        dependencies: Collection<org.gradle.api.artifacts.Dependency>,
+    private fun Project.resolveWithAndroidAttributes(
         buildType: String,
-    ): Map<String, Collector.Dependency> {
-        // Filter to only JetBrains multiplatform dependencies
-        val jetbrainsDeps =
-            dependencies.filter { dep ->
-                dep.group?.startsWith("org.jetbrains.compose.") == true ||
-                    dep.group?.startsWith("org.jetbrains.androidx.") == true
-            }
+        dependencies: Collection<org.gradle.api.artifacts.Dependency>,
+    ): List<Dependency> {
+        if (dependencies.isEmpty()) return emptyList()
 
-        if (jetbrainsDeps.isEmpty()) return emptyMap()
+        return try {
+            val config = createAndroidResolutionConfig(buildType)
+            dependencies.forEach { config.dependencies.add(it) }
 
-        val resolved = mutableMapOf<String, Collector.Dependency>()
+            val declaredKeys = dependencies.mapTo(mutableSetOf()) { "${it.group}:${it.name}" }
+            val androidxMap = config.buildAndroidxArtifactMap()
 
-        try {
-            val resolvingConfig =
-                configurations.detachedConfiguration().apply {
-                    isCanBeResolved = true
-                    isCanBeConsumed = false
-                    attributes {
-                        attribute(BuildTypeAttr.ATTRIBUTE, objects.named(buildType))
-                        attribute(CATEGORY_ATTRIBUTE, objects.named(LIBRARY))
-                        attribute(USAGE_ATTRIBUTE, objects.named(JAVA_RUNTIME))
-                        attribute(TARGET_JVM_ENVIRONMENT_ATTRIBUTE, objects.named(ANDROID))
-                        attribute(PLATFORM_ATTR, "androidJvm")
-                    }
-                }
+            logger.debug("[UmbrellaAarPom] Found ${androidxMap.size} androidx artifacts for mapping")
 
-            // Add JetBrains dependencies to the resolution config
-            jetbrainsDeps.forEach { resolvingConfig.dependencies.add(it) }
-
-            val resolutionResult = resolvingConfig.incoming.resolutionResult
-
-            // Build a map of all resolved androidx components for quick lookup
-            val allResolvedComponents =
-                resolutionResult.allComponents
-                    .mapNotNull { it.moduleVersion }
-                    .filter { it.group.startsWith("androidx.") }
-                    .associateBy { it.name }
-
-            // For each JetBrains dependency, find the corresponding androidx artifact
-            jetbrainsDeps.forEach { dep ->
-                val depKey = "${dep.group}:${dep.name}"
-
-                // Look for an androidx artifact with the same name (exact match first)
-                var androidxArtifact = allResolvedComponents[dep.name]
-
-                // If no exact match, look for platform-specific variants
-                if (androidxArtifact == null) {
-                    // Try common suffixes: -jvm, -android, -java8
-                    androidxArtifact = allResolvedComponents["${dep.name}-jvm"]
-                        ?: allResolvedComponents["${dep.name}-android"]
-                        ?: allResolvedComponents["${dep.name}-java8"]
-                }
-
-                if (androidxArtifact != null) {
-                    resolved[depKey] =
-                        Collector.Dependency(
-                            androidxArtifact.group,
-                            dep.name,
-                            androidxArtifact.version,
-                            "compile",
-                        )
-                }
-            }
+            config.incoming.resolutionResult.root.dependencies
+                .filterIsInstance<org.gradle.api.artifacts.result.ResolvedDependencyResult>()
+                .mapNotNull { it.selected.moduleVersion }
+                .filter { "${it.group}:${it.name}" in declaredKeys }
+                .map { resolveToAndroidx(it, androidxMap) }
+                .also { logger.debug("[UmbrellaAarPom] Resolved ${it.size} direct dependencies") }
         } catch (e: Exception) {
-            logger.warn("[UmbrellaAarPom] Variant resolution failed: ${e.message}")
-        }
-
-        return resolved
-    }
-
-    /**
-     * Checks if a dependency should be excluded based on the exclusion rules.
-     */
-    private fun isExcluded(
-        depKey: String,
-        excludedDependencies: Set<String>,
-    ): Boolean {
-        if (excludedDependencies.isEmpty()) return false
-        val parts = depKey.split(":", limit = 2)
-        if (parts.size != 2) return false
-        val (group, module) = parts
-        return depKey in excludedDependencies || group in excludedDependencies || module in excludedDependencies
-    }
-
-    override fun apply(target: Project) =
-        with(target) {
-            plugins.withId("io.github.tiper.umbrellaaar") {
-                val config = configurations.findByName(UMBRELLA_AAR_CONFIG) ?: return@withId
-                extensions.getByType<LibraryExtension>().buildTypes.forEach {
-                    setup(it.name, config)
-                }
+            logger.error("[UmbrellaAarPom] Resolution failed: ${e.message}", e)
+            dependencies.mapNotNull { dep ->
+                val group = dep.group ?: return@mapNotNull null
+                val version = dep.version ?: return@mapNotNull null
+                if (dep.name in listOf("unspecified", "null")) return@mapNotNull null
+                Dependency(group, dep.name, version, "compile")
             }
         }
+    }
+
+    private fun Project.createAndroidResolutionConfig(buildType: String) = configurations.detachedConfiguration().apply {
+        isCanBeResolved = true
+        isCanBeConsumed = false
+        configureKotlinPlatformAttribute(listOf(this))
+        attributes {
+            attribute(ATTRIBUTE, objects.named(BuildTypeAttr::class.java, buildType))
+            attribute(CATEGORY_ATTRIBUTE, objects.named(Category::class.java, LIBRARY))
+            attribute(USAGE_ATTRIBUTE, objects.named(Usage::class.java, JAVA_RUNTIME))
+            attribute(TARGET_JVM_ENVIRONMENT_ATTRIBUTE, objects.named(TargetJvmEnvironment::class.java, ANDROID))
+        }
+    }
+
+    private fun Configuration.buildAndroidxArtifactMap(): Map<String, org.gradle.api.artifacts.ResolvedArtifact> {
+        val platformSuffixes = listOf("-android", "-jvm", "-java8")
+        val map = mutableMapOf<String, org.gradle.api.artifacts.ResolvedArtifact>()
+
+        resolvedConfiguration.resolvedArtifacts.forEach { artifact ->
+            val id = artifact.moduleVersion.id
+            if (!id.group.startsWith("androidx.") && !id.group.startsWith("org.jetbrains.androidx.")) return@forEach
+
+            map[id.name] = artifact
+            map[id.name.removePrefix("compose-")] = artifact
+            platformSuffixes.forEach { suffix ->
+                val stripped = id.name.removeSuffix(suffix)
+                if (stripped != id.name) map[stripped] = artifact
+            }
+        }
+        return map
+    }
+
+    private fun Project.resolveToAndroidx(
+        moduleVersion: org.gradle.api.artifacts.ModuleVersionIdentifier,
+        androidxMap: Map<String, org.gradle.api.artifacts.ResolvedArtifact>,
+    ): Dependency {
+        val shouldMap = moduleVersion.group.startsWith("org.jetbrains.compose.") ||
+            moduleVersion.group.startsWith("org.jetbrains.androidx.")
+
+        if (!shouldMap) {
+            return Dependency(moduleVersion.group, moduleVersion.name, moduleVersion.version, "compile")
+        }
+
+        val searchNames = generateSearchNames(moduleVersion.name)
+        val androidxArtifact = searchNames.firstNotNullOfOrNull { androidxMap[it] }
+
+        return if (androidxArtifact != null) {
+            val androidxId = androidxArtifact.moduleVersion.id
+            val cleanName = androidxId.name.cleanPlatformSuffixes()
+            logger.lifecycle(
+                "[UmbrellaAarPom] Mapped ${moduleVersion.group}:${moduleVersion.name}:${moduleVersion.version} -> ${androidxId.group}:$cleanName:${androidxId.version}",
+            )
+            Dependency(androidxId.group, cleanName, androidxId.version, "compile")
+        } else {
+            logger.warn("[UmbrellaAarPom] No androidx equivalent for ${moduleVersion.group}:${moduleVersion.name}")
+            Dependency(moduleVersion.group, moduleVersion.name, moduleVersion.version, "compile")
+        }
+    }
+
+    private fun generateSearchNames(name: String) = listOf(
+        name,
+        "$name-android",
+        "$name-jvm",
+        "$name-java8",
+        name.removeSuffix("-android"),
+        name.removeSuffix("-jvm"),
+        name.removeSuffix("-java8"),
+        "compose-$name",
+        "compose-$name-android",
+        "compose-$name-jvm",
+        name.removePrefix("compose-"),
+    ).distinct()
+
+    override fun apply(target: Project) = with(target) {
+        plugins.withId("io.github.tiper.umbrellaaar") {
+            val config = configurations.findByName(UMBRELLA_AAR_CONFIG) ?: return@withId
+            extensions.getByType<LibraryExtension>().buildTypes.forEach {
+                setup(it.name, config)
+            }
+        }
+    }
 }

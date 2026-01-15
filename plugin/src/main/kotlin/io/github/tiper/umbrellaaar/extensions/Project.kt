@@ -1,28 +1,28 @@
 package io.github.tiper.umbrellaaar.extensions
 
+import java.io.File
 import org.gradle.api.Project
 import org.gradle.api.provider.Provider
-import java.io.File
 
-internal fun Project.findAarOrAssembleTask(buildType: String) = provider {
+internal fun Project.findAarTask(buildType: String) = provider {
     listOf(
         "bundle${buildType}Aar",
-        "assemble${buildType}",
+        "assemble$buildType",
         "jvmJar",
-        "assemble"
+        "assemble",
     ).firstNotNullOfOrNull(tasks::findByName)
 }
 
-internal fun Project.findSourcesJarTask(buildType: String)= provider {
+internal fun Project.findSourcesJarTask(buildType: String) = provider {
     listOf(
         "android${buildType}SourcesJar",
         "${buildType}SourcesJar",
         "androidSourcesJar",
         "jvmSourcesJar",
-        "sourcesJar"
+        "sourcesJar",
     ).firstNotNullOfOrNull(tasks::findByName)
 }
 
-internal fun Project.getMainAarProvider(
+internal fun Project.findAar(
     buildType: String,
-): Provider<File> = findAarOrAssembleTask(buildType).map { it.outputs.files.singleFile }
+): Provider<File> = findAarTask(buildType).map { it.outputs.files.singleFile }

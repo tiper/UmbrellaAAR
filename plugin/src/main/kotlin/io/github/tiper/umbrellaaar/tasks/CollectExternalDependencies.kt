@@ -1,5 +1,6 @@
 package io.github.tiper.umbrellaaar.tasks
 
+import java.io.Serializable
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
@@ -7,12 +8,7 @@ import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
-import java.io.Serializable
 
-/**
- * Task that collects and deduplicates external dependencies for the POM file.
- * This task is cacheable - if inputs haven't changed, outputs can be restored from cache.
- */
 @CacheableTask
 abstract class CollectExternalDependencies : DefaultTask() {
 
@@ -37,29 +33,30 @@ abstract class CollectExternalDependencies : DefaultTask() {
                     group = it[0],
                     name = it[1],
                     version = it[2],
-                    scope = it[3]
+                    scope = it[3],
                 )
             }
             .distinctBy { "${it.group}:${it.name}" }
             .sortedWith(compareBy({ it.group }, { it.name }))
 
         if (externalDeps.isNotEmpty()) {
-            output.writeText(externalDeps.joinToString("\n") {
-                "${it.group}:${it.name}:${it.version}:${it.scope}"
-            })
+            output.writeText(
+                externalDeps.joinToString("\n") {
+                    "${it.group}:${it.name}:${it.version}:${it.scope}"
+                },
+            )
             val deduplicatedCount = inputDeps.size - externalDeps.size
-            logger.lifecycle("Collected ${externalDeps.size} unique external dependencies" +
-                if (deduplicatedCount > 0) " (deduplicated $deduplicatedCount duplicate entries)" else "")
-        } else {
-            // Ensure output file is created even if empty (required for @OutputFile)
-            output.writeText("")
-        }
+            logger.lifecycle(
+                "Collected ${externalDeps.size} unique external dependencies" +
+                    if (deduplicatedCount > 0) " (deduplicated $deduplicatedCount duplicate entries)" else "",
+            )
+        } else output.writeText("") // Gradle @OutputFile needs the file even if empty
     }
 
     data class DependencyInfo(
         val group: String,
         val name: String,
         val version: String,
-        val scope: String
+        val scope: String,
     ) : Serializable
 }

@@ -6,9 +6,7 @@ import org.objectweb.asm.commons.ClassRemapper
 import org.objectweb.asm.commons.Remapper
 
 internal fun ByteArray.transformClass(mainNsInternal: String): ByteArray {
-    // OPTIMIZATION: Pre-check for R class references before expensive ASM parsing
-    // Skip parsing for ~70% of classes that don't reference R classes
-    // Expected improvement: 30-50% faster class transformation
+    // Skip classes that don't reference R classes
     if (!containsRClassReference()) {
         return this
     }
@@ -17,19 +15,18 @@ internal fun ByteArray.transformClass(mainNsInternal: String): ByteArray {
     val writer = ClassWriter(reader, 0)
     val remapper = object : Remapper() {
         override fun map(internalName: String): String {
-            // Do not remap Android framework or material classes.
+            // Don't remap Android framework classes
             if (internalName.startsWith("android/") ||
                 internalName.startsWith("androidx/") ||
                 internalName.startsWith("com/google/android/material/")
             ) {
                 return super.map(internalName)
             }
-            // If already using the main module's R, leave it alone.
+            // Already using main module's R, skip it
             if (internalName.startsWith("$mainNsInternal/R")) {
                 return super.map(internalName)
             }
-            // If this class name contains an "/R$" segment (e.g. "com/foo/bar/R$drawable"),
-            // then remap the package portion so that it uses the main module's namespace.
+            // Remap R class refs to main namespace
             val rIndex = internalName.indexOf("/R$")
             if (rIndex > 0) {
                 return mainNsInternal + internalName.substring(rIndex)
@@ -42,13 +39,7 @@ internal fun ByteArray.transformClass(mainNsInternal: String): ByteArray {
     return writer.toByteArray()
 }
 
-/**
- * Quick pre-check: scan bytecode for R class references before expensive ASM parsing.
- * Looks for "/R$" or "/R;" patterns which indicate R class references.
- * This byte-level scan is much faster than full ASM parsing.
- *
- * @return true if R class references found, false otherwise
- */
+// Scans bytecode for "/R$" or "/R;" patterns
 private fun ByteArray.containsRClassReference(): Boolean {
     val slash = '/'.code.toByte()
     val rByte = 'R'.code.toByte()
@@ -64,4 +55,3 @@ private fun ByteArray.containsRClassReference(): Boolean {
     }
     return false
 }
-
