@@ -27,10 +27,11 @@ internal fun Configuration.allExcludeRules(): List<ExcludeRule> = (excludeRules 
 private fun ExcludeRule.matches(group: String?, module: String?): Boolean {
     val ruleGroup = this.group.orEmpty()
     val ruleModule = this.module.orEmpty()
+
     return when {
-        !ruleGroup.isNullOrEmpty() && !ruleModule.isNullOrEmpty() -> ruleGroup == group && ruleModule == module
-        !ruleGroup.isNullOrEmpty() -> ruleGroup == group
-        !ruleModule.isNullOrEmpty() -> ruleModule == module
+        ruleGroup.isNotEmpty() && ruleModule.isNotEmpty() -> ruleGroup == group && ruleModule == module
+        ruleGroup.isNotEmpty() -> ruleGroup == group
+        ruleModule.isNotEmpty() -> ruleModule == module
         else -> false
     }
 }

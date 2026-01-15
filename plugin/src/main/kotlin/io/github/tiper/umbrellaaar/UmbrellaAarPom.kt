@@ -83,7 +83,7 @@ class UmbrellaAarPom : Plugin<Project> {
                         depsFileProvider.get().asFile.apply {
                             if (!exists()) {
                                 throw GradleException(
-                                    "External dependencies file not found: $this." +
+                                    "External dependencies file not found: $this. " +
                                         "Make sure to run 'bundle${buildTypeCapitalized}UmbrellaAar' task first",
                                 )
                             }

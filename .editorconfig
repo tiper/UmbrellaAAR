@@ -16,7 +16,3 @@ ktlint_standard_multiline-if-else = disabled
 
 [**/build/**]
 ktlint = disabled
-
-[plugin/src/main/kotlin/io/github/tiper/umbrellaaar/KotlinPlatformType.kt]
-ktlint_standard_enum-entry-name-case = disabled
-ktlint_standard_kdoc = disabled
