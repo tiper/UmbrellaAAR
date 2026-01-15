@@ -36,6 +36,7 @@ include(
     ":sample:export",
     ":sample:jni:sample1",
     ":sample:jni:sample2",
+    ":sample:test",
     ":sample:viewmodel",
     ":sample:app",
 )

@@ -12,5 +12,8 @@ kotlin {
         commonMain.dependencies {
             implementation(libs.compose.viewmodel)
         }
+        commonTest.dependencies {
+            implementation(projects.sample.test)
+        }
     }
 }

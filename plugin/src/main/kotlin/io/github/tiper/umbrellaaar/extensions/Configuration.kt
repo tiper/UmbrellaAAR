@@ -14,9 +14,11 @@ internal fun Configuration.findAllProjectDependencies() = mutableSetOf<Project>(
     while (queue.isNotEmpty()) {
         val dep = queue.removeFirst().dependencyProject
         if (add(dep)) {
-            dep.configurations.forEach {
-                it.dependencies.withType<ProjectDependency>().forEach(queue::add)
-            }
+            dep.configurations
+                .filterNot { it.name.contains("test", ignoreCase = true) }
+                .forEach {
+                    it.dependencies.withType<ProjectDependency>().forEach(queue::add)
+                }
         }
     }
 }
@@ -40,18 +42,18 @@ internal fun Project.isExcluded(rules: List<ExcludeRule>): Boolean = rules.any {
 
 internal fun Dependency.isExcluded(rules: List<ExcludeRule>): Boolean = rules.any { it.matches(group, name) }
 
-internal fun Configuration.isRelevantForDependencies() = (
-    name.contains("api", ignoreCase = true) || name.contains("implementation", ignoreCase = true)
-    ) && (
-    name.contains("jvm", ignoreCase = true) ||
+internal fun Configuration.isRelevantForDependencies(): Boolean {
+    if (name.contains("test", ignoreCase = true)) return false
+    if (!name.contains("api", ignoreCase = true) &&
+        !name.contains("implementation", ignoreCase = true)
+    ) return false
+
+    return name.contains("jvm", ignoreCase = true) ||
         name.contains("android", ignoreCase = true) ||
+        name.contains("commonMain", ignoreCase = true) ||
         name == "implementation" ||
-        name == "api" ||
-        name == "commonMainImplementation" ||
-        name == "commonMainApi" ||
-        name == "androidMainImplementation" ||
-        name == "androidMainApi"
-    )
+        name == "api"
+}
 
 internal fun Configuration.isApplicable(buildType: String): Boolean = when {
     name.contains("commonMain") -> true
