@@ -20,6 +20,8 @@ kotlin {
     }
 }
 
+fun <T : ModuleDependency> T.exclude(dependency: Dependency) = exclude(dependency.group, dependency.name)
+
 android {
     namespace = "$group.framework"
     defaultConfig {
@@ -29,7 +31,9 @@ android {
     sourceSets["main"].res.srcDirs("src/androidMain/res")
     dependencies {
         export(projects.sample.viewmodel) // This one will include aidl.sample1
-        export(projects.sample.composable) // This one will include jni.sample1
+        export(projects.sample.composable) {
+            exclude(projects.sample.jni.sample1) // This one will exclude jni.sample1
+        }
         export(projects.sample.aidl.sample2)
         export(projects.sample.jni.sample2)
     }

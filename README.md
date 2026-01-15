@@ -8,9 +8,28 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.10-blue.svg)](https://kotlinlang.org/)
 [![Android](https://img.shields.io/badge/Android-34-green.svg)](https://developer.android.com/)
 
-Gradle plugin for Kotlin Multiplatform that merges **local** Android sub-libraries (modules) targets from the same project into a single AAR. This helps produce a consolidated artifact when you have multiple Android library modules internally but want to distribute them as a single `.aar`. **Note that this version of the plugin does not include external third-party AARs**—only sub-libraries that exist within the same multi-module project can be merged.
+Gradle plugin for merging multiple Android/KMP modules into a single AAR. Useful when you have a multi-module project but want to ship one consolidated library.
 
-Below, you’ll find motivations, usage examples, advantages, disadvantages, and key notes about the risks of using ASM to relocate classes and resources.
+Think of it like publishing an XCFramework from KMP, but for Android - you develop with multiple modules for better build performance, then merge them for distribution.
+
+⚠️ **Only merges local modules from your project.** External dependencies (like AndroidX) stay separate.
+
+## Quick Start
+
+```kotlin
+plugins {
+    id("io.github.tiper.umbrellaaar") version "2.0.0"
+}
+
+dependencies {
+    export(project(":module1"))
+    export(project(":module2"))
+}
+```
+
+Build: `./gradlew bundleReleaseUmbrellaAAR`
+
+Output: `build/outputs/umbrellaaar/your-library-release.aar`
 
 ---
 
@@ -95,7 +114,7 @@ plugins {
 
 #### UmbrellaAarPom Plugin (Optional)
 
-If you plan to **publish your UmbrellaAAR to Maven repositories**, you should also apply the companion **UmbrellaAarPom** plugin. This plugin automatically generates proper POM files with accurate external dependency declarations:
+If you want to **publish your UmbrellaAAR to Maven repositories**, also apply the companion **UmbrellaAarPom** plugin. It automatically generates POM files with correct external dependency declarations:
 
 ```kotlin
 plugins {
@@ -105,14 +124,14 @@ plugins {
 }
 ```
 
-**What does UmbrellaAarPom do?**
+**UmbrellaAarPom Plugin:**
 
-- **Automatic POM Generation**: Creates Maven publication with proper metadata
-- **External Dependency Declaration**: Lists all external dependencies (not bundled) in the POM
-- **Smart KMP Support**: Resolves Kotlin Multiplatform dependencies correctly for Android
-- **Android Variant Resolution**: Maps Compose Multiplatform dependencies to AndroidX equivalents
-- **Android-Priority Logic**: When dependencies exist in both common and Android source sets, Android versions take precedence
-- **Configurable Exclusions**: Exclude specific dependencies from the POM
+Generates Maven POM files when publishing. It:
+- Lists external deps (not bundled ones)
+- Handles KMP dependency resolution for Android
+- Maps Compose Multiplatform deps to AndroidX equivalents
+- Prioritizes Android versions over common when both exist
+- Supports dependency exclusions
 
 The plugin automatically creates publications named `android{BuildType}UmbrellaAar` (e.g., `androidReleaseUmbrellaAar`) with both the AAR and sources JAR artifacts.
 
@@ -327,27 +346,27 @@ build/outputs/umbrellaaar/myMainLibrary-debug-sources.jar
    Less complexity means fewer resource or class collisions. If a sub-library is large or complicated, consider distributing it separately.
 
 2. **Test Thoroughly**
-   Use unit tests, instrumentation tests, and check different build types (Debug/Release) to ensure the final artifact behaves identically to separate modules.
+   Use unit tests, instrumentation tests, and check different build types (Debug/Release) to make sure the final artifact behaves like separate modules.
 
-3. **Monitor for Resource Collisions**
-   Adhere to naming conventions across modules to reduce accidental conflicts (e.g., prefix resource names with your module name).
+3. **Watch for Resource Collisions**
+   Use naming conventions across modules to avoid accidental conflicts (e.g., prefix resource names with your module name).
 
 4. **Reflection and Obfuscation**
-   If your local modules rely on reflection or advanced ProGuard/R8 settings, double-check that relocating `R` classes does not cause breakage.
+   If your modules use reflection or advanced ProGuard/R8 settings, double-check that relocating `R` classes doesn't break things.
 
-5. **Be Cautious with Versioning**
-   Ensure all local modules are on the same version schedule. Mismatched versions can be tricky to handle once merged.
+5. **Watch Out for Versioning**
+   Make sure all local modules are on the same version schedule. Mismatched versions can be tricky to handle once merged.
 
 6. **ASM Considerations**
-   Bytecode manipulation is extremely powerful but can be hazardous:
-      - If a local module uses reflection or dynamic class loading, relocated classes might not be found under their new names.
+   Bytecode manipulation is powerful but can be tricky:
+      - If a module uses reflection or dynamic class loading, relocated classes might not be found under their new names.
       - Resource collisions or unusual build logic can break merging steps.
 
-   ***In short***: Thoroughly test your final `.aar` after merging local libraries, especially if your modules have advanced or custom code.
+   ***In short***: Test your final `.aar` thoroughly after merging, especially if your modules have advanced or custom code.
 
 ---
 
-**Enjoy your single, merged artifact—just keep in mind that merging local modules introduces complexity that must be managed through careful testing and naming conventions!**
+**Enjoy your single, merged artifact! Just remember that merging modules adds complexity - test thoroughly and use good naming conventions.**
 
 ```
 When the module shines, we shine together

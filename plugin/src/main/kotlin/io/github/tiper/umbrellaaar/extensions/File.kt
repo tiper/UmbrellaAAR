@@ -5,10 +5,6 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
-/**
- * Normalize path separators to forward slashes for cross-platform compatibility.
- * Windows uses backslashes, but ZIP archives and internal paths use forward slashes.
- */
 internal fun String.normalizePath(): String = replace("\\", "/")
 
 internal fun File.unzip(
@@ -25,7 +21,7 @@ internal fun File.unzip(
                         output.write(
                             input.readBytes().let {
                                 if (entry.name.endsWith(".class")) transformer(it) else it
-                            }
+                            },
                         )
                     }
                 }

@@ -1,6 +1,7 @@
 package io.github.tiper.umbrellaaar.tasks
 
 import io.github.tiper.umbrellaaar.extensions.unzip
+import java.io.File
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
@@ -10,13 +11,12 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.NONE
 import org.gradle.api.tasks.TaskAction
-import java.io.File
 
 @CacheableTask
 abstract class ExtractMainAar : DefaultTask() {
 
     @get:InputFile
-    @get:PathSensitive(NONE)  // Use content-based hashing, not path-based
+    @get:PathSensitive(NONE) // Use content-based hashing, not path-based
     abstract val mainAar: RegularFileProperty
 
     @get:OutputDirectory
@@ -28,9 +28,7 @@ abstract class ExtractMainAar : DefaultTask() {
         aarDir.deleteRecursively()
         aarDir.mkdirs()
 
-        val aarFile = mainAar.get().asFile
-        logger.lifecycle("Extracting main AAR: ${aarFile.name}")
-        aarFile.unzip(aarDir) { entry ->
+        mainAar.get().asFile.also { logger.lifecycle("Extracting main AAR: ${it.name}") }.unzip(aarDir) { entry ->
             if (entry.name == "classes.jar") {
                 File(aarDir, "classes.jar").apply {
                     getInputStream(entry).use { outputStream().use(it::copyTo) }

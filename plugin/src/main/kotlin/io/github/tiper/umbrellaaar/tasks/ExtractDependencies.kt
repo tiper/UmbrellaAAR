@@ -2,6 +2,7 @@ package io.github.tiper.umbrellaaar.tasks
 
 import io.github.tiper.umbrellaaar.extensions.transformClass
 import io.github.tiper.umbrellaaar.extensions.unzip
+import java.io.File
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -13,7 +14,6 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.NONE
 import org.gradle.api.tasks.TaskAction
-import java.io.File
 
 @CacheableTask
 abstract class ExtractDependencies : DefaultTask() {
@@ -45,42 +45,40 @@ abstract class ExtractDependencies : DefaultTask() {
 
         logger.lifecycle("Extracting dependencies from ${dependencies.files.size} archives")
         dependencies.files.forEach { file ->
-            when(file.extension) {
-                "aar" -> {
-                    try {
-                        logger.debug("Extracting AAR: ${file.name}")
-                        file.unzip(to = File(baseDir, file.nameWithoutExtension).also { it.mkdirs() }) { entry ->
-                            if (entry.name == "classes.jar") {
-                                File(baseDir, "classes.jar").apply {
-                                    getInputStream(entry).use { outputStream().use(it::copyTo) }
-                                }.unzip(
-                                    to = File(baseDir, "${file.nameWithoutExtension}/classes"),
-                                    transformer = {
-                                        it.transformClass(namespace)
-                                    }
-                                ) { !it.isDirectory }.delete()
-                                return@unzip false
-                            }
-                            else !entry.isDirectory
-                                    && entry.name.endsWith("aar-metadata.properties").not()
-                                    && entry.name.endsWith("classes.jar").not()
-                        }
-                        aarsProcessed++
-                    } catch (e: Exception) {
-                        logger.warn("Failed to extract AAR ${file.name}: ${e.message}")
+            when (file.extension) {
+                "aar" -> try {
+                    logger.debug("Extracting AAR: ${file.name}")
+                    file.unzip(to = File(baseDir, file.nameWithoutExtension).also { it.mkdirs() }) { entry ->
+                        if (entry.name == "classes.jar") {
+                            File(baseDir, "classes.jar").apply {
+                                getInputStream(entry).use { outputStream().use(it::copyTo) }
+                            }.unzip(
+                                to = File(baseDir, "${file.nameWithoutExtension}/classes"),
+                                transformer = {
+                                    it.transformClass(namespace)
+                                },
+                            ) { !it.isDirectory }.delete()
+                            return@unzip false
+                        } else !entry.isDirectory &&
+                            entry.name.endsWith("aar-metadata.properties").not() &&
+                            entry.name.endsWith("classes.jar").not()
                     }
+                    aarsProcessed++
+                } catch (e: Exception) {
+                    logger.warn("Failed to extract AAR ${file.name}: ${e.message}")
                 }
-                "jar" -> {
-                    try {
-                        logger.debug("Extracting JAR: ${file.name}")
-                        file.unzip(to = File(baseDir, "${file.nameWithoutExtension}/classes")) {
-                            !it.isDirectory && !it.name.endsWith("MANIFEST.MF")
-                        }
-                        jarsProcessed++
-                    } catch (e: Exception) {
-                        logger.warn("Failed to extract JAR ${file.name}: ${e.message}")
+
+                "jar" -> try {
+                    logger.debug("Extracting JAR: ${file.name}")
+                    // Skip MANIFEST.MF - conflicts with main manifest
+                    file.unzip(to = File(baseDir, "${file.nameWithoutExtension}/classes")) {
+                        !it.isDirectory && !it.name.endsWith("MANIFEST.MF")
                     }
+                    jarsProcessed++
+                } catch (e: Exception) {
+                    logger.warn("Failed to extract JAR ${file.name}: ${e.message}")
                 }
+
                 else -> logger.debug("Ignoring non-JAR/AAR file: ${file.name}")
             }
         }

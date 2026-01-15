@@ -4,6 +4,10 @@ import com.android.build.gradle.internal.tasks.manifest.mergeManifests
 import com.android.manifmerger.ManifestProvider
 import com.android.utils.ILogger
 import io.github.tiper.umbrellaaar.extensions.normalizePath
+import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.DirectoryProperty
@@ -15,10 +19,6 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.RELATIVE
 import org.gradle.api.tasks.TaskAction
-import java.io.File
-import java.io.FileOutputStream
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 
 @CacheableTask
 abstract class MergeDependencies : DefaultTask() {
@@ -57,10 +57,13 @@ abstract class MergeDependencies : DefaultTask() {
 
                 when {
                     relativePath.startsWith("res/values") -> srcFile.copyValues(
-                        owner = subLibFolder.name, to = destFile,
+                        owner = subLibFolder.name,
+                        to = destFile,
                     )
+
                     relativePath.endsWith(".kotlin_module") -> srcFile.copyValues(
-                        owner = subLibFolder.name, to = destFile,
+                        owner = subLibFolder.name,
+                        to = destFile,
                     )
 
                     relativePath.endsWith("R.txt") -> srcFile.append(
@@ -72,14 +75,15 @@ abstract class MergeDependencies : DefaultTask() {
                     )
 
                     relativePath.endsWith("AndroidManifest.xml") -> srcFile.mergeManifest(
-                        to = manifest, packageOverride = manifest.removePackage(),
+                        to = manifest,
+                        packageOverride = manifest.removePackage(),
                     )
 
                     relativePath.endsWith("proguard.txt") -> srcFile.append(
                         to = destFile,
                     )
 
-                    destFile.exists() -> throw GradleException("Resource duplicate detected: ${destFile.name}.")
+                    destFile.exists() -> throw GradleException("Resource duplicate: ${destFile.name}")
 
                     else -> {
                         destFile.parentFile?.mkdirs()
@@ -117,9 +121,7 @@ abstract class MergeDependencies : DefaultTask() {
         return pkgName.orEmpty()
     }
 
-    private fun String.stripPackageAttribute(): Pair<String, String?> {
-        return replace(pattern, "") to pattern.find(this)?.groups?.get(1)?.value
-    }
+    private fun String.stripPackageAttribute(): Pair<String, String?> = replace(pattern, "") to pattern.find(this)?.groups?.get(1)?.value
 
     private fun File.mergeManifest(to: File, packageOverride: String) {
         if (!to.exists()) {
@@ -154,7 +156,7 @@ abstract class MergeDependencies : DefaultTask() {
                 reportFile = null,
                 logger = GradleILogger(logger),
                 checkIfPackageInMainManifest = true,
-                compileSdk = null
+                compileSdk = null,
             )
         } catch (e: Exception) {
             throw GradleException("Failed to merge manifests: ${e.message}", e)
@@ -166,25 +168,28 @@ abstract class MergeDependencies : DefaultTask() {
         override fun getManifest(): File = this@toManifestProvider
     }
 
-    private class GradleILogger(private val gradleLogger: Logger) : ILogger {
+    private class GradleILogger(private val logger: Logger) : ILogger {
         override fun error(t: Throwable?, msgFormat: String?, vararg args: Any?) {
-            gradleLogger.error(msgFormat?.format(*args), t)
+            logger.error(msgFormat?.format(*args), t)
         }
         override fun warning(msgFormat: String?, vararg args: Any?) {
-            gradleLogger.warn(msgFormat?.format(*args))
+            logger.warn(msgFormat?.format(*args))
         }
         override fun info(msgFormat: String?, vararg args: Any?) {
-            gradleLogger.info(msgFormat?.format(*args))
+            logger.info(msgFormat?.format(*args))
         }
         override fun verbose(msgFormat: String?, vararg args: Any?) {
-            gradleLogger.debug(msgFormat?.format(*args))
+            logger.debug(msgFormat?.format(*args))
         }
     }
 
-    private fun File.copyValues(owner: String, to: File) {
-        val newName = "${owner}-${to.nameWithoutExtension}.${to.extension}"
-        copyTo(File(to.parentFile, newName).also { it.parentFile.mkdirs() }, overwrite = true)
-    }
+    private fun File.copyValues(owner: String, to: File) = copyTo(
+        target = File(
+            to.parentFile,
+            "$owner-${to.nameWithoutExtension}.${to.extension}",
+        ).also { it.parentFile.mkdirs() },
+        overwrite = true,
+    )
 
     private fun File.append(to: File) {
         if (to.exists()) to.appendText("\n" + readText())
