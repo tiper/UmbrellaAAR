@@ -7,16 +7,18 @@ import org.gradle.api.artifacts.ExcludeRule
 import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.kotlin.dsl.withType
 
-internal fun Configuration.findAllProjectDependencies() = mutableSetOf<Project>().apply {
+internal fun Configuration.findAllProjectDependencies(): Set<Project> = mutableSetOf<Project>().apply {
     val queue = ArrayDeque<ProjectDependency>().apply {
         addAll(dependencies.withType<ProjectDependency>())
     }
     while (queue.isNotEmpty()) {
         val dep = queue.removeFirst().dependencyProject
         if (add(dep)) {
-            dep.configurations.forEach {
-                it.dependencies.withType<ProjectDependency>().forEach(queue::add)
-            }
+            dep.configurations
+                .filterNot { it.name.contains("test", ignoreCase = true) }
+                .forEach {
+                    it.dependencies.withType<ProjectDependency>().forEach(queue::add)
+                }
         }
     }
 }
@@ -24,38 +26,12 @@ internal fun Configuration.findAllProjectDependencies() = mutableSetOf<Project>(
 internal fun Configuration.allExcludeRules(): List<ExcludeRule> = (excludeRules + dependencies.withType<ProjectDependency>().flatMap { it.excludeRules }).toList()
 
 @Suppress("UselessCallOnNotNull")
-private fun ExcludeRule.matches(group: String?, module: String?): Boolean {
-    val ruleGroup = this.group.orEmpty()
-    val ruleModule = this.module.orEmpty()
-
-    return when {
-        ruleGroup.isNotEmpty() && ruleModule.isNotEmpty() -> ruleGroup == group && ruleModule == module
-        ruleGroup.isNotEmpty() -> ruleGroup == group
-        ruleModule.isNotEmpty() -> ruleModule == module
-        else -> false
-    }
-}
+private fun ExcludeRule.matches(group: String?, module: String?): Boolean = (this.group.orEmpty() to this.module.orEmpty()).matches(group, module)
 
 internal fun Project.isExcluded(rules: List<ExcludeRule>): Boolean = rules.any { it.matches(group = group.toString(), module = name) }
 
 internal fun Dependency.isExcluded(rules: List<ExcludeRule>): Boolean = rules.any { it.matches(group, name) }
 
-internal fun Configuration.isRelevantForDependencies() = (
-    name.contains("api", ignoreCase = true) || name.contains("implementation", ignoreCase = true)
-    ) && (
-    name.contains("jvm", ignoreCase = true) ||
-        name.contains("android", ignoreCase = true) ||
-        name == "implementation" ||
-        name == "api" ||
-        name == "commonMainImplementation" ||
-        name == "commonMainApi" ||
-        name == "androidMainImplementation" ||
-        name == "androidMainApi"
-    )
+internal fun Configuration.isRelevantForDependencies(): Boolean = name.isRelevantForDependencies()
 
-internal fun Configuration.isApplicable(buildType: String): Boolean = when {
-    name.contains("commonMain") -> true
-    name.contains("androidMain") -> true
-    name.contains("android$buildType", true) -> true
-    else -> false
-}
+internal fun Configuration.isApplicable(buildType: String): Boolean = name.isApplicable(buildType)
