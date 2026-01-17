@@ -4,6 +4,7 @@ import com.android.build.gradle.internal.tasks.manifest.mergeManifests
 import com.android.manifmerger.ManifestProvider
 import com.android.utils.ILogger
 import io.github.tiper.umbrellaaar.extensions.normalizePath
+import io.github.tiper.umbrellaaar.extensions.stripPackageAttribute
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipEntry
@@ -22,10 +23,6 @@ import org.gradle.api.tasks.TaskAction
 
 @CacheableTask
 abstract class MergeDependencies : DefaultTask() {
-
-    private companion object {
-        val pattern = """\s+package\s*=\s*"([^"]+)"""".toRegex()
-    }
 
     @get:InputDirectory
     @get:PathSensitive(RELATIVE)
@@ -120,8 +117,6 @@ abstract class MergeDependencies : DefaultTask() {
         writeText(cleanedXml)
         return pkgName.orEmpty()
     }
-
-    private fun String.stripPackageAttribute(): Pair<String, String?> = replace(pattern, "") to pattern.find(this)?.groups?.get(1)?.value
 
     private fun File.mergeManifest(to: File, packageOverride: String) {
         if (!to.exists()) {
