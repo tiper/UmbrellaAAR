@@ -40,7 +40,7 @@ internal fun ByteArray.transformClass(mainNsInternal: String): ByteArray {
 }
 
 // Scans bytecode for "/R$" or "/R;" patterns
-private fun ByteArray.containsRClassReference(): Boolean {
+internal fun ByteArray.containsRClassReference(): Boolean {
     val slash = '/'.code.toByte()
     val rByte = 'R'.code.toByte()
     val dollar = '$'.code.toByte()

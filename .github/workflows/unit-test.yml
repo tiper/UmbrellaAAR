@@ -1,4 +1,4 @@
-name: Ktlint
+name: Unit tests
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ktlint:
+  test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -37,5 +37,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-kotlin-native-ndk-
 
-      - name: Run ktlint Check
-        run: ./gradlew :build-logic:plugins:ktlintCheck ktlintCheck
+      - name: Run unit tests
+        run: |
+          ./gradlew :plugin:test --no-daemon --build-cache --parallel
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: test-results
+          path: |
+            **/build/reports/tests/**
+            **/build/test-results/**

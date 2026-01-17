@@ -20,6 +20,8 @@ dependencies {
     compileOnly(libs.android.gradle.plugin)
     implementation(libs.asm.commons)
     implementation(libs.android.tools.common)
+
+    testImplementation(kotlin("test"))
 }
 
 gradlePlugin {
