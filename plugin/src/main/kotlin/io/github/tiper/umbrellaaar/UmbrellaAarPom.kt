@@ -121,7 +121,7 @@ class UmbrellaAarPom : Plugin<Project> {
         val rules = config.allExcludeRules()
         val declaredDependencies = (setOf(this) + modules).asSequence()
             .flatMap { it.configurations.asSequence() }
-            .filter { it.isRelevantForDependencies() && it.isApplicable(buildType) }
+            .filter { it.isRelevantForDependencies(buildType) && it.isApplicable(buildType) }
             .flatMap { conf ->
                 runCatching {
                     conf.dependencies

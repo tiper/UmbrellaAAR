@@ -5,15 +5,15 @@ internal fun String.capitalize() = replaceFirstChar { it.uppercaseChar() }
 internal fun String.cleanPlatformSuffixes() = listOf("-android", "-jvm", "-java8").fold(this) { acc, suffix -> acc.removeSuffix(suffix) }
 
 // TODO: Support projects with custom source sets.
-internal fun String.isRelevantForDependencies(): Boolean {
+internal fun String.isRelevantForDependencies(buildType: String): Boolean {
     if (contains("test", ignoreCase = true)) return false
-    if (!contains("api", ignoreCase = true) &&
-        !contains("implementation", ignoreCase = true)
-    ) return false
-
-    return contains("jvm", ignoreCase = true) ||
-        contains("android", ignoreCase = true) ||
-        contains("commonMain", ignoreCase = true) ||
+    if (contains("compilation", ignoreCase = true)) return false
+    if (contains("dependenciesmetadata", ignoreCase = true)) return false
+    if (!contains("api", ignoreCase = true) && !contains("implementation", ignoreCase = true)) return false
+    return contains("commonMain", ignoreCase = true) ||
+        contains("androidMain", ignoreCase = true) ||
+        contains("android$buildType", ignoreCase = true) ||
+        contains("jvmMain", ignoreCase = true) ||
         this == "implementation" ||
         this == "api"
 }
