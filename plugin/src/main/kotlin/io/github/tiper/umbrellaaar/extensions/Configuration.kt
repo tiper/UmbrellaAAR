@@ -32,6 +32,6 @@ internal fun Project.isExcluded(rules: List<ExcludeRule>): Boolean = rules.any {
 
 internal fun Dependency.isExcluded(rules: List<ExcludeRule>): Boolean = rules.any { it.matches(group, name) }
 
-internal fun Configuration.isRelevantForDependencies(): Boolean = name.isRelevantForDependencies()
+internal fun Configuration.isRelevantForDependencies(buildType: String): Boolean = name.isRelevantForDependencies(buildType)
 
 internal fun Configuration.isApplicable(buildType: String): Boolean = name.isApplicable(buildType)

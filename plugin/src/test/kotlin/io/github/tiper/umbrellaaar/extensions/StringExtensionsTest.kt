@@ -55,77 +55,132 @@ class StringExtensionsTest {
 
     @Test
     fun `isRelevantForDependencies returns true for commonMainImplementation`() {
-        assertTrue("commonMainImplementation".isRelevantForDependencies())
+        assertTrue("commonMainImplementation".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns true for commonMainApi`() {
-        assertTrue("commonMainApi".isRelevantForDependencies())
+        assertTrue("commonMainApi".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns true for androidMainImplementation`() {
-        assertTrue("androidMainImplementation".isRelevantForDependencies())
+        assertTrue("androidMainImplementation".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns true for androidMainApi`() {
-        assertTrue("androidMainApi".isRelevantForDependencies())
+        assertTrue("androidMainApi".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns true for implementation`() {
-        assertTrue("implementation".isRelevantForDependencies())
+        assertTrue("implementation".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns true for api`() {
-        assertTrue("api".isRelevantForDependencies())
+        assertTrue("api".isRelevantForDependencies("release"))
     }
 
     @Test
-    fun `isRelevantForDependencies returns true for jvmApi`() {
-        assertTrue("jvmApi".isRelevantForDependencies())
+    fun `isRelevantForDependencies returns true for jvmMainApi`() {
+        assertTrue("jvmMainApi".isRelevantForDependencies("release"))
     }
 
     @Test
-    fun `isRelevantForDependencies returns true for androidImplementation`() {
-        assertTrue("androidImplementation".isRelevantForDependencies())
+    fun `isRelevantForDependencies returns true for jvmMainImplementation`() {
+        assertTrue("jvmMainImplementation".isRelevantForDependencies("release"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns true for androidReleaseApi`() {
+        assertTrue("androidReleaseApi".isRelevantForDependencies("release"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns true for androidReleaseImplementation`() {
+        assertTrue("androidReleaseImplementation".isRelevantForDependencies("release"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns true for androidDebugApi when buildType is debug`() {
+        assertTrue("androidDebugApi".isRelevantForDependencies("debug"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns false for androidDebugApi when buildType is release`() {
+        assertFalse("androidDebugApi".isRelevantForDependencies("release"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns false for androidReleaseCompilationApi`() {
+        assertFalse("androidReleaseCompilationApi".isRelevantForDependencies("release"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns false for androidReleaseCompilationImplementation`() {
+        assertFalse("androidReleaseCompilationImplementation".isRelevantForDependencies("release"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns false for metadataCommonMainCompilationApi`() {
+        assertFalse("metadataCommonMainCompilationApi".isRelevantForDependencies("release"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns false for metadataCommonMainCompilationImplementation`() {
+        assertFalse("metadataCommonMainCompilationImplementation".isRelevantForDependencies("release"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns false for androidDebugApiDependenciesMetadata`() {
+        assertFalse("androidDebugApiDependenciesMetadata".isRelevantForDependencies("debug"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns false for commonMainApiDependenciesMetadata`() {
+        assertFalse("commonMainApiDependenciesMetadata".isRelevantForDependencies("release"))
+    }
+
+    @Test
+    fun `isRelevantForDependencies returns false for androidMainImplementationDependenciesMetadata`() {
+        assertFalse("androidMainImplementationDependenciesMetadata".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns false for commonTestImplementation`() {
-        assertFalse("commonTestImplementation".isRelevantForDependencies())
+        assertFalse("commonTestImplementation".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns false for androidTestApi`() {
-        assertFalse("androidTestApi".isRelevantForDependencies())
+        assertFalse("androidTestApi".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns false for androidUnitTestImplementation`() {
-        assertFalse("androidUnitTestImplementation".isRelevantForDependencies())
+        assertFalse("androidUnitTestImplementation".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns false for testImplementation`() {
-        assertFalse("testImplementation".isRelevantForDependencies())
+        assertFalse("testImplementation".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns false for compileOnly`() {
-        assertFalse("compileOnly".isRelevantForDependencies())
+        assertFalse("compileOnly".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns false for runtimeOnly`() {
-        assertFalse("runtimeOnly".isRelevantForDependencies())
+        assertFalse("runtimeOnly".isRelevantForDependencies("release"))
     }
 
     @Test
     fun `isRelevantForDependencies returns false for annotationProcessor`() {
-        assertFalse("annotationProcessor".isRelevantForDependencies())
+        assertFalse("annotationProcessor".isRelevantForDependencies("release"))
     }
 
     @Test
