@@ -33,7 +33,7 @@ class KotlinPlatformDisambiguationRuleTest {
     }
 
     @Test
-    fun `selects common when only candidate without jvm or androidJvm`() {
+    fun `selects consumer value when present in candidates even with common available`() {
         val details = MockMultipleCandidatesDetails(
             consumerValue = "js",
             candidateValues = setOf("common", "js"),

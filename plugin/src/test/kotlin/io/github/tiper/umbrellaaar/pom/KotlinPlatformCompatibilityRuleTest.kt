@@ -35,8 +35,6 @@ class KotlinPlatformCompatibilityRuleTest {
 
     @Test
     fun `marks common producer compatible with any consumer`() {
-        val rule = KotlinPlatformCompatibilityRule()
-
         listOf("jvm", "androidJvm", "js", "native").forEach { consumer ->
             val details = MockCompatibilityCheckDetails(
                 producerValue = "common",
@@ -51,8 +49,6 @@ class KotlinPlatformCompatibilityRuleTest {
 
     @Test
     fun `marks any producer compatible with common consumer`() {
-        val rule = KotlinPlatformCompatibilityRule()
-
         listOf("jvm", "androidJvm", "js", "native").forEach { producer ->
             val details = MockCompatibilityCheckDetails(
                 producerValue = producer,

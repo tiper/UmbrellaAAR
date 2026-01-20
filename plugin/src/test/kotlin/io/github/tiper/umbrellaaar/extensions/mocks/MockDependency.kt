@@ -7,7 +7,7 @@ internal class MockDependency(
     private val name: String,
 ) : Dependency {
     override fun getGroup(): String? = group
-    override fun getName(): String = requireNotNull(name)
+    override fun getName(): String = name
     override fun getVersion(): String? = "1.0.0"
     override fun getReason(): String? = null
     override fun contentEquals(dependency: Dependency): Boolean = false

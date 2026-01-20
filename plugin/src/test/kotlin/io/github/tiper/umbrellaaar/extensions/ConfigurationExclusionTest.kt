@@ -247,7 +247,7 @@ class ConfigurationExclusionTest {
     }
 
     @Test
-    fun `dependency with null name is not excluded`() {
+    fun `dependency with empty name is not excluded`() {
         val dependency = MockDependency(group = "com.example", name = "")
         val rules = listOf(
             MockExcludeRule(group = "com.example", module = "library"),
@@ -257,7 +257,7 @@ class ConfigurationExclusionTest {
     }
 
     @Test
-    fun `dependency with null name is excluded by group-only rule`() {
+    fun `dependency with empty name is excluded by group-only rule`() {
         val dependency = MockDependency(group = "com.example", name = "")
         val rules = listOf(
             MockExcludeRule(group = "com.example", module = null),

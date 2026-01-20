@@ -462,6 +462,7 @@ class StringExtensionsTest {
 
         assertEquals("com.first", pkg)
         assertFalse(cleaned.contains("package=\"com.first\""))
+        assertFalse(cleaned.contains("package=\"com.second\""))
     }
 
     @Test
