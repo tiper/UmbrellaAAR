@@ -25,8 +25,7 @@ internal fun Configuration.findAllProjectDependencies(): Set<Project> = mutableS
 
 internal fun Configuration.allExcludeRules(): List<ExcludeRule> = (excludeRules + dependencies.withType<ProjectDependency>().flatMap { it.excludeRules }).toList()
 
-@Suppress("UselessCallOnNotNull")
-private fun ExcludeRule.matches(group: String?, module: String?): Boolean = (this.group.orEmpty() to this.module.orEmpty()).matches(group, module)
+internal fun ExcludeRule.matches(group: String?, module: String?): Boolean = (groupOrEmpty to moduleOrEmpty).matches(group, module)
 
 internal fun Project.isExcluded(rules: List<ExcludeRule>): Boolean = rules.any { it.matches(group = group.toString(), module = name) }
 

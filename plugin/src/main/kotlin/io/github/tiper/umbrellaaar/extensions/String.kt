@@ -1,5 +1,8 @@
 package io.github.tiper.umbrellaaar.extensions
 
+// FIXME: This regex will match any occurrence of the package attribute pattern, even inside comments.
+internal val PACKAGE_ATTRIBUTE_PATTERN = """\s+package\s*=\s*"([^"]+)"""".toRegex()
+
 internal fun String.capitalize() = replaceFirstChar { it.uppercaseChar() }
 
 internal fun String.cleanPlatformSuffixes() = listOf("-android", "-jvm", "-java8").fold(this) { acc, suffix -> acc.removeSuffix(suffix) }
@@ -32,3 +35,7 @@ internal fun Pair<String, String>.matches(group: String?, module: String?): Bool
     second.isNotEmpty() -> second == module
     else -> false
 }
+
+internal fun String.stripPackageAttribute(): Pair<String, String?> = replace(PACKAGE_ATTRIBUTE_PATTERN, "") to packageName()
+
+internal fun String.packageName(): String? = PACKAGE_ATTRIBUTE_PATTERN.find(this)?.groups?.get(1)?.value
