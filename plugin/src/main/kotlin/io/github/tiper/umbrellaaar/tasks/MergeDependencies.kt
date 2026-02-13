@@ -7,6 +7,7 @@ import io.github.tiper.umbrellaaar.extensions.normalizePath
 import io.github.tiper.umbrellaaar.extensions.stripPackageAttribute
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.gradle.api.DefaultTask
@@ -90,6 +91,13 @@ abstract class MergeDependencies : DefaultTask() {
                 filesProcessed++
             }
         }
+
+        // Ensure all merged text files end with a newline
+        File(main, "R.txt").ensureTrailingNewline()
+        File(main, "consumer-rules.pro").ensureTrailingNewline()
+        main.walkTopDown()
+            .filter { it.isFile && it.name == "proguard.txt" }
+            .forEach { it.ensureTrailingNewline() }
 
         val jar = mergedJar.get().asFile.apply {
             if (exists()) delete()
@@ -187,7 +195,18 @@ abstract class MergeDependencies : DefaultTask() {
     )
 
     private fun File.append(to: File) {
-        if (to.exists()) to.appendText("\n" + readText())
-        else copyTo(to.also { it.parentFile.mkdirs() }, overwrite = true)
+        val content = readText().lines().filter { it.isNotBlank() }.joinToString("\n")
+        if (content.isEmpty()) return
+
+        if (to.exists() && to.readText().isNotBlank()) to.appendText("\n$content")
+        else to.also { it.parentFile.mkdirs() }.writeText(content)
+    }
+
+    private fun File.ensureTrailingNewline() {
+        if (!exists() || length() == 0L) return
+        RandomAccessFile(this, "r").use {
+            it.seek(length() - 1)
+            if (it.read().toByte() != '\n'.code.toByte()) appendText("\n")
+        }
     }
 }
