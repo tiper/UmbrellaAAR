@@ -12,7 +12,7 @@ import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity.NONE
+import org.gradle.api.tasks.PathSensitivity.RELATIVE
 import org.gradle.api.tasks.TaskAction
 
 @CacheableTask
@@ -22,11 +22,18 @@ abstract class ExtractDependencies : DefaultTask() {
     abstract val mainNamespace: Property<String>
 
     @get:InputFiles
-    @get:PathSensitive(NONE)
+    @get:PathSensitive(RELATIVE)
     abstract val dependencies: ConfigurableFileCollection
 
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
+
+    private val rootDir: File = project.rootProject.projectDir
+
+    private fun File.folderName(): String = relativeToOrNull(rootDir)?.path
+        ?.replace(File.separatorChar, '_')
+        ?.removeSuffix(".$extension")
+        ?: nameWithoutExtension
 
     @TaskAction
     fun execute() {
@@ -48,12 +55,13 @@ abstract class ExtractDependencies : DefaultTask() {
             when (file.extension) {
                 "aar" -> try {
                     logger.debug("Extracting AAR: ${file.name}")
-                    file.unzip(to = File(baseDir, file.nameWithoutExtension).also { it.mkdirs() }) { entry ->
+                    val folderName = file.folderName()
+                    file.unzip(to = File(baseDir, folderName).also { it.mkdirs() }) { entry ->
                         if (entry.name == "classes.jar") {
                             File(baseDir, "classes.jar").apply {
                                 getInputStream(entry).use { outputStream().use(it::copyTo) }
                             }.unzip(
-                                to = File(baseDir, "${file.nameWithoutExtension}/classes"),
+                                to = File(baseDir, "$folderName/classes"),
                                 transformer = {
                                     it.transformClass(namespace)
                                 },
@@ -70,8 +78,9 @@ abstract class ExtractDependencies : DefaultTask() {
 
                 "jar" -> try {
                     logger.debug("Extracting JAR: ${file.name}")
+                    val folderName = file.folderName()
                     // Skip MANIFEST.MF - conflicts with main manifest
-                    file.unzip(to = File(baseDir, "${file.nameWithoutExtension}/classes")) {
+                    file.unzip(to = File(baseDir, "$folderName/classes")) {
                         !it.isDirectory && !it.name.endsWith("MANIFEST.MF")
                     }
                     jarsProcessed++
