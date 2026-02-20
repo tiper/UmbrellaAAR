@@ -9,7 +9,7 @@ kotlin = "1.9.23" # https://github.com/JetBrains/kotlin/releases
 ktor = "2.3.13" # https://github.com/ktorio/ktor/releases
 ktlint = "1.8.0" # https://github.com/pinterest/ktlint/releases
 ktlint-gradle = "14.0.1" # https://github.com/JLLeitschuh/ktlint-gradle/releases
-umbrellaaar = "2.1.0" # https://github.com/tiper/UmbrellaAAR/releases
+umbrellaaar = "2.3.0-SNAPSHOT" # https://github.com/tiper/UmbrellaAAR/releases
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }

@@ -1,6 +1,6 @@
 package io.github.tiper.umbrellaaar
 
-import com.android.build.gradle.LibraryExtension
+import com.android.build.api.dsl.LibraryExtension
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.findAar
@@ -28,7 +28,7 @@ class UmbrellaAar : Plugin<Project> {
     private fun Project.setup(
         buildType: String,
         config: Configuration,
-        namespace: Provider<String?>,
+        namespace: Provider<String>,
     ) {
         val buildTypeCapitalized = buildType.capitalize()
 
@@ -47,7 +47,7 @@ class UmbrellaAar : Plugin<Project> {
 
         val filteredProjectsProvider = provider {
             val rules = config.allExcludeRules()
-            config.findAllProjectDependencies().filterNot { it.isExcluded(rules) }
+            findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }
         }
 
         extractDependencies.configure {

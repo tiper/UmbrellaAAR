@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "io.github.tiper"
-version = "2.2.2"
+version = "2.3.0-SNAPSHOT"
 
 java {
     toolchain {
