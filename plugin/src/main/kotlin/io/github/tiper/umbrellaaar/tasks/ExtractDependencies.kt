@@ -10,6 +10,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.NONE
@@ -28,6 +29,9 @@ abstract class ExtractDependencies : DefaultTask() {
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
+    @get:Internal
+    abstract val rootDir: DirectoryProperty
+
     @TaskAction
     fun execute() {
         val baseDir = outputDir.get().asFile
@@ -45,15 +49,18 @@ abstract class ExtractDependencies : DefaultTask() {
 
         logger.lifecycle("Extracting dependencies from ${dependencies.files.size} archives")
         dependencies.files.forEach { file ->
+            val folderName = file.relativeTo(rootDir.get().asFile).path
+                .replace(File.separatorChar, '_')
+                .removeSuffix(".${file.extension}")
             when (file.extension) {
                 "aar" -> try {
                     logger.debug("Extracting AAR: ${file.name}")
-                    file.unzip(to = File(baseDir, file.nameWithoutExtension).also { it.mkdirs() }) { entry ->
+                    file.unzip(to = File(baseDir, folderName).also { it.mkdirs() }) { entry ->
                         if (entry.name == "classes.jar") {
                             File(baseDir, "classes.jar").apply {
                                 getInputStream(entry).use { outputStream().use(it::copyTo) }
                             }.unzip(
-                                to = File(baseDir, "${file.nameWithoutExtension}/classes"),
+                                to = File(baseDir, "$folderName/classes"),
                                 transformer = {
                                     it.transformClass(namespace)
                                 },
@@ -71,7 +78,7 @@ abstract class ExtractDependencies : DefaultTask() {
                 "jar" -> try {
                     logger.debug("Extracting JAR: ${file.name}")
                     // Skip MANIFEST.MF - conflicts with main manifest
-                    file.unzip(to = File(baseDir, "${file.nameWithoutExtension}/classes")) {
+                    file.unzip(to = File(baseDir, "$folderName/classes")) {
                         !it.isDirectory && !it.name.endsWith("MANIFEST.MF")
                     }
                     jarsProcessed++
