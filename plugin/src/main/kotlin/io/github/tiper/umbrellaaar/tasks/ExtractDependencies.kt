@@ -12,7 +12,7 @@ import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity.NONE
+import org.gradle.api.tasks.PathSensitivity.RELATIVE
 import org.gradle.api.tasks.TaskAction
 
 @CacheableTask
@@ -22,7 +22,7 @@ abstract class ExtractDependencies : DefaultTask() {
     abstract val mainNamespace: Property<String>
 
     @get:InputFiles
-    @get:PathSensitive(NONE)
+    @get:PathSensitive(RELATIVE)
     abstract val dependencies: ConfigurableFileCollection
 
     @get:OutputDirectory
