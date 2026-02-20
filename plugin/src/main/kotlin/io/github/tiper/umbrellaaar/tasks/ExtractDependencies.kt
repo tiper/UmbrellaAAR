@@ -30,6 +30,11 @@ abstract class ExtractDependencies : DefaultTask() {
 
     private val rootDir: File = project.rootProject.projectDir
 
+    private fun File.folderName(): String = relativeToOrNull(rootDir)?.path
+        ?.replace(File.separatorChar, '_')
+        ?.removeSuffix(".$extension")
+        ?: nameWithoutExtension
+
     @TaskAction
     fun execute() {
         val baseDir = outputDir.get().asFile
@@ -47,12 +52,10 @@ abstract class ExtractDependencies : DefaultTask() {
 
         logger.lifecycle("Extracting dependencies from ${dependencies.files.size} archives")
         dependencies.files.forEach { file ->
-            val folderName = file.relativeTo(rootDir).path
-                .replace(File.separatorChar, '_')
-                .removeSuffix(".${file.extension}")
             when (file.extension) {
                 "aar" -> try {
                     logger.debug("Extracting AAR: ${file.name}")
+                    val folderName = file.folderName()
                     file.unzip(to = File(baseDir, folderName).also { it.mkdirs() }) { entry ->
                         if (entry.name == "classes.jar") {
                             File(baseDir, "classes.jar").apply {
@@ -75,6 +78,7 @@ abstract class ExtractDependencies : DefaultTask() {
 
                 "jar" -> try {
                     logger.debug("Extracting JAR: ${file.name}")
+                    val folderName = file.folderName()
                     // Skip MANIFEST.MF - conflicts with main manifest
                     file.unzip(to = File(baseDir, "$folderName/classes")) {
                         !it.isDirectory && !it.name.endsWith("MANIFEST.MF")
