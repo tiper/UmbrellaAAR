@@ -6,8 +6,8 @@
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.tiper/umbrellaaar)](https://central.sonatype.com/search?q=g%3Aio.github.tiper)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.23+-blue.svg)](https://kotlinlang.org/)
-[![Gradle](https://img.shields.io/badge/Gradle-8.0+-blue.svg)](https://gradle.org/)
-[![AGP](https://img.shields.io/badge/AGP-8.0.0+-green.svg)](https://developer.android.com/build/releases/gradle-plugin)
+[![Gradle](https://img.shields.io/badge/Gradle-8.0--8.x-blue.svg)](https://gradle.org/)
+[![AGP](https://img.shields.io/badge/AGP-8.0.0--8.x-green.svg)](https://developer.android.com/build/releases/gradle-plugin)
 
 Gradle plugin for merging multiple Android/KMP modules into a single AAR. Useful when you have a multi-module project but want to ship one consolidated library.
 
@@ -15,11 +15,13 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 
 ⚠️ **Only merges local modules from your project.** External dependencies (like AndroidX) stay separate.
 
+> ⚠️ **AGP 9 / Gradle 9 compatibility is not yet available.** The current version supports AGP 8.x with Gradle 8.x only. AGP 9 support is being worked on.
+
 ## Quick Start
 
 ```kotlin
 plugins {
-    id("io.github.tiper.umbrellaaar") version "2.1.0"
+    id("io.github.tiper.umbrellaaar") version "2.2.2"
 }
 
 dependencies {
@@ -109,7 +111,7 @@ The plugin is available on **Maven Central** and **Gradle Plugin Portal**. No ad
 
 ```kotlin
 plugins {
-    id("io.github.tiper.umbrellaaar") version "2.1.0"
+    id("io.github.tiper.umbrellaaar") version "2.2.2"
 }
 ```
 
@@ -119,8 +121,8 @@ If you want to **publish your UmbrellaAAR to Maven repositories**, also apply th
 
 ```kotlin
 plugins {
-    id("io.github.tiper.umbrellaaar") version "2.1.0"
-    id("io.github.tiper.umbrellaaar.pom") version "2.1.0"
+    id("io.github.tiper.umbrellaaar") version "2.2.2"
+    id("io.github.tiper.umbrellaaar.pom") version "2.2.2"
     id("maven-publish")
 }
 ```
@@ -180,8 +182,8 @@ pluginManagement {
 
    ```kotlin
    plugins {
-       id("io.github.tiper.umbrellaaar") version "2.1.0"
-       id("io.github.tiper.umbrellaaar.pom") version "2.1.0"
+       id("io.github.tiper.umbrellaaar") version "2.2.2"
+       id("io.github.tiper.umbrellaaar.pom") version "2.2.2"
        id("maven-publish")
    }
 
@@ -272,8 +274,8 @@ build/outputs/umbrellaaar/myMainLibrary-debug.aar
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.multiplatform")
-    id("io.github.tiper.umbrellaaar") version "2.1.0"
-    id("io.github.tiper.umbrellaaar.pom") version "2.1.0"
+    id("io.github.tiper.umbrellaaar") version "2.2.2"
+    id("io.github.tiper.umbrellaaar.pom") version "2.2.2"
     id("maven-publish")
 }
 
