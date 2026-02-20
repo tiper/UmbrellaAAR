@@ -22,6 +22,7 @@ dependencies {
     implementation(libs.android.tools.common)
 
     testImplementation(kotlin("test"))
+    testImplementation(gradleTestKit())
 }
 
 gradlePlugin {
