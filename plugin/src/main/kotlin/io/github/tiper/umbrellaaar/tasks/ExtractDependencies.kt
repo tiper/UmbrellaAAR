@@ -10,7 +10,6 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
-import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.NONE
@@ -29,8 +28,7 @@ abstract class ExtractDependencies : DefaultTask() {
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
-    @get:Internal
-    abstract val rootDir: DirectoryProperty
+    private val rootDir: File = project.rootProject.projectDir
 
     @TaskAction
     fun execute() {
@@ -49,7 +47,7 @@ abstract class ExtractDependencies : DefaultTask() {
 
         logger.lifecycle("Extracting dependencies from ${dependencies.files.size} archives")
         dependencies.files.forEach { file ->
-            val folderName = file.relativeTo(rootDir.get().asFile).path
+            val folderName = file.relativeTo(rootDir).path
                 .replace(File.separatorChar, '_')
                 .removeSuffix(".${file.extension}")
             when (file.extension) {
