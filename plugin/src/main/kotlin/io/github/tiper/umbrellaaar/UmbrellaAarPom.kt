@@ -1,11 +1,10 @@
 package io.github.tiper.umbrellaaar
 
-import com.android.build.api.attributes.BuildTypeAttr
-import com.android.build.api.attributes.BuildTypeAttr.Companion.ATTRIBUTE
-import com.android.build.gradle.LibraryExtension
+import com.android.build.api.dsl.LibraryExtension
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.cleanPlatformSuffixes
+import io.github.tiper.umbrellaaar.extensions.createAndroidResolutionConfig
 import io.github.tiper.umbrellaaar.extensions.findAllProjectDependencies
 import io.github.tiper.umbrellaaar.extensions.isApplicable
 import io.github.tiper.umbrellaaar.extensions.isExcluded
@@ -13,22 +12,12 @@ import io.github.tiper.umbrellaaar.extensions.isRelevantForDependencies
 import io.github.tiper.umbrellaaar.pom.Collector
 import io.github.tiper.umbrellaaar.pom.Collector.Dependency
 import io.github.tiper.umbrellaaar.pom.Collector.Dependency.Companion.fromCoordinate
-import io.github.tiper.umbrellaaar.pom.configureKotlinPlatformAttribute
 import io.github.tiper.umbrellaaar.tasks.CollectExternalDependencies
 import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.ProjectDependency
-import org.gradle.api.attributes.Category
-import org.gradle.api.attributes.Category.CATEGORY_ATTRIBUTE
-import org.gradle.api.attributes.Category.LIBRARY
-import org.gradle.api.attributes.Usage
-import org.gradle.api.attributes.Usage.JAVA_RUNTIME
-import org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE
-import org.gradle.api.attributes.java.TargetJvmEnvironment
-import org.gradle.api.attributes.java.TargetJvmEnvironment.ANDROID
-import org.gradle.api.attributes.java.TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.publish.maven.plugins.MavenPublishPlugin
@@ -56,7 +45,7 @@ class UmbrellaAarPom : Plugin<Project> {
             val rules = config.allExcludeRules()
             collectExternalDependencies(
                 buildType = buildType,
-                modules = config.findAllProjectDependencies().filterNot { it.isExcluded(rules) }.toSet(),
+                modules = findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }.toSet(),
                 config = config,
             )
         }
@@ -182,18 +171,6 @@ class UmbrellaAarPom : Plugin<Project> {
                 if (dep.name in listOf("unspecified", "null")) return@mapNotNull null
                 Dependency(group, dep.name, version, "compile")
             }
-        }
-    }
-
-    private fun Project.createAndroidResolutionConfig(buildType: String) = configurations.detachedConfiguration().apply {
-        isCanBeResolved = true
-        isCanBeConsumed = false
-        configureKotlinPlatformAttribute(listOf(this))
-        attributes {
-            attribute(ATTRIBUTE, objects.named(BuildTypeAttr::class.java, buildType))
-            attribute(CATEGORY_ATTRIBUTE, objects.named(Category::class.java, LIBRARY))
-            attribute(USAGE_ATTRIBUTE, objects.named(Usage::class.java, JAVA_RUNTIME))
-            attribute(TARGET_JVM_ENVIRONMENT_ATTRIBUTE, objects.named(TargetJvmEnvironment::class.java, ANDROID))
         }
     }
 

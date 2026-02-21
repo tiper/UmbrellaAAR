@@ -3,6 +3,7 @@
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 pluginManagement {
     includeBuild("gradle/build-logic")
+    includeBuild("plugin")
     repositories {
         mavenLocal {
             mavenContent {
@@ -28,7 +29,6 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "UmbrellaAAR"
-include(":plugin")
 include(
     ":sample:aidl:sample1",
     ":sample:aidl:sample2",
