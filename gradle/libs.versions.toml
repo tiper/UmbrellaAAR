@@ -9,7 +9,6 @@ kotlin = "1.9.23" # https://github.com/JetBrains/kotlin/releases
 ktor = "2.3.13" # https://github.com/ktorio/ktor/releases
 ktlint = "1.8.0" # https://github.com/pinterest/ktlint/releases
 ktlint-gradle = "14.0.1" # https://github.com/JLLeitschuh/ktlint-gradle/releases
-umbrellaaar = "2.3.0-SNAPSHOT" # https://github.com/tiper/UmbrellaAAR/releases
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -31,6 +30,6 @@ compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose" 
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-multiplatform-tiper = { id = "io.github.tiper.kotlin.multiplatform" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-gradle" }
-umbrella-aar = { id = "io.github.tiper.umbrellaaar", version.ref = "umbrellaaar" }
-umbrella-aar-pom = { id = "io.github.tiper.umbrellaaar.pom", version.ref = "umbrellaaar" }
+umbrella-aar = { id = "io.github.tiper.umbrellaaar" }
+umbrella-aar-pom = { id = "io.github.tiper.umbrellaaar.pom" }
 vanniktech-maven-publish = { id = "com.vanniktech.maven.publish", version = "0.34.0" }
