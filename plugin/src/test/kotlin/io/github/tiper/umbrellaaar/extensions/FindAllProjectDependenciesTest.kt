@@ -12,8 +12,6 @@ import kotlin.test.assertTrue
 
 class FindAllProjectDependenciesTest {
 
-    // -------------------------------------------------------------------------
-
     @Test
     fun `empty config returns no dependencies`() {
         val root = rootProject()
