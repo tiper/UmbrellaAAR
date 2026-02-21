@@ -18,6 +18,8 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.ProjectDependency
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.publish.maven.plugins.MavenPublishPlugin
@@ -158,7 +160,7 @@ class UmbrellaAarPom : Plugin<Project> {
             logger.debug("[UmbrellaAarPom] Found ${androidxMap.size} androidx artifacts for mapping")
 
             config.incoming.resolutionResult.root.dependencies
-                .filterIsInstance<org.gradle.api.artifacts.result.ResolvedDependencyResult>()
+                .filterIsInstance<ResolvedDependencyResult>()
                 .mapNotNull { it.selected.moduleVersion }
                 .filter { "${it.group}:${it.name}" in declaredKeys }
                 .map { resolveToAndroidx(it, androidxMap) }
@@ -174,19 +176,19 @@ class UmbrellaAarPom : Plugin<Project> {
         }
     }
 
-    private fun Configuration.buildAndroidxArtifactMap(): Map<String, org.gradle.api.artifacts.ResolvedArtifact> {
+    private fun Configuration.buildAndroidxArtifactMap(): Map<String, ModuleComponentIdentifier> {
         val platformSuffixes = listOf("-android", "-jvm", "-java8")
-        val map = mutableMapOf<String, org.gradle.api.artifacts.ResolvedArtifact>()
+        val map = mutableMapOf<String, ModuleComponentIdentifier>()
 
-        resolvedConfiguration.resolvedArtifacts.forEach { artifact ->
-            val id = artifact.moduleVersion.id
+        incoming.artifactView { isLenient = true }.artifacts.forEach { artifact ->
+            val id = artifact.id.componentIdentifier as? ModuleComponentIdentifier ?: return@forEach
             if (!id.group.startsWith("androidx.") && !id.group.startsWith("org.jetbrains.androidx.")) return@forEach
 
-            map[id.name] = artifact
-            map[id.name.removePrefix("compose-")] = artifact
+            map[id.module] = id
+            map[id.module.removePrefix("compose-")] = id
             platformSuffixes.forEach { suffix ->
-                val stripped = id.name.removeSuffix(suffix)
-                if (stripped != id.name) map[stripped] = artifact
+                val stripped = id.module.removeSuffix(suffix)
+                if (stripped != id.module) map[stripped] = id
             }
         }
         return map
@@ -194,7 +196,7 @@ class UmbrellaAarPom : Plugin<Project> {
 
     private fun Project.resolveToAndroidx(
         moduleVersion: org.gradle.api.artifacts.ModuleVersionIdentifier,
-        androidxMap: Map<String, org.gradle.api.artifacts.ResolvedArtifact>,
+        androidxMap: Map<String, ModuleComponentIdentifier>,
     ): Dependency {
         val shouldMap = moduleVersion.group.startsWith("org.jetbrains.compose.") ||
             moduleVersion.group.startsWith("org.jetbrains.androidx.")
@@ -204,11 +206,10 @@ class UmbrellaAarPom : Plugin<Project> {
         }
 
         val searchNames = generateSearchNames(moduleVersion.name)
-        val androidxArtifact = searchNames.firstNotNullOfOrNull { androidxMap[it] }
+        val androidxId = searchNames.firstNotNullOfOrNull { androidxMap[it] }
 
-        return if (androidxArtifact != null) {
-            val androidxId = androidxArtifact.moduleVersion.id
-            val cleanName = androidxId.name.cleanPlatformSuffixes()
+        return if (androidxId != null) {
+            val cleanName = androidxId.module.cleanPlatformSuffixes()
             logger.lifecycle(
                 "[UmbrellaAarPom] Mapped ${moduleVersion.group}:${moduleVersion.name}:${moduleVersion.version} -> ${androidxId.group}:$cleanName:${androidxId.version}",
             )
