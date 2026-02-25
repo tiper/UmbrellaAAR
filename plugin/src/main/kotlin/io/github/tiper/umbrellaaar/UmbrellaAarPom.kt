@@ -17,6 +17,7 @@ import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.ExcludeRule
 import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
@@ -49,7 +50,7 @@ class UmbrellaAarPom : Plugin<Project> {
             collectExternalDependencies(
                 buildType = buildType,
                 modules = findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }.toSet(),
-                config = config,
+                excludeRules = rules,
                 resolutionConfigFactory = resolutionConfigFactory,
             )
         }
@@ -107,10 +108,9 @@ class UmbrellaAarPom : Plugin<Project> {
     private fun Project.collectExternalDependencies(
         buildType: String,
         modules: Set<Project>,
-        config: Configuration,
+        excludeRules: List<ExcludeRule>,
         resolutionConfigFactory: (String) -> Configuration,
     ): List<String> {
-        val rules = config.allExcludeRules()
         val declaredDependencies = (setOf(this) + modules).asSequence()
             .flatMap { it.configurations.asSequence() }
             .filter { it.isRelevantForDependencies(buildType) && it.isApplicable(buildType) }
@@ -118,7 +118,7 @@ class UmbrellaAarPom : Plugin<Project> {
                 runCatching {
                     conf.dependencies
                         .filterNot { it is ProjectDependency }
-                        .filterNot { it.isExcluded(rules) }
+                        .filterNot { it.isExcluded(excludeRules) }
                 }.getOrElse {
                     logger.debug("[UmbrellaAarPom] Could not process configuration ${conf.name}: ${it.message}")
                     emptyList()
@@ -128,7 +128,7 @@ class UmbrellaAarPom : Plugin<Project> {
 
         logger.lifecycle(
             "[UmbrellaAarPom] Collected ${declaredDependencies.size} dependencies" +
-                if (rules.isNotEmpty()) " (${rules.size} exclusion rules applied)" else "",
+                if (excludeRules.isNotEmpty()) " (${excludeRules.size} exclusion rules applied)" else "",
         )
 
         val resolved = resolveWithAndroidAttributes(buildType, declaredDependencies.values, resolutionConfigFactory)
@@ -138,7 +138,7 @@ class UmbrellaAarPom : Plugin<Project> {
         val kept = declaredDependencies.keys - resolved.map { "${it.group}:${it.name}" }.toSet()
         if (kept.isNotEmpty()) {
             logger.lifecycle("[UmbrellaAarPom] Kept ${kept.size} dependencies")
-            logger.debug("[UmbrellaAarPom] Kept: $kept")
+            logger.debug("[UmbrellaAarPom] Kept: {}", kept)
         }
 
         logger.lifecycle("[UmbrellaAarPom] POM will include ${collector.getStatistics().totalCount} dependencies")
