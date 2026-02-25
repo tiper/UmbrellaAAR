@@ -24,7 +24,7 @@ import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.publish.maven.plugins.MavenPublishPlugin
 import org.gradle.kotlin.dsl.configure
-import org.gradle.kotlin.dsl.getByType
+import org.gradle.kotlin.dsl.findByType
 import org.gradle.kotlin.dsl.register
 import org.gradle.kotlin.dsl.withType
 
@@ -34,6 +34,7 @@ class UmbrellaAarPom : Plugin<Project> {
     private fun Project.setup(
         buildType: String,
         config: Configuration,
+        resolutionConfigFactory: (String) -> Configuration,
     ) {
         val buildTypeCapitalized = buildType.capitalize()
 
@@ -49,6 +50,7 @@ class UmbrellaAarPom : Plugin<Project> {
                 buildType = buildType,
                 modules = findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }.toSet(),
                 config = config,
+                resolutionConfigFactory = resolutionConfigFactory,
             )
         }
 
@@ -56,7 +58,7 @@ class UmbrellaAarPom : Plugin<Project> {
             dependencies.set(allDependenciesProvider)
         }
 
-        tasks.matching { it.name == "bundle${buildTypeCapitalized}UmbrellaAar" }.configureEach {
+        tasks.named("bundle${buildTypeCapitalized}UmbrellaAar").configure {
             dependsOn(collectDeps)
         }
 
@@ -94,9 +96,7 @@ class UmbrellaAarPom : Plugin<Project> {
                     }
 
                     // Make sure the collection task runs before POM generation
-                    tasks.matching {
-                        it.name == "generatePomFileFor${publicationName.replaceFirstChar { c -> c.uppercaseChar() }}Publication"
-                    }.configureEach {
+                    tasks.named("generatePomFileFor${publicationName.replaceFirstChar { c -> c.uppercaseChar() }}Publication").configure {
                         dependsOn(collectDeps)
                     }
                 }
@@ -108,6 +108,7 @@ class UmbrellaAarPom : Plugin<Project> {
         buildType: String,
         modules: Set<Project>,
         config: Configuration,
+        resolutionConfigFactory: (String) -> Configuration,
     ): List<String> {
         val rules = config.allExcludeRules()
         val declaredDependencies = (setOf(this) + modules).asSequence()
@@ -130,7 +131,7 @@ class UmbrellaAarPom : Plugin<Project> {
                 if (rules.isNotEmpty()) " (${rules.size} exclusion rules applied)" else "",
         )
 
-        val resolved = resolveWithAndroidAttributes(buildType, declaredDependencies.values)
+        val resolved = resolveWithAndroidAttributes(buildType, declaredDependencies.values, resolutionConfigFactory)
         val collector = Collector()
         resolved.forEach(collector::add)
 
@@ -147,11 +148,12 @@ class UmbrellaAarPom : Plugin<Project> {
     private fun Project.resolveWithAndroidAttributes(
         buildType: String,
         dependencies: Collection<org.gradle.api.artifacts.Dependency>,
+        resolutionConfigFactory: (String) -> Configuration,
     ): List<Dependency> {
         if (dependencies.isEmpty()) return emptyList()
 
         return try {
-            val config = createAndroidResolutionConfig(buildType)
+            val config = resolutionConfigFactory(buildType)
             dependencies.forEach { config.dependencies.add(it) }
 
             val declaredKeys = dependencies.mapTo(mutableSetOf()) { "${it.group}:${it.name}" }
@@ -237,8 +239,10 @@ class UmbrellaAarPom : Plugin<Project> {
     override fun apply(target: Project) = with(target) {
         plugins.withId("io.github.tiper.umbrellaaar") {
             val config = configurations.findByName(UMBRELLA_AAR_CONFIG) ?: return@withId
-            extensions.getByType<LibraryExtension>().buildTypes.forEach {
-                setup(it.name, config)
+            plugins.withId("com.android.library") {
+                extensions.findByType<LibraryExtension>()?.buildTypes?.forEach {
+                    setup(buildType = it.name, config, resolutionConfigFactory = ::createAndroidResolutionConfig)
+                }
             }
         }
     }
