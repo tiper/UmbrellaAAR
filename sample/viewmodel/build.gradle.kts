@@ -1,10 +1,13 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform.tiper)
-    alias(libs.plugins.android.library.tiper)
+    alias(libs.plugins.android.library.multiplatform.tiper)
+    alias(libs.plugins.android.lint)
 }
 
 kotlin {
-    androidTarget()
+    androidLibrary {
+        namespace = "io.github.tiper.sample.viewmodel"
+    }
     sourceSets {
         androidMain.dependencies {
             implementation(projects.sample.jni.sample1)

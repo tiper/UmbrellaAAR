@@ -1,5 +1,6 @@
 package io.github.tiper.umbrellaaar
 
+import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryExtension
 import com.android.build.api.dsl.LibraryExtension
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.capitalize
@@ -18,6 +19,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.plugins.ExtensionAware
 import org.gradle.api.provider.Provider
 import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.register
@@ -139,6 +141,25 @@ class UmbrellaAar : Plugin<Project> {
                         },
                         filteredProjectsProvider = filteredProjectsProvider,
                     )
+                }
+            }
+        }
+
+        // AGP9: com.android.kotlin.multiplatform.library — single "androidMain" variant, no build types.
+        // We still create both release and debug task sets (mirroring AGP8 behavior) so callers
+        // can choose which publication to use. Both point to the same upstream "bundleAndroidMainAar".
+        plugins.withId("com.android.kotlin.multiplatform.library") {
+            val config = createExportConfig()
+            extensions.configure<ExtensionAware> {
+                extensions.configure<KotlinMultiplatformAndroidLibraryExtension> {
+                    listOf("release", "debug").forEach {
+                        setup(
+                            taskBuildType = it,
+                            aarBuildType = "androidMain",
+                            config = config,
+                            namespace = provider { namespace },
+                        )
+                    }
                 }
             }
         }

@@ -1,6 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform.tiper)
-    alias(libs.plugins.android.library.tiper)
+    alias(libs.plugins.android.library.multiplatform.tiper)
     alias(libs.plugins.umbrella.aar)
     alias(libs.plugins.umbrella.aar.pom)
     alias(libs.plugins.vanniktech.maven.publish)
@@ -8,30 +8,34 @@ plugins {
 }
 
 group = "io.github.tiper.sample"
-version = "0.0.2"
+version = "0.0.3"
+
+fun <T : ModuleDependency> T.exclude(dependency: Dependency) = exclude(dependency.group, dependency.name)
 
 kotlin {
+    androidLibrary {
+        namespace = "$group.framework"
+        @Suppress("UnstableApiUsage")
+        optimization {
+            consumerKeepRules.apply {
+                publish = true
+                files("consumer-rules.pro")
+            }
+        }
+    }
     sourceSets {
         commonMain.dependencies {
         }
     }
 }
 
-fun <T : ModuleDependency> T.exclude(dependency: Dependency) = exclude(dependency.group, dependency.name)
-
-android {
-    namespace = "$group.framework"
-    defaultConfig {
-        consumerProguardFiles("consumer-rules.pro")
+dependencies {
+    export(projects.sample.viewmodel) // This one will include aidl.sample1
+    export(projects.sample.composable) {
+        // exclude(projects.sample.jni.sample1) // This one will exclude jni.sample1
     }
-    dependencies {
-        export(projects.sample.viewmodel) // This one will include aidl.sample1
-        export(projects.sample.composable) {
-//            exclude(projects.sample.jni.sample1) // This one will exclude jni.sample1
-        }
-        export(projects.sample.aidl.sample2)
-        export(projects.sample.jni.sample2)
-    }
+    export(projects.sample.aidl.sample2)
+    export(projects.sample.jni.sample2)
 }
 
 signing {
@@ -43,7 +47,7 @@ signing {
 
 mavenPublishing {
     // Uncomment this if you want to test with signing
-//    signAllPublications()
+    signAllPublications()
     coordinates(artifactId = "framework")
     pom {
         name = "Framework"

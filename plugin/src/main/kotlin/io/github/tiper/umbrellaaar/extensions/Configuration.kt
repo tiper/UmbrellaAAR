@@ -54,6 +54,19 @@ internal fun Project.createAndroidResolutionConfig(buildType: String): Configura
     }
 }
 
+// AGP9: com.android.kotlin.multiplatform.library has no build types, so no BuildTypeAttr is set.
+@Suppress("UNUSED_PARAMETER")
+internal fun Project.createKmpResolutionConfig(buildType: String): Configuration = configurations.detachedConfiguration().apply {
+    isCanBeResolved = true
+    isCanBeConsumed = false
+    configureKotlinPlatformAttribute(listOf(this))
+    attributes {
+        attribute(CATEGORY_ATTRIBUTE, objects.named(Category::class.java, LIBRARY))
+        attribute(USAGE_ATTRIBUTE, objects.named(Usage::class.java, JAVA_RUNTIME))
+        attribute(TARGET_JVM_ENVIRONMENT_ATTRIBUTE, objects.named(TargetJvmEnvironment::class.java, ANDROID))
+    }
+}
+
 internal fun Configuration.allExcludeRules(): List<ExcludeRule> = (excludeRules + dependencies.withType<ProjectDependency>().flatMap { it.excludeRules }).toList()
 
 internal fun ExcludeRule.matches(group: String?, module: String?): Boolean = (groupOrEmpty to moduleOrEmpty).matches(group, module)

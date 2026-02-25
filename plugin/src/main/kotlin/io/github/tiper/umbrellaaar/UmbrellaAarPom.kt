@@ -5,6 +5,7 @@ import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.cleanPlatformSuffixes
 import io.github.tiper.umbrellaaar.extensions.createAndroidResolutionConfig
+import io.github.tiper.umbrellaaar.extensions.createKmpResolutionConfig
 import io.github.tiper.umbrellaaar.extensions.findAllProjectDependencies
 import io.github.tiper.umbrellaaar.extensions.isApplicable
 import io.github.tiper.umbrellaaar.extensions.isExcluded
@@ -252,6 +253,15 @@ class UmbrellaAarPom : Plugin<Project> {
                         excludeRulesProvider = excludeRulesProvider,
                         resolutionConfigFactory = ::createAndroidResolutionConfig,
                     )
+                }
+            }
+
+            // AGP9: com.android.kotlin.multiplatform.library — single "android" variant.
+            // Always create both release and debug publications (mirroring AGP8 behavior)
+            // so callers can choose which variant to publish.
+            plugins.withId("com.android.kotlin.multiplatform.library") {
+                listOf("release", "debug").forEach { taskBuildType ->
+                    setup(taskBuildType, config, ::createKmpResolutionConfig)
                 }
             }
         }

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.4.1)
 add_library(
         native-lib1
         SHARED
-        src/androidMain/c/native-lib1.c
+        src/main/c/native-lib1.c
 )
 
 find_library(

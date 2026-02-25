@@ -31,9 +31,9 @@ gradlePlugin {
             id = "io.github.tiper.android.library"
             implementationClass = "io.github.tiper.gradle.AndroidLibrary"
         }
-        register("androidTest") {
-            id = "io.github.tiper.android.test"
-            implementationClass = "io.github.tiper.gradle.AndroidTest"
+        register("androidLibraryMultiplatform") {
+            id = "io.github.tiper.android.library.multiplatform"
+            implementationClass = "io.github.tiper.gradle.AndroidLibraryMultiplatform"
         }
     }
 }
