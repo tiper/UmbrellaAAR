@@ -8,6 +8,10 @@ pluginManagement {
     }
 }
 
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
+
 dependencyResolutionManagement {
     repositories {
         google()
@@ -21,7 +25,3 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "plugin"
-
-plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-}
