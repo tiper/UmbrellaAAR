@@ -1,5 +1,7 @@
 package io.github.tiper.umbrellaaar.pom
 
+import org.gradle.api.GradleException
+
 class Collector {
     private val dependencies = mutableMapOf<String, Dependency>()
 
@@ -31,9 +33,9 @@ class Collector {
 
         fun throwIfNot(new: String) {
             if (version != new) {
-                throw IllegalArgumentException(
+                throw GradleException(
                     "Version conflict for $group:$name existing=$version vs new=$new. " +
-                        "Make sure all configs use the same version",
+                        "Make sure all configs use the same version.",
                 )
             }
         }

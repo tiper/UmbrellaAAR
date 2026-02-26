@@ -36,6 +36,7 @@ class UmbrellaAar : Plugin<Project> {
 
         val extractDependencies = tasks.register<ExtractDependencies>("extract${taskBuildTypeCapitalized}Dependencies") {
             mainNamespace.convention(namespace)
+            rootDir.convention(project.rootProject.projectDir)
             outputDir.convention(
                 layout.buildDirectory.dir("$INTERMEDIATES_PATH/$taskBuildType/dependencies"),
             )
