@@ -19,7 +19,6 @@ kotlin {
 
 android {
     namespace = "io.github.tiper.sample.aidl1"
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
     buildFeatures.aidl = true
     defaultConfig {
         consumerProguardFiles("consumer-rules.pro")

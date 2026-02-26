@@ -29,7 +29,7 @@ internal fun Project.findAllProjectDependencies(config: Configuration): Set<Proj
 
     @Suppress("DEPRECATION")
     fun Configuration.projectDependencies() = dependencies.withType<ProjectDependency>().mapNotNull {
-        findProject(it.dependencyProject.path)
+        findProject(it.path)
     }
 
     config.projectDependencies().forEach(::enqueue)

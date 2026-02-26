@@ -44,7 +44,7 @@ class KotlinPlatformCompatibilityRule : AttributeCompatibilityRule<String> {
 }
 
 class KotlinPlatformDisambiguationRule : AttributeDisambiguationRule<String> {
-    override fun execute(details: MultipleCandidatesDetails<String?>) = with(details) {
+    override fun execute(details: MultipleCandidatesDetails<String>) = with(details) {
         if (consumerValue in candidateValues) {
             closestMatch(checkNotNull(consumerValue))
             return@with

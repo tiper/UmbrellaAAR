@@ -1,7 +1,7 @@
 package io.github.tiper.gradle.extensions
 
+import com.android.build.api.dsl.LibraryExtension
 import com.android.build.gradle.BaseExtension
-import com.android.build.gradle.LibraryExtension
 import com.android.build.gradle.LibraryPlugin
 import com.android.build.gradle.tasks.BundleAar
 import org.gradle.api.JavaVersion.VERSION_1_8
@@ -13,10 +13,10 @@ private val TASK_REGEX = Regex("(?=[A-Z])")
 
 internal fun Project.configureAndroid() {
     extensions.configure<BaseExtension> {
-        compileSdkVersion(34)
+        compileSdkVersion(35)
         defaultConfig {
             minSdk = 24
-            targetSdk = 34
+            targetSdk = 35
         }
         compileOptions {
             sourceCompatibility = VERSION_1_8

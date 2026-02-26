@@ -8,12 +8,9 @@ plugins {
 }
 
 group = "io.github.tiper.sample"
-version = "0.0.1"
+version = "0.0.2"
 
 kotlin {
-    androidTarget {
-        publishLibraryVariants("debug", "release")
-    }
     sourceSets {
         commonMain.dependencies {
         }
@@ -27,12 +24,10 @@ android {
     defaultConfig {
         consumerProguardFiles("consumer-rules.pro")
     }
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-    sourceSets["main"].res.srcDirs("src/androidMain/res")
     dependencies {
         export(projects.sample.viewmodel) // This one will include aidl.sample1
         export(projects.sample.composable) {
-            exclude(projects.sample.jni.sample1) // This one will exclude jni.sample1
+//            exclude(projects.sample.jni.sample1) // This one will exclude jni.sample1
         }
         export(projects.sample.aidl.sample2)
         export(projects.sample.jni.sample2)

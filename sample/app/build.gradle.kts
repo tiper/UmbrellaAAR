@@ -1,7 +1,9 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform.tiper)
+    alias(libs.plugins.android.application)
     alias(libs.plugins.android.application.tiper)
     alias(libs.plugins.compose.multiplatform)
+    alias(libs.plugins.compose.compiler)
 }
 
 kotlin {
@@ -21,10 +23,6 @@ kotlin {
 android {
     namespace = "io.github.tiper.sample"
 
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-    sourceSets["main"].res.srcDirs("src/androidMain/res")
-    sourceSets["main"].resources.srcDirs("src/commonMain/resources")
-
     defaultConfig {
         applicationId = "io.github.tiper.sample"
         versionCode = 1
@@ -42,9 +40,7 @@ android {
     }
     buildFeatures {
         compose = true
-    }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.3"
+        resValues = true
     }
     dependencies {
         debugImplementation(compose.uiTooling)
