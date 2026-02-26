@@ -17,6 +17,7 @@ import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.ExcludeRule
 import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
@@ -24,7 +25,7 @@ import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.publish.maven.plugins.MavenPublishPlugin
 import org.gradle.kotlin.dsl.configure
-import org.gradle.kotlin.dsl.getByType
+import org.gradle.kotlin.dsl.findByType
 import org.gradle.kotlin.dsl.register
 import org.gradle.kotlin.dsl.withType
 
@@ -34,6 +35,7 @@ class UmbrellaAarPom : Plugin<Project> {
     private fun Project.setup(
         buildType: String,
         config: Configuration,
+        resolutionConfigFactory: (String) -> Configuration,
     ) {
         val buildTypeCapitalized = buildType.capitalize()
 
@@ -48,7 +50,8 @@ class UmbrellaAarPom : Plugin<Project> {
             collectExternalDependencies(
                 buildType = buildType,
                 modules = findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }.toSet(),
-                config = config,
+                excludeRules = rules,
+                resolutionConfigFactory = resolutionConfigFactory,
             )
         }
 
@@ -56,7 +59,7 @@ class UmbrellaAarPom : Plugin<Project> {
             dependencies.set(allDependenciesProvider)
         }
 
-        tasks.matching { it.name == "bundle${buildTypeCapitalized}UmbrellaAar" }.configureEach {
+        tasks.named("bundle${buildTypeCapitalized}UmbrellaAar").configure {
             dependsOn(collectDeps)
         }
 
@@ -94,9 +97,7 @@ class UmbrellaAarPom : Plugin<Project> {
                     }
 
                     // Make sure the collection task runs before POM generation
-                    tasks.matching {
-                        it.name == "generatePomFileFor${publicationName.replaceFirstChar { c -> c.uppercaseChar() }}Publication"
-                    }.configureEach {
+                    tasks.named("generatePomFileFor${publicationName.replaceFirstChar { c -> c.uppercaseChar() }}Publication").configure {
                         dependsOn(collectDeps)
                     }
                 }
@@ -107,9 +108,9 @@ class UmbrellaAarPom : Plugin<Project> {
     private fun Project.collectExternalDependencies(
         buildType: String,
         modules: Set<Project>,
-        config: Configuration,
+        excludeRules: List<ExcludeRule>,
+        resolutionConfigFactory: (String) -> Configuration,
     ): List<String> {
-        val rules = config.allExcludeRules()
         val declaredDependencies = (setOf(this) + modules).asSequence()
             .flatMap { it.configurations.asSequence() }
             .filter { it.isRelevantForDependencies(buildType) && it.isApplicable(buildType) }
@@ -117,7 +118,7 @@ class UmbrellaAarPom : Plugin<Project> {
                 runCatching {
                     conf.dependencies
                         .filterNot { it is ProjectDependency }
-                        .filterNot { it.isExcluded(rules) }
+                        .filterNot { it.isExcluded(excludeRules) }
                 }.getOrElse {
                     logger.debug("[UmbrellaAarPom] Could not process configuration ${conf.name}: ${it.message}")
                     emptyList()
@@ -127,17 +128,17 @@ class UmbrellaAarPom : Plugin<Project> {
 
         logger.lifecycle(
             "[UmbrellaAarPom] Collected ${declaredDependencies.size} dependencies" +
-                if (rules.isNotEmpty()) " (${rules.size} exclusion rules applied)" else "",
+                if (excludeRules.isNotEmpty()) " (${excludeRules.size} exclusion rules applied)" else "",
         )
 
-        val resolved = resolveWithAndroidAttributes(buildType, declaredDependencies.values)
+        val resolved = resolveWithAndroidAttributes(buildType, declaredDependencies.values, resolutionConfigFactory)
         val collector = Collector()
         resolved.forEach(collector::add)
 
         val kept = declaredDependencies.keys - resolved.map { "${it.group}:${it.name}" }.toSet()
         if (kept.isNotEmpty()) {
             logger.lifecycle("[UmbrellaAarPom] Kept ${kept.size} dependencies")
-            logger.debug("[UmbrellaAarPom] Kept: $kept")
+            logger.debug("[UmbrellaAarPom] Kept: {}", kept)
         }
 
         logger.lifecycle("[UmbrellaAarPom] POM will include ${collector.getStatistics().totalCount} dependencies")
@@ -147,11 +148,12 @@ class UmbrellaAarPom : Plugin<Project> {
     private fun Project.resolveWithAndroidAttributes(
         buildType: String,
         dependencies: Collection<org.gradle.api.artifacts.Dependency>,
+        resolutionConfigFactory: (String) -> Configuration,
     ): List<Dependency> {
         if (dependencies.isEmpty()) return emptyList()
 
         return try {
-            val config = createAndroidResolutionConfig(buildType)
+            val config = resolutionConfigFactory(buildType)
             dependencies.forEach { config.dependencies.add(it) }
 
             val declaredKeys = dependencies.mapTo(mutableSetOf()) { "${it.group}:${it.name}" }
@@ -237,8 +239,10 @@ class UmbrellaAarPom : Plugin<Project> {
     override fun apply(target: Project) = with(target) {
         plugins.withId("io.github.tiper.umbrellaaar") {
             val config = configurations.findByName(UMBRELLA_AAR_CONFIG) ?: return@withId
-            extensions.getByType<LibraryExtension>().buildTypes.forEach {
-                setup(it.name, config)
+            plugins.withId("com.android.library") {
+                extensions.findByType<LibraryExtension>()?.buildTypes?.forEach {
+                    setup(buildType = it.name, config, resolutionConfigFactory = ::createAndroidResolutionConfig)
+                }
             }
         }
     }

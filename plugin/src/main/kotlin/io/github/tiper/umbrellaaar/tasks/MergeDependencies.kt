@@ -195,10 +195,10 @@ abstract class MergeDependencies : DefaultTask() {
     )
 
     private fun File.append(to: File) {
-        val content = readText().lines().filter { it.isNotBlank() }.joinToString("\n")
+        val content = bufferedReader().use { it.lineSequence().filter(String::isNotBlank).joinToString("\n") }
         if (content.isEmpty()) return
 
-        if (to.exists() && to.readText().isNotBlank()) to.appendText("\n$content")
+        if (to.exists() && to.length() > 0L) to.appendText("\n$content")
         else to.also { it.parentFile.mkdirs() }.writeText(content)
     }
 
