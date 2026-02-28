@@ -39,8 +39,7 @@ internal fun String.stripPackageAttribute(): Pair<String, String?> {
     val pkg = packageName() ?: return this to null
     // Remove only the package attribute from the manifest root element, not from comments or other elements.
     // We match it strictly: optional whitespace, the literal `package="<value>"`, no false positives.
-    val stripped = replace(Regex("""\s+package\s*=\s*"${Regex.escape(pkg)}""""), "")
-    return stripped to pkg
+    return replace(Regex("""\s+package\s*=\s*"${Regex.escape(pkg)}""""), "") to pkg
 }
 
 internal fun String.packageName(): String? = runCatching {

@@ -79,7 +79,7 @@ class UmbrellaAar : Plugin<Project> {
             dependsOn(mainAarTask)
             mainAar.set(layout.file(aarProvider))
             unpackedAarDir.convention(
-                layout.buildDirectory.dir("$INTERMEDIATES_PATH/$taskBuildType/merged"),
+                layout.buildDirectory.dir("$INTERMEDIATES_PATH/$taskBuildType/main"),
             )
         }
 
@@ -87,8 +87,11 @@ class UmbrellaAar : Plugin<Project> {
             dependsOn(extractMain, extractDependencies)
             dependencies.set(extractDependencies.flatMap { it.outputDir })
             mainAarDir.set(extractMain.flatMap { it.unpackedAarDir })
+            mergedAarDir.convention(
+                layout.buildDirectory.dir("$INTERMEDIATES_PATH/$taskBuildType/merged-aar"),
+            )
             mergedJar.convention(
-                layout.buildDirectory.file("$INTERMEDIATES_PATH/$taskBuildType/merged/classes.jar"),
+                layout.buildDirectory.file("$INTERMEDIATES_PATH/$taskBuildType/merged-aar/classes.jar"),
             )
         }
 
@@ -96,7 +99,7 @@ class UmbrellaAar : Plugin<Project> {
             group = "umbrellaaar"
             description = "Bundles all merged dependencies into a single AAR for $taskBuildType"
             dependsOn(mergeDependencies)
-            unpackedMainAar.set(extractMain.flatMap { it.unpackedAarDir })
+            unpackedMainAar.set(mergeDependencies.flatMap { it.mergedAarDir })
             umbrellaAarOutput.convention(
                 layout.buildDirectory.file("$OUTPUTS_PATH/${project.name}-$taskBuildType.aar"),
             )
