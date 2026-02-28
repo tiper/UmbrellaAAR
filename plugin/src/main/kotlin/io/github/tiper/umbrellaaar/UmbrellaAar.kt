@@ -90,9 +90,6 @@ class UmbrellaAar : Plugin<Project> {
             mergedAarDir.convention(
                 layout.buildDirectory.dir("$INTERMEDIATES_PATH/$taskBuildType/merged-aar"),
             )
-            mergedJar.convention(
-                layout.buildDirectory.file("$INTERMEDIATES_PATH/$taskBuildType/merged-aar/classes.jar"),
-            )
         }
 
         tasks.register<BundleUmbrellaAar>("bundle${taskBuildTypeCapitalized}UmbrellaAar") {
