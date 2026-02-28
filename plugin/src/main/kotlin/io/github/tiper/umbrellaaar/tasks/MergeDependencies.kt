@@ -13,11 +13,10 @@ import java.util.zip.ZipOutputStream
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.logging.Logger
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.InputDirectory
-import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.RELATIVE
 import org.gradle.api.tasks.TaskAction
@@ -33,17 +32,20 @@ abstract class MergeDependencies : DefaultTask() {
     @get:PathSensitive(RELATIVE)
     abstract val mainAarDir: DirectoryProperty
 
-    @get:OutputFile
-    abstract val mergedJar: RegularFileProperty
-
-    init {
-        outputs.upToDateWhen { false }
-    }
+    @get:OutputDirectory
+    abstract val mergedAarDir: DirectoryProperty
 
     @TaskAction
     fun execute() {
-        val main = mainAarDir.get().asFile
-        val manifest = File(main, "AndroidManifest.xml")
+        val src = mainAarDir.get().asFile
+        val out = mergedAarDir.get().asFile.apply {
+            deleteRecursively()
+            mkdirs()
+        }
+
+        src.copyRecursively(out, overwrite = true)
+
+        val manifest = File(out, "AndroidManifest.xml")
         var filesProcessed = 0
 
         dependencies.get().asFile.listFiles()?.forEach { subLibFolder ->
@@ -51,7 +53,7 @@ abstract class MergeDependencies : DefaultTask() {
 
             subLibFolder.walk().filter { it.isFile }.forEach { srcFile ->
                 val relativePath = srcFile.relativeTo(subLibFolder).path.normalizePath()
-                val destFile = File(main, relativePath)
+                val destFile = File(out, relativePath)
 
                 when {
                     relativePath.startsWith("res/values") -> srcFile.copyValues(
@@ -69,7 +71,7 @@ abstract class MergeDependencies : DefaultTask() {
                     )
 
                     relativePath.endsWith(".pro") -> srcFile.append(
-                        to = File(main, "consumer-rules.pro"),
+                        to = File(out, "consumer-rules.pro"),
                     )
 
                     relativePath.endsWith("AndroidManifest.xml") -> srcFile.mergeManifest(
@@ -93,17 +95,16 @@ abstract class MergeDependencies : DefaultTask() {
         }
 
         // Ensure all merged text files end with a newline
-        File(main, "R.txt").ensureTrailingNewline()
-        File(main, "consumer-rules.pro").ensureTrailingNewline()
-        main.walkTopDown()
+        File(out, "R.txt").ensureTrailingNewline()
+        File(out, "consumer-rules.pro").ensureTrailingNewline()
+        out.walkTopDown()
             .filter { it.isFile && it.name == "proguard.txt" }
             .forEach { it.ensureTrailingNewline() }
 
-        val jar = mergedJar.get().asFile.apply {
+        val jar = File(out, "classes.jar").apply {
             if (exists()) delete()
-            parentFile.mkdirs()
         }
-        val classes = File(main, "classes")
+        val classes = File(out, "classes")
         ZipOutputStream(FileOutputStream(jar)).use { zos ->
             classes.walk().filter { it.isFile }.forEach { classFile ->
                 val entryName = classFile.relativeTo(classes).path.normalizePath()

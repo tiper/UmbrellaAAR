@@ -1,7 +1,6 @@
 package io.github.tiper.umbrellaaar.extensions
 
-// FIXME: This regex will match any occurrence of the package attribute pattern, even inside comments.
-internal val PACKAGE_ATTRIBUTE_PATTERN = """\s+package\s*=\s*"([^"]+)"""".toRegex()
+import javax.xml.parsers.DocumentBuilderFactory
 
 internal fun String.capitalize() = replaceFirstChar { it.uppercaseChar() }
 
@@ -36,6 +35,18 @@ internal fun Pair<String, String>.matches(group: String?, module: String?): Bool
     else -> false
 }
 
-internal fun String.stripPackageAttribute(): Pair<String, String?> = replace(PACKAGE_ATTRIBUTE_PATTERN, "") to packageName()
+internal fun String.stripPackageAttribute(): Pair<String, String?> {
+    val pkg = packageName() ?: return this to null
+    // Remove only the package attribute from the manifest root element, not from comments or other elements.
+    // We match it strictly: optional whitespace, the literal `package="<value>"`, no false positives.
+    return replace(Regex("""\s+package\s*=\s*"${Regex.escape(pkg)}""""), "") to pkg
+}
 
-internal fun String.packageName(): String? = PACKAGE_ATTRIBUTE_PATTERN.find(this)?.groups?.get(1)?.value
+internal fun String.packageName(): String? = runCatching {
+    DocumentBuilderFactory.newInstance()
+        .newDocumentBuilder()
+        .parse(byteInputStream())
+        .documentElement
+        .getAttribute("package")
+        .takeIf { it.isNotBlank() }
+}.getOrNull()
