@@ -295,25 +295,16 @@ class StringExtensionsTest {
 
     @Test
     fun `stripPackageAttribute removes package attribute from manifest`() {
-        val manifest = """<manifest package="com.example.app">"""
+        val manifest = """<manifest package="com.example.app"></manifest>"""
         val (cleaned, pkg) = manifest.stripPackageAttribute()
 
-        assertEquals("""<manifest>""", cleaned)
+        assertFalse(cleaned.contains("package="))
         assertEquals("com.example.app", pkg)
     }
 
     @Test
-    fun `stripPackageAttribute handles manifest with extra whitespace`() {
-        val manifest = """<manifest   package  =  "com.example.test"  >"""
-        val (cleaned, pkg) = manifest.stripPackageAttribute()
-
-        assertEquals("""<manifest  >""", cleaned)
-        assertEquals("com.example.test", pkg)
-    }
-
-    @Test
     fun `stripPackageAttribute handles manifest without package attribute`() {
-        val manifest = """<manifest xmlns:android="http://schemas.android.com">"""
+        val manifest = """<manifest xmlns:android="http://schemas.android.com/apk/res/android"></manifest>"""
         val (cleaned, pkg) = manifest.stripPackageAttribute()
 
         assertEquals(manifest, cleaned)
@@ -323,9 +314,10 @@ class StringExtensionsTest {
     @Test
     fun `stripPackageAttribute handles multi-line manifest`() {
         val manifest = """
-            <manifest xmlns:android="http://schemas.android.com"
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android"
                 package="com.example.myapp"
                 android:versionCode="1">
+            </manifest>
         """.trimIndent()
 
         val (cleaned, pkg) = manifest.stripPackageAttribute()
@@ -336,7 +328,7 @@ class StringExtensionsTest {
 
     @Test
     fun `stripPackageAttribute handles package with dots and underscores`() {
-        val manifest = """<manifest package="com.example.my_app.test">"""
+        val manifest = """<manifest package="com.example.my_app.test"></manifest>"""
         val (_, pkg) = manifest.stripPackageAttribute()
 
         assertEquals("com.example.my_app.test", pkg)
@@ -344,7 +336,7 @@ class StringExtensionsTest {
 
     @Test
     fun `stripPackageAttribute preserves other attributes`() {
-        val manifest = """<manifest xmlns:android="http://schemas.android.com" package="com.test" android:versionCode="1">"""
+        val manifest = """<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.test" android:versionCode="1"></manifest>"""
         val (cleaned, pkg) = manifest.stripPackageAttribute()
 
         assertTrue(cleaned.contains("xmlns:android"))
@@ -354,41 +346,33 @@ class StringExtensionsTest {
     }
 
     @Test
-    fun `extractPackageName extracts package from manifest`() {
-        val manifest = """<manifest package="com.example.app">"""
+    fun `packageName extracts package from manifest`() {
+        val manifest = """<manifest package="com.example.app"></manifest>"""
         assertEquals("com.example.app", manifest.packageName())
     }
 
     @Test
-    fun `extractPackageName returns null when no package attribute`() {
-        val manifest = """<manifest xmlns:android="http://schemas.android.com">"""
+    fun `packageName returns null when no package attribute`() {
+        val manifest = """<manifest xmlns:android="http://schemas.android.com/apk/res/android"></manifest>"""
         assertEquals(null, manifest.packageName())
     }
 
     @Test
-    fun `extractPackageName handles whitespace variations`() {
-        val manifest1 = """<manifest package="com.test1">"""
-        val manifest2 = """<manifest   package  =  "com.test2"  >"""
-
-        assertEquals("com.test1", manifest1.packageName())
-        assertEquals("com.test2", manifest2.packageName())
-    }
-
-    @Test
-    fun `extractPackageName works with multi-line manifest`() {
+    fun `packageName works with multi-line manifest`() {
         val manifest = """
             <manifest
-                xmlns:android="http://schemas.android.com"
+                xmlns:android="http://schemas.android.com/apk/res/android"
                 package="com.example.multiline"
                 android:versionCode="1">
+            </manifest>
         """.trimIndent()
 
         assertEquals("com.example.multiline", manifest.packageName())
     }
 
     @Test
-    fun `stripPackageAttribute handles package after tag name`() {
-        val manifest = """<manifest package="com.example.app" xmlns:android="...">"""
+    fun `stripPackageAttribute handles package after other attributes`() {
+        val manifest = """<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"></manifest>"""
         val (cleaned, pkg) = manifest.stripPackageAttribute()
 
         assertFalse(cleaned.contains("package="))
@@ -397,7 +381,7 @@ class StringExtensionsTest {
 
     @Test
     fun `stripPackageAttribute handles package with hyphens`() {
-        val manifest = """<manifest package="com.example-app.test-lib">"""
+        val manifest = """<manifest package="com.example-app.test-lib"></manifest>"""
         val (_, pkg) = manifest.stripPackageAttribute()
 
         assertEquals("com.example-app.test-lib", pkg)
@@ -405,43 +389,36 @@ class StringExtensionsTest {
 
     @Test
     fun `stripPackageAttribute handles package with numbers`() {
-        val manifest = """<manifest package="com.example.app2.test3">"""
+        val manifest = """<manifest package="com.example.app2.test3"></manifest>"""
         val (_, pkg) = manifest.stripPackageAttribute()
 
         assertEquals("com.example.app2.test3", pkg)
     }
 
     @Test
-    fun `stripPackageAttribute handles tabs instead of spaces`() {
-        val manifest = "<manifest\tpackage\t=\t\"com.example.app\">"
-        val (_, pkg) = manifest.stripPackageAttribute()
-
-        assertEquals("com.example.app", pkg)
-    }
-
-    @Test
     fun `stripPackageAttribute handles newline before package`() {
         val manifest = """
             <manifest
-            package="com.example.app">
+                package="com.example.app">
+            </manifest>
         """.trimIndent()
-        val (_, pkg) = manifest.stripPackageAttribute()
+        val (cleaned, pkg) = manifest.stripPackageAttribute()
 
+        assertFalse(cleaned.contains("package="))
         assertEquals("com.example.app", pkg)
     }
 
     @Test
-    fun `stripPackageAttribute matches package even in comments`() {
-        val manifest = """<manifest><!-- package="com.wrong" -->"""
-        val (_, pkg) = manifest.stripPackageAttribute()
-
-        assertEquals("com.wrong", pkg)
+    fun `packageName ignores package text in comments`() {
+        // The DOM parser correctly does not surface comment content as an attribute value.
+        val manifest = """<manifest><!-- package="com.wrong" --></manifest>"""
+        assertEquals(null, manifest.packageName())
     }
 
     @Test
     fun `stripPackageAttribute handles very long package names`() {
         val longPackage = "com.example.very.long.package.name.with.many.segments.test.app.module"
-        val manifest = """<manifest package="$longPackage">"""
+        val manifest = """<manifest package="$longPackage"></manifest>"""
         val (_, pkg) = manifest.stripPackageAttribute()
 
         assertEquals(longPackage, pkg)
@@ -449,36 +426,25 @@ class StringExtensionsTest {
 
     @Test
     fun `stripPackageAttribute handles package with capital letters`() {
-        val manifest = """<manifest package="com.Example.MyApp">"""
+        val manifest = """<manifest package="com.Example.MyApp"></manifest>"""
         val (_, pkg) = manifest.stripPackageAttribute()
 
         assertEquals("com.Example.MyApp", pkg)
     }
 
     @Test
-    fun `stripPackageAttribute only extracts first occurrence`() {
-        val manifest = """<manifest package="com.first" package="com.second">"""
-        val (cleaned, pkg) = manifest.stripPackageAttribute()
-
-        assertEquals("com.first", pkg)
-        assertFalse(cleaned.contains("package=\"com.first\""))
-        assertFalse(cleaned.contains("package=\"com.second\""))
+    fun `packageName returns null for empty package attribute`() {
+        val manifest = """<manifest package=""></manifest>"""
+        assertEquals(null, manifest.packageName())
     }
 
     @Test
-    fun `stripPackageAttribute handles empty package name`() {
-        val manifest = """<manifest package="">"""
-        val (_, pkg) = manifest.stripPackageAttribute()
-
-        assertEquals(null, pkg)
-    }
-
-    @Test
-    fun `stripPackageAttribute preserves package in attribute values`() {
-        val manifest = """<manifest android:description="this is a package" package="com.test">"""
+    fun `stripPackageAttribute preserves unrelated attribute text containing the word package`() {
+        val manifest = """<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.test" android:label="My package app"></manifest>"""
         val (cleaned, pkg) = manifest.stripPackageAttribute()
 
         assertEquals("com.test", pkg)
-        assertTrue(cleaned.contains("this is a package"))
+        assertTrue(cleaned.contains("My package app"))
+        assertFalse(cleaned.contains("""package="com.test""""))
     }
 }

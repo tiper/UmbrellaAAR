@@ -42,11 +42,9 @@ internal fun String.stripPackageAttribute(): Pair<String, String?> {
     return replace(Regex("""\s+package\s*=\s*"${Regex.escape(pkg)}""""), "") to pkg
 }
 
-internal fun String.packageName(): String? = runCatching {
-    DocumentBuilderFactory.newInstance()
-        .newDocumentBuilder()
-        .parse(byteInputStream())
-        .documentElement
-        .getAttribute("package")
-        .takeIf { it.isNotBlank() }
-}.getOrNull()
+internal fun String.packageName(): String? = DocumentBuilderFactory.newInstance()
+    .newDocumentBuilder()
+    .parse(byteInputStream())
+    .documentElement
+    .getAttribute("package")
+    .takeIf { it.isNotBlank() }
