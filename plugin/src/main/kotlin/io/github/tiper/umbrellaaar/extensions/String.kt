@@ -1,6 +1,7 @@
 package io.github.tiper.umbrellaaar.extensions
 
 import javax.xml.parsers.DocumentBuilderFactory
+import kotlin.text.Regex.Companion.escape
 
 internal fun String.capitalize() = replaceFirstChar { it.uppercaseChar() }
 
@@ -37,9 +38,10 @@ internal fun Pair<String, String>.matches(group: String?, module: String?): Bool
 
 internal fun String.stripPackageAttribute(): Pair<String, String?> {
     val pkg = packageName() ?: return this to null
-    // Remove only the package attribute from the manifest root element, not from comments or other elements.
-    // We match it strictly: optional whitespace, the literal `package="<value>"`, no false positives.
-    return replace(Regex("""\s+package\s*=\s*"${Regex.escape(pkg)}""""), "") to pkg
+    // The package value is extracted via a strict DOM parse above, so we know exactly what to remove.
+    // In a valid AndroidManifest the package attribute only ever appears on the root <manifest> element,
+    // making a global string replacement safe in practice.
+    return replace(Regex("""\s+package\s*=\s*"${escape(pkg)}""""), "") to pkg
 }
 
 internal fun String.packageName(): String? = DocumentBuilderFactory.newInstance()
