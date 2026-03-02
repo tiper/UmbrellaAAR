@@ -38,10 +38,9 @@ internal fun Pair<String, String>.matches(group: String?, module: String?): Bool
 
 internal fun String.stripPackageAttribute(): Pair<String, String?> {
     val pkg = packageName() ?: return this to null
-    // The package value is extracted via a strict DOM parse above, so we know exactly what to remove.
-    // In a valid AndroidManifest the package attribute only ever appears on the root <manifest> element,
-    // making a global string replacement safe in practice.
-    return replace(Regex("""\s+package\s*=\s*"${escape(pkg)}""""), "") to pkg
+    // Constrain the replacement to the root <manifest ...> start tag so that the same package="..."
+    // text appearing elsewhere (e.g. in a comment) is never accidentally removed.
+    return replaceFirst(Regex("""(<manifest\b[^>]*?)\s+package\s*=\s*"${escape(pkg)}""""), "$1") to pkg
 }
 
 internal fun String.packageName(): String? = DocumentBuilderFactory.newInstance()
