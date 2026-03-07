@@ -117,6 +117,8 @@ internal class MockProject(
     override fun getArtifacts(): ArtifactHandler = throw UnsupportedOperationException("Not implemented")
     override fun artifacts(configureClosure: Closure<*>) = throw UnsupportedOperationException("Not implemented")
     override fun artifacts(configureAction: Action<in ArtifactHandler>) = throw UnsupportedOperationException("Not implemented")
+
+    @Deprecated("Deprecated in Java")
     override fun getConvention(): Convention = throw UnsupportedOperationException("Not implemented")
     override fun depthCompare(otherProject: Project): Int = throw UnsupportedOperationException("Not implemented")
     override fun getDepth(): Int = throw UnsupportedOperationException("Not implemented")

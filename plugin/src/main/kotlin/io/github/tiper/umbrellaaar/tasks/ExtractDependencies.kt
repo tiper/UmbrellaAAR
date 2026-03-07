@@ -10,6 +10,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.RELATIVE
@@ -28,9 +29,10 @@ abstract class ExtractDependencies : DefaultTask() {
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
-    private val rootDir: File = project.rootProject.projectDir
+    @get:Internal
+    abstract val rootDir: Property<File>
 
-    private fun File.folderName(): String = relativeToOrNull(rootDir)?.path
+    private fun File.folderName(): String = relativeToOrNull(rootDir.get())?.path
         ?.replace(File.separatorChar, '_')
         ?.removeSuffix(".$extension")
         ?: nameWithoutExtension

@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import org.gradle.api.GradleException
 
 class CollectorTest {
 
@@ -41,7 +42,7 @@ class CollectorTest {
 
         collector.add(dep1)
 
-        val exception = assertFailsWith<IllegalArgumentException> {
+        val exception = assertFailsWith<GradleException> {
             collector.add(dep2)
         }
 
@@ -173,7 +174,7 @@ class CollectorTest {
     fun `throwIfNot throws for different version`() {
         val dep = Collector.Dependency("com.example", "lib", "1.0.0", "compile")
 
-        val exception = assertFailsWith<IllegalArgumentException> {
+        val exception = assertFailsWith<GradleException> {
             dep.throwIfNot("2.0.0")
         }
 
