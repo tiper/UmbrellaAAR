@@ -1,6 +1,6 @@
 plugins {
-    alias(libs.plugins.kotlin.multiplatform.tiper)
-    alias(libs.plugins.android.library.multiplatform.tiper)
+    alias(libs.plugins.kotlin.multiplatform.tiper.legacy)
+    alias(libs.plugins.android.library.tiper.legacy)
     alias(libs.plugins.umbrella.aar)
     alias(libs.plugins.umbrella.aar.pom)
     alias(libs.plugins.vanniktech.maven.publish)
@@ -10,32 +10,29 @@ plugins {
 group = "io.github.tiper.sample"
 version = "0.0.3"
 
-fun <T : ModuleDependency> T.exclude(dependency: Dependency) = exclude(dependency.group, dependency.name)
-
 kotlin {
-    androidLibrary {
-        namespace = "$group.framework"
-        @Suppress("UnstableApiUsage")
-        optimization {
-            consumerKeepRules.apply {
-                publish = true
-                files("consumer-rules.pro")
-            }
-        }
-    }
+    androidTarget()
     sourceSets {
         commonMain.dependencies {
         }
     }
 }
 
-dependencies {
-    export(projects.sample.viewmodel) // This one will include aidl.sample1
-    export(projects.sample.composable) {
-//         exclude(projects.sample.jni.sample1) // This one will exclude jni.sample1
+fun <T : ModuleDependency> T.exclude(dependency: Dependency) = exclude(dependency.group, dependency.name)
+
+android {
+    namespace = "$group.framework.legacy"
+    defaultConfig {
+        consumerProguardFiles("consumer-rules.pro")
     }
-    export(projects.sample.aidl.sample2)
-    export(projects.sample.jni.sample2)
+    dependencies {
+        export(projects.viewmodel) // This one will include aidl.sample1
+        export(projects.composable) {
+//            exclude(projects.jni.sample1) // This one will exclude jni.sample1
+        }
+        export(projects.aidl.sample2)
+        export(projects.jni.sample2)
+    }
 }
 
 signing {
@@ -48,10 +45,10 @@ signing {
 mavenPublishing {
     // Uncomment this if you want to test with signing
 //    signAllPublications()
-    coordinates(artifactId = "framework")
+    coordinates(artifactId = "framework-legacy")
     pom {
-        name = "Framework"
-        description = "A sample framework with multiple modules from the same project merged into a single AAR."
+        name = "Framework Legacy"
+        description = "A sample framework (legacy AGP DSL) with multiple modules from the same project merged into a single AAR."
         inceptionYear = "2024"
         url = "https://github.com/tiper/UmbrellaAAR"
         licenses {

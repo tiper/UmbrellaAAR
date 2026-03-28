@@ -20,13 +20,16 @@ kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", v
 ktlint-gradle-plugin = { module = "org.jlleitschuh.gradle:ktlint-gradle", version.ref = "ktlint-gradle" }
 ktor-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 sample-export = { module = "io.github.tiper.sample:framework", version = "0.0.3" }
+sample-export-legacy = { module = "io.github.tiper.sample:framework-legacy", version = "0.0.3" }
 
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-application-tiper = { id = "io.github.tiper.android.application" }
+android-application-tiper-legacy = { id = "io.github.tiper.legacy.android.application" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 android-library-tiper = { id = "io.github.tiper.android.library" }
+android-library-tiper-legacy = { id = "io.github.tiper.legacy.android.library" }
 android-library-multiplatform = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 android-lint = { id = "com.android.lint", version.ref = "agp" }
 android-library-multiplatform-tiper = { id = "io.github.tiper.android.library.multiplatform" }
@@ -34,6 +37,7 @@ compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "
 compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-multiplatform-tiper = { id = "io.github.tiper.kotlin.multiplatform" }
+kotlin-multiplatform-tiper-legacy = { id = "io.github.tiper.legacy.kotlin.multiplatform" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-gradle" }
 umbrella-aar = { id = "io.github.tiper.umbrellaaar" }
 umbrella-aar-pom = { id = "io.github.tiper.umbrellaaar.pom" }

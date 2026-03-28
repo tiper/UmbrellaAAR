@@ -2,8 +2,8 @@
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 pluginManagement {
-    includeBuild("gradle/build-logic")
-    includeBuild("plugin")
+    includeBuild("../gradle/build-logic")
+    includeBuild("../plugin")
     repositories {
         mavenLocal {
             mavenContent {
@@ -26,18 +26,24 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
     }
+    versionCatalogs {
+        create("libs") {
+            from(files("../gradle/libs.versions.toml"))
+        }
+    }
 }
 
-rootProject.name = "UmbrellaAAR"
-includeBuild("sample-legacy")
+rootProject.name = "sample-legacy"
 include(
-    ":sample:aidl:sample1",
-    ":sample:aidl:sample2",
-    ":sample:composable",
-    ":sample:export",
-    ":sample:jni:sample1",
-    ":sample:jni:sample2",
-    ":sample:test",
-    ":sample:viewmodel",
-    ":sample:app",
+    ":aidl:sample1",
+    ":aidl:sample2",
+    ":composable",
+    ":export",
+    ":jni:sample1",
+    ":jni:sample2",
+    ":test",
+    ":viewmodel",
+    ":app",
 )
+
+
