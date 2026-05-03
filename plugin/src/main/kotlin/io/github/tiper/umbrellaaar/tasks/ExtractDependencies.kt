@@ -4,6 +4,7 @@ import io.github.tiper.umbrellaaar.extensions.transformClass
 import io.github.tiper.umbrellaaar.extensions.unzip
 import java.io.File
 import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.Property
@@ -81,7 +82,7 @@ abstract class ExtractDependencies : DefaultTask() {
                     }
                     aarsProcessed++
                 } catch (e: Exception) {
-                    logger.warn("Failed to extract AAR ${file.name}: ${e.message}")
+                    throw GradleException("Failed to extract AAR '${file.name}': ${e.message}", e)
                 }
 
                 "jar" -> try {
@@ -93,7 +94,7 @@ abstract class ExtractDependencies : DefaultTask() {
                     }
                     jarsProcessed++
                 } catch (e: Exception) {
-                    logger.warn("Failed to extract JAR ${file.name}: ${e.message}")
+                    throw GradleException("Failed to extract JAR '${file.name}': ${e.message}", e)
                 }
 
                 else -> logger.debug("Ignoring non-JAR/AAR file: ${file.name}")

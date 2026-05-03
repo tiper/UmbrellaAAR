@@ -89,7 +89,9 @@ abstract class MergeDependencies : DefaultTask() {
                             touchedProguardFiles += destFile
                         }
 
-                        destFile.exists() -> throw GradleException("Resource duplicate: ${destFile.name}")
+                        destFile.exists() -> throw GradleException(
+                            "Resource duplicate '$relativePath' already exists. Contributed by: ${subLibFolder.name}",
+                        )
 
                         else -> {
                             destFile.parentFile?.mkdirs()
