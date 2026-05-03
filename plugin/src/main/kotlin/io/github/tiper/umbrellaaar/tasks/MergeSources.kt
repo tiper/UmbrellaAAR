@@ -49,10 +49,11 @@ internal abstract class MergeSources : DefaultTask() {
             if (depRoot.exists()) {
                 depRoot.walk()
                     .filter { it.isFile && (it.extension == "java" || it.extension == "kt") }
+                    .sortedBy { it.relativeTo(depRoot).path.normalizePath() }
                     .forEach { srcFile ->
                         val entryName = srcFile.relativeTo(depRoot).path.normalizePath()
                         if (seen.add(entryName)) {
-                            zos.putNextEntry(ZipEntry(entryName))
+                            zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
                             srcFile.inputStream().use { it.copyTo(zos) }
                             zos.closeEntry()
                             sourceFilesCollected++
@@ -72,7 +73,7 @@ internal abstract class MergeSources : DefaultTask() {
                         .forEach { entry ->
                             val entryName = entry.name.normalizePath()
                             if (seen.add(entryName)) {
-                                zos.putNextEntry(ZipEntry(entryName))
+                                zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
                                 zip.getInputStream(entry).use { it.copyTo(zos) }
                                 zos.closeEntry()
                                 sourceFilesCollected++

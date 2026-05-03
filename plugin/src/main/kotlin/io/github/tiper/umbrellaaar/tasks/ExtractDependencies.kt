@@ -58,16 +58,22 @@ abstract class ExtractDependencies : DefaultTask() {
                 "aar" -> try {
                     logger.debug("Extracting AAR: ${file.name}")
                     val folderName = file.folderName()
+                    val tempClassesJar = File(baseDir, "$folderName/tmp-classes.jar")
                     file.unzip(to = File(baseDir, folderName).also { it.mkdirs() }) { entry ->
                         if (entry.name == "classes.jar") {
-                            File(baseDir, "classes.jar").apply {
-                                getInputStream(entry).use { outputStream().use(it::copyTo) }
-                            }.unzip(
-                                to = File(baseDir, "$folderName/classes"),
-                                transformer = {
-                                    it.transformClass(namespace)
-                                },
-                            ) { !it.isDirectory }.delete()
+                            try {
+                                tempClassesJar.apply {
+                                    parentFile.mkdirs()
+                                    getInputStream(entry).use { outputStream().use(it::copyTo) }
+                                }.unzip(
+                                    to = File(baseDir, "$folderName/classes"),
+                                    transformer = {
+                                        it.transformClass(namespace)
+                                    },
+                                ) { !it.isDirectory }
+                            } finally {
+                                tempClassesJar.delete()
+                            }
                             return@unzip false
                         } else !entry.isDirectory &&
                             entry.name.endsWith("aar-metadata.properties").not() &&

@@ -43,7 +43,7 @@ internal fun File.zip(to: File) {
             .map { it to it.relativeTo(this).path.normalizePath() }
             .sortedBy { (_, relativePath) -> relativePath }
             .forEach { (file, relativePath) ->
-                zos.putNextEntry(ZipEntry(relativePath))
+                zos.putNextEntry(ZipEntry(relativePath).also { it.time = 0L })
                 file.inputStream().use { it.copyTo(zos) }
                 zos.closeEntry()
             }

@@ -115,7 +115,7 @@ abstract class MergeDependencies : DefaultTask() {
                 .map { it to it.relativeTo(classes).path.normalizePath() }
                 .sortedBy { (_, entryName) -> entryName }
                 .forEach { (classFile, entryName) ->
-                    zos.putNextEntry(ZipEntry(entryName))
+                    zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
                     classFile.inputStream().use { it.copyTo(zos) }
                     zos.closeEntry()
                 }
