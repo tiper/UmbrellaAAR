@@ -205,6 +205,24 @@ class FileExtensionsTest {
     }
 
     @Test
+    fun `unzip handles directory entries with default predicate`() {
+        val zipFile = tempDir.resolve("test-default-dir-entry.zip")
+        ZipOutputStream(zipFile.outputStream()).use {
+            it.putNextEntry(ZipEntry("nested/"))
+            it.closeEntry()
+            it.putNextEntry(ZipEntry("nested/file.txt"))
+            it.write("content".toByteArray())
+            it.closeEntry()
+        }
+
+        val extractDir = tempDir.resolve("extracted-default-dir-entry")
+        zipFile.unzip(extractDir)
+
+        assertTrue(extractDir.resolve("nested").isDirectory)
+        assertEquals("content", extractDir.resolve("nested/file.txt").readText())
+    }
+
+    @Test
     fun `zip and unzip roundtrip preserves content`() {
         val sourceDir = tempDir.resolve("source").apply { mkdirs() }
         sourceDir.resolve("file1.txt").writeText("content1")
@@ -233,6 +251,23 @@ class FileExtensionsTest {
 
         java.util.zip.ZipFile(zipFile).use { zip ->
             assertTrue(zip.entries().toList().all { !it.name.contains("\\") })
+        }
+    }
+
+    @Test
+    fun `zip writes entries in deterministic sorted order`() {
+        val sourceDir = tempDir.resolve("source").apply { mkdirs() }
+        sourceDir.resolve("b.txt").writeText("b")
+        sourceDir.resolve("a.txt").writeText("a")
+        sourceDir.resolve("nested").mkdirs()
+        sourceDir.resolve("nested/c.txt").writeText("c")
+
+        val zipFile = tempDir.resolve("sorted.zip")
+        sourceDir.zip(zipFile)
+
+        java.util.zip.ZipFile(zipFile).use { zip ->
+            val entries = zip.entries().toList().map { it.name }
+            assertEquals(entries.sorted(), entries)
         }
     }
 

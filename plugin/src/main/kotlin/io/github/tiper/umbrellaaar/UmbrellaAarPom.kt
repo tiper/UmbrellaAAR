@@ -21,6 +21,7 @@ import org.gradle.api.artifacts.ExcludeRule
 import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.provider.Provider
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.publish.maven.plugins.MavenPublishPlugin
@@ -34,7 +35,8 @@ class UmbrellaAarPom : Plugin<Project> {
 
     private fun Project.setup(
         buildType: String,
-        config: Configuration,
+        allModulesProvider: Provider<Set<Project>>,
+        excludeRulesProvider: Provider<List<ExcludeRule>>,
         resolutionConfigFactory: (String) -> Configuration,
     ) {
         val buildTypeCapitalized = buildType.capitalize()
@@ -46,10 +48,10 @@ class UmbrellaAarPom : Plugin<Project> {
         }
 
         val allDependenciesProvider = provider {
-            val rules = config.allExcludeRules()
+            val rules = excludeRulesProvider.get()
             collectExternalDependencies(
                 buildType = buildType,
-                modules = findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }.toSet(),
+                modules = allModulesProvider.get().filterNot { it.isExcluded(rules) }.toSet(),
                 excludeRules = rules,
                 resolutionConfigFactory = resolutionConfigFactory,
             )
@@ -212,7 +214,7 @@ class UmbrellaAarPom : Plugin<Project> {
 
         return if (androidxId != null) {
             val cleanName = androidxId.module.cleanPlatformSuffixes()
-            logger.lifecycle(
+            logger.debug(
                 "[UmbrellaAarPom] Mapped ${moduleVersion.group}:${moduleVersion.name}:${moduleVersion.version} -> ${androidxId.group}:$cleanName:${androidxId.version}",
             )
             Dependency(androidxId.group, cleanName, androidxId.version, "compile")
@@ -239,9 +241,16 @@ class UmbrellaAarPom : Plugin<Project> {
     override fun apply(target: Project) = with(target) {
         plugins.withId("io.github.tiper.umbrellaaar") {
             val config = configurations.findByName(UMBRELLA_AAR_CONFIG) ?: return@withId
+            val excludeRulesProvider = provider { config.allExcludeRules() }
+            val allModulesProvider = provider { findAllProjectDependencies(config).toSet() }
             plugins.withId("com.android.library") {
                 extensions.findByType<LibraryExtension>()?.buildTypes?.forEach {
-                    setup(buildType = it.name, config, resolutionConfigFactory = ::createAndroidResolutionConfig)
+                    setup(
+                        buildType = it.name,
+                        allModulesProvider = allModulesProvider,
+                        excludeRulesProvider = excludeRulesProvider,
+                        resolutionConfigFactory = ::createAndroidResolutionConfig,
+                    )
                 }
             }
         }

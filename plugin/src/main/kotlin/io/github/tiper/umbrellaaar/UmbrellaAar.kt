@@ -28,8 +28,8 @@ class UmbrellaAar : Plugin<Project> {
     private fun Project.setup(
         taskBuildType: String,
         aarBuildType: String = taskBuildType,
-        config: Configuration,
         namespace: Provider<String>,
+        filteredProjectsProvider: Provider<List<Project>>,
     ) {
         val taskBuildTypeCapitalized = taskBuildType.capitalize()
         val aarBuildTypeCapitalized = aarBuildType.capitalize()
@@ -46,11 +46,6 @@ class UmbrellaAar : Plugin<Project> {
             extractedSourcesDir.convention(
                 layout.buildDirectory.dir("$INTERMEDIATES_PATH/$taskBuildType/extracted-sources"),
             )
-        }
-
-        val filteredProjectsProvider = provider {
-            val rules = config.allExcludeRules()
-            findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }
         }
 
         extractDependencies.configure {
@@ -130,9 +125,17 @@ class UmbrellaAar : Plugin<Project> {
     override fun apply(target: Project) = with(target) {
         plugins.withId("com.android.library") {
             val config = createExportConfig()
+            val filteredProjectsProvider = provider {
+                val rules = config.allExcludeRules()
+                findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }
+            }
             extensions.configure<LibraryExtension> {
                 buildTypes.forEach {
-                    setup(taskBuildType = it.name, config = config, namespace = provider { namespace })
+                    setup(
+                        taskBuildType = it.name,
+                        namespace = provider { namespace },
+                        filteredProjectsProvider = filteredProjectsProvider,
+                    )
                 }
             }
         }

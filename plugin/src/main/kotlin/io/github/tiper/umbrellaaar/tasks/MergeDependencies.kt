@@ -46,6 +46,8 @@ abstract class MergeDependencies : DefaultTask() {
         src.copyRecursively(out, overwrite = true)
 
         val manifest = File(out, "AndroidManifest.xml")
+        val packageOverride = manifest.removePackage()
+        val touchedProguardFiles = mutableSetOf<File>()
         var filesProcessed = 0
 
         dependencies.get().asFile.listFiles()?.sortedBy { it.name }?.forEach { subLibFolder ->
@@ -79,12 +81,13 @@ abstract class MergeDependencies : DefaultTask() {
 
                         relativePath.endsWith("AndroidManifest.xml") -> srcFile.mergeManifest(
                             to = manifest,
-                            packageOverride = manifest.removePackage(),
+                            packageOverride = packageOverride,
                         )
 
-                        relativePath.endsWith("proguard.txt") -> srcFile.append(
-                            to = destFile,
-                        )
+                        relativePath.endsWith("proguard.txt") -> {
+                            srcFile.append(to = destFile)
+                            touchedProguardFiles += destFile
+                        }
 
                         destFile.exists() -> throw GradleException("Resource duplicate: ${destFile.name}")
 
@@ -100,9 +103,7 @@ abstract class MergeDependencies : DefaultTask() {
         // Ensure all merged text files end with a newline
         File(out, "R.txt").ensureTrailingNewline()
         File(out, "consumer-rules.pro").ensureTrailingNewline()
-        out.walkTopDown()
-            .filter { it.isFile && it.name == "proguard.txt" }
-            .forEach { it.ensureTrailingNewline() }
+        touchedProguardFiles.forEach { it.ensureTrailingNewline() }
 
         val jar = File(out, "classes.jar").apply {
             if (exists()) delete()
@@ -165,7 +166,7 @@ abstract class MergeDependencies : DefaultTask() {
                 generatedLocaleConfigAttribute = null,
                 reportFile = null,
                 logger = GradleILogger(logger),
-                checkIfPackageInMainManifest = true,
+                checkIfPackageInMainManifest = false,
                 compileSdk = null,
             )
         } catch (e: Exception) {
