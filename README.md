@@ -21,7 +21,7 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 
 ```kotlin
 plugins {
-    id("io.github.tiper.umbrellaaar") version "2.2.2"
+    id("io.github.tiper.umbrellaaar") version "x.x.x"
 }
 
 dependencies {
@@ -111,7 +111,7 @@ The plugin is available on **Maven Central** and **Gradle Plugin Portal**. No ad
 
 ```kotlin
 plugins {
-    id("io.github.tiper.umbrellaaar") version "2.2.2"
+    id("io.github.tiper.umbrellaaar") version "x.x.x"
 }
 ```
 
@@ -121,8 +121,8 @@ If you want to **publish your UmbrellaAAR to Maven repositories**, also apply th
 
 ```kotlin
 plugins {
-    id("io.github.tiper.umbrellaaar") version "2.2.2"
-    id("io.github.tiper.umbrellaaar.pom") version "2.2.2"
+    id("io.github.tiper.umbrellaaar") version "x.x.x"
+    id("io.github.tiper.umbrellaaar.pom") version "x.x.x"
     id("maven-publish")
 }
 ```
@@ -182,8 +182,8 @@ pluginManagement {
 
    ```kotlin
    plugins {
-       id("io.github.tiper.umbrellaaar") version "2.2.2"
-       id("io.github.tiper.umbrellaaar.pom") version "2.2.2"
+       id("io.github.tiper.umbrellaaar") version "x.x.x"
+       id("io.github.tiper.umbrellaaar.pom") version "x.x.x"
        id("maven-publish")
    }
 
@@ -274,8 +274,8 @@ build/outputs/umbrellaaar/myMainLibrary-debug.aar
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.multiplatform")
-    id("io.github.tiper.umbrellaaar") version "2.2.2"
-    id("io.github.tiper.umbrellaaar.pom") version "2.2.2"
+    id("io.github.tiper.umbrellaaar") version "x.x.x"
+    id("io.github.tiper.umbrellaaar.pom") version "x.x.x"
     id("maven-publish")
 }
 

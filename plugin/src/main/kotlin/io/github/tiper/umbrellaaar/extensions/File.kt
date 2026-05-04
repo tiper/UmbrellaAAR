@@ -21,12 +21,9 @@ internal fun File.unzip(
                     return@forEach
                 }
                 zip.getInputStream(entry).use { input ->
-                    File(to, entry.name).apply { parentFile.mkdirs() }.outputStream().use { output ->
-                        if (entry.name.endsWith(".class")) {
-                            output.write(transformer(input.readBytes()))
-                        } else {
-                            input.copyTo(output)
-                        }
+                    File(to, entry.name).apply { parentFile.mkdirs() }.outputStream().use {
+                        if (entry.name.endsWith(".class")) it.write(transformer(input.readBytes()))
+                        else input.copyTo(it)
                     }
                 }
             }
