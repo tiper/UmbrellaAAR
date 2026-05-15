@@ -18,7 +18,7 @@ internal fun File.unzip(
             .filter { zip.predicate(it) }
             .forEach { entry ->
                 val outFile = File(to, entry.name).canonicalFile
-                require(outFile.path.startsWith(canonicalTo.path + File.separator) || outFile == canonicalTo) {
+                require(outFile.path.startsWith(canonicalTo.path + File.separator)) {
                     "Zip Slip attempt blocked: '${entry.name}' in '${this.name}' resolves outside destination"
                 }
                 if (entry.isDirectory) {
