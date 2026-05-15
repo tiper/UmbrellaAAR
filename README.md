@@ -19,9 +19,11 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 
 ## Quick Start
 
+> **Version:** Replace `$umbrellaVersion` with the latest release shown in the badge above, or check the [Gradle Plugin Portal](https://plugins.gradle.org/plugin/io.github.tiper.umbrellaaar) / [Maven Central](https://central.sonatype.com/search?q=g%3Aio.github.tiper) directly.
+
 ```kotlin
 plugins {
-    id("io.github.tiper.umbrellaaar") version "x.x.x"
+    id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
 }
 
 dependencies {
@@ -111,7 +113,7 @@ The plugin is available on **Maven Central** and **Gradle Plugin Portal**. No ad
 
 ```kotlin
 plugins {
-    id("io.github.tiper.umbrellaaar") version "x.x.x"
+    id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
 }
 ```
 
@@ -121,8 +123,8 @@ If you want to **publish your UmbrellaAAR to Maven repositories**, also apply th
 
 ```kotlin
 plugins {
-    id("io.github.tiper.umbrellaaar") version "x.x.x"
-    id("io.github.tiper.umbrellaaar.pom") version "x.x.x"
+    id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
+    id("io.github.tiper.umbrellaaar.pom") version "$umbrellaVersion"
     id("maven-publish")
 }
 ```
@@ -182,8 +184,8 @@ pluginManagement {
 
    ```kotlin
    plugins {
-       id("io.github.tiper.umbrellaaar") version "x.x.x"
-       id("io.github.tiper.umbrellaaar.pom") version "x.x.x"
+       id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
+       id("io.github.tiper.umbrellaaar.pom") version "$umbrellaVersion"
        id("maven-publish")
    }
 
@@ -274,8 +276,8 @@ build/outputs/umbrellaaar/myMainLibrary-debug.aar
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.multiplatform")
-    id("io.github.tiper.umbrellaaar") version "x.x.x"
-    id("io.github.tiper.umbrellaaar.pom") version "x.x.x"
+    id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
+    id("io.github.tiper.umbrellaaar.pom") version "$umbrellaVersion"
     id("maven-publish")
 }
 

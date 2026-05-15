@@ -12,16 +12,21 @@ internal fun File.unzip(
     transformer: (ByteArray) -> ByteArray = { it },
     predicate: ZipFile.(ZipEntry) -> Boolean = { true },
 ): File {
+    val canonicalTo = to.canonicalFile
     ZipFile(this).use { zip ->
         zip.entries().asSequence()
             .filter { zip.predicate(it) }
             .forEach { entry ->
+                val outFile = File(to, entry.name).canonicalFile
+                require(outFile.path.startsWith(canonicalTo.path + File.separator) || outFile == canonicalTo) {
+                    "Zip Slip attempt blocked: '${entry.name}' in '${this.name}' resolves outside destination"
+                }
                 if (entry.isDirectory) {
-                    File(to, entry.name).mkdirs()
+                    outFile.mkdirs()
                     return@forEach
                 }
                 zip.getInputStream(entry).use { input ->
-                    File(to, entry.name).apply { parentFile.mkdirs() }.outputStream().use {
+                    outFile.apply { parentFile.mkdirs() }.outputStream().use {
                         if (entry.name.endsWith(".class")) it.write(transformer(input.readBytes()))
                         else input.copyTo(it)
                     }
