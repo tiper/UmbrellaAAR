@@ -23,7 +23,10 @@ internal abstract class ExtractSources : DefaultTask() {
 
     @TaskAction
     fun execute() {
-        val outDir = extractedSourcesDir.get().asFile.also { it.mkdirs() }
+        val outDir = extractedSourcesDir.get().asFile.also {
+            it.deleteRecursively()
+            it.mkdirs()
+        }
         var jarsProcessed = 0
         var filesExtracted = 0
 

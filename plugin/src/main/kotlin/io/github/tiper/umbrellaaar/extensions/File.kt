@@ -12,17 +12,23 @@ internal fun File.unzip(
     transformer: (ByteArray) -> ByteArray = { it },
     predicate: ZipFile.(ZipEntry) -> Boolean = { true },
 ): File {
+    val canonicalTo = to.canonicalFile
     ZipFile(this).use { zip ->
         zip.entries().asSequence()
             .filter { zip.predicate(it) }
             .forEach { entry ->
+                val outFile = File(to, entry.name).canonicalFile
+                require(outFile.path.startsWith(canonicalTo.path + File.separator)) {
+                    "Zip Slip attempt blocked: '${entry.name}' in '${this.name}' resolves outside destination"
+                }
+                if (entry.isDirectory) {
+                    outFile.mkdirs()
+                    return@forEach
+                }
                 zip.getInputStream(entry).use { input ->
-                    File(to, entry.name).apply { parentFile.mkdirs() }.outputStream().use { output ->
-                        output.write(
-                            input.readBytes().let {
-                                if (entry.name.endsWith(".class")) transformer(it) else it
-                            },
-                        )
+                    outFile.apply { parentFile.mkdirs() }.outputStream().use {
+                        if (entry.name.endsWith(".class")) it.write(transformer(input.readBytes()))
+                        else input.copyTo(it)
                     }
                 }
             }
@@ -34,10 +40,14 @@ internal fun File.zip(to: File) {
     to.parentFile?.mkdirs()
     if (to.exists()) to.delete()
     ZipOutputStream(to.outputStream()).use { zos ->
-        walk().filter { it.isFile }.forEach { file ->
-            zos.putNextEntry(ZipEntry(file.relativeTo(this).path.normalizePath()))
-            file.inputStream().use { it.copyTo(zos) }
-            zos.closeEntry()
-        }
+        walk()
+            .filter { it.isFile }
+            .map { it to it.relativeTo(this).path.normalizePath() }
+            .sortedBy { (_, relativePath) -> relativePath }
+            .forEach { (file, relativePath) ->
+                zos.putNextEntry(ZipEntry(relativePath).also { it.time = 0L })
+                file.inputStream().use { it.copyTo(zos) }
+                zos.closeEntry()
+            }
     }
 }

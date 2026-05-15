@@ -11,6 +11,7 @@ import org.gradle.api.attributes.MultipleCandidatesDetails
 private const val ANDROID_JVM_PLATFORM_TYPE = "androidJvm"
 private const val JVM_PLATFORM_TYPE = "jvm"
 private const val COMMON_TYPE = "common"
+private const val KOTLIN_PLATFORM_RULES_REGISTERED_KEY = "io.github.tiper.umbrellaaar.kotlinPlatformRulesRegistered"
 
 fun Project.configureKotlinPlatformAttribute(configs: List<Configuration>) {
     val kotlinPlatformTypeAttribute = of("org.jetbrains.kotlin.platform.type", String::class.java)
@@ -22,9 +23,13 @@ fun Project.configureKotlinPlatformAttribute(configs: List<Configuration>) {
         )
     }
 
-    dependencies.attributesSchema.attribute(kotlinPlatformTypeAttribute).also {
-        it.compatibilityRules.add(KotlinPlatformCompatibilityRule::class.java)
-        it.disambiguationRules.add(KotlinPlatformDisambiguationRule::class.java)
+    val extras = extensions.extraProperties
+    if (!extras.has(KOTLIN_PLATFORM_RULES_REGISTERED_KEY)) {
+        dependencies.attributesSchema.attribute(kotlinPlatformTypeAttribute).also {
+            it.compatibilityRules.add(KotlinPlatformCompatibilityRule::class.java)
+            it.disambiguationRules.add(KotlinPlatformDisambiguationRule::class.java)
+        }
+        extras.set(KOTLIN_PLATFORM_RULES_REGISTERED_KEY, true)
     }
 }
 

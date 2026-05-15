@@ -7,6 +7,7 @@ import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -205,6 +206,24 @@ class FileExtensionsTest {
     }
 
     @Test
+    fun `unzip handles directory entries with default predicate`() {
+        val zipFile = tempDir.resolve("test-default-dir-entry.zip")
+        ZipOutputStream(zipFile.outputStream()).use {
+            it.putNextEntry(ZipEntry("nested/"))
+            it.closeEntry()
+            it.putNextEntry(ZipEntry("nested/file.txt"))
+            it.write("content".toByteArray())
+            it.closeEntry()
+        }
+
+        val extractDir = tempDir.resolve("extracted-default-dir-entry")
+        zipFile.unzip(extractDir)
+
+        assertTrue(extractDir.resolve("nested").isDirectory)
+        assertEquals("content", extractDir.resolve("nested/file.txt").readText())
+    }
+
+    @Test
     fun `zip and unzip roundtrip preserves content`() {
         val sourceDir = tempDir.resolve("source").apply { mkdirs() }
         sourceDir.resolve("file1.txt").writeText("content1")
@@ -237,6 +256,23 @@ class FileExtensionsTest {
     }
 
     @Test
+    fun `zip writes entries in deterministic sorted order`() {
+        val sourceDir = tempDir.resolve("source").apply { mkdirs() }
+        sourceDir.resolve("b.txt").writeText("b")
+        sourceDir.resolve("a.txt").writeText("a")
+        sourceDir.resolve("nested").mkdirs()
+        sourceDir.resolve("nested/c.txt").writeText("c")
+
+        val zipFile = tempDir.resolve("sorted.zip")
+        sourceDir.zip(zipFile)
+
+        java.util.zip.ZipFile(zipFile).use { zip ->
+            val entries = zip.entries().toList().map { it.name }
+            assertEquals(entries.sorted(), entries)
+        }
+    }
+
+    @Test
     fun `unzip returns original file for chaining`() {
         val zipFile = tempDir.resolve("test.zip")
         ZipOutputStream(zipFile.outputStream()).use {
@@ -250,5 +286,65 @@ class FileExtensionsTest {
         val result = zipFile.unzip(extractDir)
 
         assertEquals(zipFile, result)
+    }
+
+    // ── Zip Slip security ────────────────────────────────────────────────────
+
+    @Test
+    fun `unzip blocks classic path traversal entry`() {
+        val zipFile = tempDir.resolve("evil.zip")
+        ZipOutputStream(zipFile.outputStream()).use {
+            it.putNextEntry(ZipEntry("../evil.txt"))
+            it.write("pwned".toByteArray())
+            it.closeEntry()
+        }
+
+        val extractDir = tempDir.resolve("extracted").also { it.mkdirs() }
+
+        assertFailsWith<IllegalArgumentException>("Should block '../evil.txt' traversal") {
+            zipFile.unzip(extractDir)
+        }
+        assertFalse(tempDir.resolve("evil.txt").exists(), "File must not be written outside destination")
+    }
+
+    @Test
+    fun `unzip blocks traversal-to-root file entry`() {
+        // 'nested/..' canonicalizes to the destination root itself — i.e. it's not
+        // *inside* it — so the strict startsWith check must block it.
+        val zipFile = tempDir.resolve("evil-root.zip")
+        ZipOutputStream(zipFile.outputStream()).use {
+            it.putNextEntry(ZipEntry("nested/.."))
+            it.write("pwned".toByteArray())
+            it.closeEntry()
+        }
+
+        val extractDir = tempDir.resolve("extracted").also { it.mkdirs() }
+
+        assertFailsWith<IllegalArgumentException>("Should block 'nested/..' traversal") {
+            zipFile.unzip(extractDir)
+        }
+    }
+
+    @Test
+    fun `unzip safely contains absolute path entry inside destination`() {
+        // On the JVM, File(parent, "/etc/passwd") concatenates rather than overrides,
+        // so "/etc/passwd" lands at <dest>/etc/passwd — no traversal risk.
+        // This test documents that behavior: no exception, file inside destination.
+        val zipFile = tempDir.resolve("absolute.zip")
+        ZipOutputStream(zipFile.outputStream()).use {
+            it.putNextEntry(ZipEntry("/etc/passwd"))
+            it.write("content".toByteArray())
+            it.closeEntry()
+        }
+
+        val extractDir = tempDir.resolve("extracted").also { it.mkdirs() }
+
+        zipFile.unzip(extractDir) // must not throw
+
+        assertTrue(extractDir.resolve("etc/passwd").exists(), "File should land inside destination")
+        assertFalse(
+            File("/etc/passwd").exists() && File("/etc/passwd").readText() == "content",
+            "File must not escape to real /etc/passwd",
+        )
     }
 }
