@@ -169,7 +169,9 @@ abstract class MergeDependencies : DefaultTask() {
                 reportFile = null,
                 logger = GradleILogger(logger),
                 checkIfPackageInMainManifest = false,
+                checkIfInstantModule = false,
                 compileSdk = null,
+                usesSdkInManifestLenientHandling = true,
             )
         } catch (e: Exception) {
             throw GradleException("Failed to merge manifests: ${e.message}", e)
