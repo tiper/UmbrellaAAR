@@ -10,4 +10,3 @@ class AndroidLibrary : Plugin<Project> {
         configureAndroid()
     }
 }
-

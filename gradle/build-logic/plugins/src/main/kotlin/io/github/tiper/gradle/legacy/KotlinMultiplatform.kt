@@ -54,4 +54,3 @@ class KotlinMultiplatform : Plugin<Project> {
         }
     }
 }
-

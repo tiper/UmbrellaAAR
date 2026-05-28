@@ -10,4 +10,3 @@ class AndroidTest : Plugin<Project> {
         configureAndroid()
     }
 }
-
