@@ -34,6 +34,7 @@ dependencies {
     export(projects.sample.composable) {
 //         exclude(projects.sample.jni.sample1) // This one will exclude jni.sample1
     }
+    export(projects.sample.composable2)
     export(projects.sample.aidl.sample2)
     export(projects.sample.jni.sample2)
 }

@@ -30,6 +30,7 @@ android {
         export(projects.composable) {
 //            exclude(projects.jni.sample1) // This one will exclude jni.sample1
         }
+        export(projects.composable2)
         export(projects.aidl.sample2)
         export(projects.jni.sample2)
     }

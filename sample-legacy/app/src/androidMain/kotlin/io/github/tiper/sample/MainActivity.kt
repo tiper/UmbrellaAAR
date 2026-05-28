@@ -18,6 +18,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import io.github.tiper.sample.composable2.SampleScreen2Android
+import io.github.tiper.sample.composable2.SampleScreen2Common
 import io.github.tiper.sample.presentation.SampleScreenAndroid
 import io.github.tiper.sample.presentation.SampleScreenCommon
 import io.github.tiper.sample.presentation.SampleViewModel
@@ -108,6 +110,8 @@ class MainActivity : ComponentActivity() {
                         SampleViewModel()
                         SampleScreenAndroid()
                         SampleScreenCommon()
+                        SampleScreen2Android()
+                        SampleScreen2Common()
                         Greeting(name = "Android")
                     }
                 }

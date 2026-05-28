@@ -38,6 +38,7 @@ include(
     ":aidl:sample1",
     ":aidl:sample2",
     ":composable",
+    ":composable2",
     ":export",
     ":jni:sample1",
     ":jni:sample2",
@@ -45,5 +46,3 @@ include(
     ":viewmodel",
     ":app",
 )
-
-
