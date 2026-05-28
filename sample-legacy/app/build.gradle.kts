@@ -11,7 +11,7 @@ kotlin {
     sourceSets {
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
-            implementation(libs.sample.export)
+            implementation(libs.sample.export.legacy)
         }
         commonMain.dependencies {
             implementation(compose.material3)

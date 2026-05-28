@@ -261,7 +261,12 @@ class UmbrellaAarPom : Plugin<Project> {
             // so callers can choose which variant to publish.
             plugins.withId("com.android.kotlin.multiplatform.library") {
                 listOf("release", "debug").forEach { taskBuildType ->
-                    setup(taskBuildType, config, ::createKmpResolutionConfig)
+                    setup(
+                        buildType = taskBuildType,
+                        allModulesProvider = allModulesProvider,
+                        excludeRulesProvider = excludeRulesProvider,
+                        resolutionConfigFactory = ::createAndroidResolutionConfig,
+                    )
                 }
             }
         }

@@ -122,13 +122,16 @@ class UmbrellaAar : Plugin<Project> {
         isCanBeConsumed = false
     }
 
+    private fun Project.filteredProjectsProvider() = createExportConfig().let { config ->
+        provider {
+            val rules = config.allExcludeRules()
+            findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }
+        }
+    }
+
     override fun apply(target: Project) = with(target) {
         plugins.withId("com.android.library") {
-            val config = createExportConfig()
-            val filteredProjectsProvider = provider {
-                val rules = config.allExcludeRules()
-                findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }
-            }
+            val filteredProjectsProvider = filteredProjectsProvider()
             extensions.configure<LibraryExtension> {
                 buildTypes.forEach {
                     setup(
@@ -149,15 +152,15 @@ class UmbrellaAar : Plugin<Project> {
         // We still create both release and debug task sets (mirroring AGP8 behavior) so callers
         // can choose which publication to use. Both point to the same upstream "bundleAndroidMainAar".
         plugins.withId("com.android.kotlin.multiplatform.library") {
-            val config = createExportConfig()
+            val filteredProjectsProvider = filteredProjectsProvider()
             extensions.configure<ExtensionAware> {
                 extensions.configure<KotlinMultiplatformAndroidLibraryExtension> {
                     listOf("release", "debug").forEach {
                         setup(
                             taskBuildType = it,
                             aarBuildType = "androidMain",
-                            config = config,
                             namespace = provider { namespace },
+                            filteredProjectsProvider = filteredProjectsProvider,
                         )
                     }
                 }
