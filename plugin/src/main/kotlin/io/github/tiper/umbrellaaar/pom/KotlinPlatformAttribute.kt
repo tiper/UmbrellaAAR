@@ -13,15 +13,10 @@ private const val JVM_PLATFORM_TYPE = "jvm"
 private const val COMMON_TYPE = "common"
 private const val KOTLIN_PLATFORM_RULES_REGISTERED_KEY = "io.github.tiper.umbrellaaar.kotlinPlatformRulesRegistered"
 
-fun Project.configureKotlinPlatformAttribute(configs: List<Configuration>) {
+fun Project.configureKotlinPlatformAttribute(config: Configuration) {
     val kotlinPlatformTypeAttribute = of("org.jetbrains.kotlin.platform.type", String::class.java)
 
-    configs.forEach {
-        it.attributes.attribute(
-            kotlinPlatformTypeAttribute,
-            ANDROID_JVM_PLATFORM_TYPE,
-        )
-    }
+    config.attributes.attribute(kotlinPlatformTypeAttribute, ANDROID_JVM_PLATFORM_TYPE)
 
     val extras = extensions.extraProperties
     if (!extras.has(KOTLIN_PLATFORM_RULES_REGISTERED_KEY)) {

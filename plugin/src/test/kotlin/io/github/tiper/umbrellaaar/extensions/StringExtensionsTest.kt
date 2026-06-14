@@ -211,6 +211,8 @@ class StringExtensionsTest {
     fun `isApplicable returns false for unrelated configurations`() {
         assertFalse("compileOnly".isApplicable("release"))
         assertFalse("testImplementation".isApplicable("debug"))
+        assertFalse("implementation".isApplicable("release"))
+        assertFalse("api".isApplicable("debug"))
     }
 
     @Test

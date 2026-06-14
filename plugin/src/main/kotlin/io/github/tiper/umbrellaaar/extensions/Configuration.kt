@@ -45,7 +45,7 @@ internal fun Project.findAllProjectDependencies(config: Configuration): Set<Proj
 }
 
 internal fun Project.createAndroidResolutionConfig(buildType: String): Configuration = configurations.detachedConfiguration().apply {
-    configureKotlinPlatformAttribute(listOf(this))
+    configureKotlinPlatformAttribute(this)
     attributes {
         attribute(ATTRIBUTE, objects.named(BuildTypeAttr::class.java, buildType))
         attribute(CATEGORY_ATTRIBUTE, objects.named(Category::class.java, LIBRARY))
@@ -59,7 +59,7 @@ internal fun Project.createAndroidResolutionConfig(buildType: String): Configura
 internal fun Project.createKmpResolutionConfig(buildType: String): Configuration = configurations.detachedConfiguration().apply {
     isCanBeResolved = true
     isCanBeConsumed = false
-    configureKotlinPlatformAttribute(listOf(this))
+    configureKotlinPlatformAttribute(this)
     attributes {
         attribute(CATEGORY_ATTRIBUTE, objects.named(Category::class.java, LIBRARY))
         attribute(USAGE_ATTRIBUTE, objects.named(Usage::class.java, JAVA_RUNTIME))

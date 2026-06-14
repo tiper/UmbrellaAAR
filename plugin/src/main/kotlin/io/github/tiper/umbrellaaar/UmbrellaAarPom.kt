@@ -265,7 +265,7 @@ class UmbrellaAarPom : Plugin<Project> {
                         buildType = taskBuildType,
                         allModulesProvider = allModulesProvider,
                         excludeRulesProvider = excludeRulesProvider,
-                        resolutionConfigFactory = ::createAndroidResolutionConfig,
+                        resolutionConfigFactory = ::createKmpResolutionConfig,
                     )
                 }
             }

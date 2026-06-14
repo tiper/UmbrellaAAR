@@ -19,7 +19,7 @@ class AndroidLibraryMultiplatform : Plugin<Project> {
         }
         // com.android.kotlin.multiplatform.library does not register prepareKotlinIdeaImport
         // Ensure the KMP project structure metadata is generated during IDE sync so that
-        // So that modules depending of other modules in commonTest can resolve it.
+        // modules depending on other modules in commonTest can resolve it.
         tasks.matching { it.name == "resolveIdeDependencies" || it.name == "prepareKotlinIdeaImport" }.configureEach {
             dependsOn("generateProjectStructureMetadata")
         }

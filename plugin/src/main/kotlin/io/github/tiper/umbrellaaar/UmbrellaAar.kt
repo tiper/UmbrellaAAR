@@ -18,7 +18,6 @@ import io.github.tiper.umbrellaaar.tasks.MergeSources
 import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.api.artifacts.Configuration
 import org.gradle.api.plugins.ExtensionAware
 import org.gradle.api.provider.Provider
 import org.gradle.kotlin.dsl.configure
@@ -117,12 +116,10 @@ class UmbrellaAar : Plugin<Project> {
         }
     }
 
-    private fun Project.createExportConfig(): Configuration = configurations.create(UMBRELLA_AAR_CONFIG) {
+    private fun Project.filteredProjectsProvider() = configurations.maybeCreate(UMBRELLA_AAR_CONFIG).apply {
         isCanBeResolved = true
         isCanBeConsumed = false
-    }
-
-    private fun Project.filteredProjectsProvider() = createExportConfig().let { config ->
+    }.let { config ->
         provider {
             val rules = config.allExcludeRules()
             findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }
