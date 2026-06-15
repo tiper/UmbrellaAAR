@@ -6,6 +6,7 @@ plugins {
 kotlin {
     androidLibrary {
         namespace = "io.github.tiper.sample.test"
+        withHostTest {}
     }
     sourceSets {
         commonMain.dependencies {

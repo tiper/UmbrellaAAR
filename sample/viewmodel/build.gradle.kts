@@ -7,6 +7,7 @@ plugins {
 kotlin {
     androidLibrary {
         namespace = "io.github.tiper.sample.viewmodel"
+        withHostTest {}
     }
     sourceSets {
         androidMain.dependencies {

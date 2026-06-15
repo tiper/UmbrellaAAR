@@ -24,6 +24,8 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation(gradleTestKit())
+    testRuntimeOnly(libs.android.gradle.plugin)
+    testRuntimeOnly(libs.kotlin.gradle.plugin)
 }
 
 gradlePlugin {
@@ -98,7 +100,7 @@ mavenPublishing {
         licenses {
             license {
                 name = "Apache License 2.0"
-                url = "https://api.github.com/licenses/apache-2.0"
+                url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
             }
         }
         developers {

@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.4.1)
 
+project(sample_jni_sample1 C)
+
 add_library(
         native-lib1
         SHARED

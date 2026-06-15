@@ -15,6 +15,7 @@ fun <T : ModuleDependency> T.exclude(dependency: Dependency) = exclude(dependenc
 kotlin {
     androidLibrary {
         namespace = "$group.framework"
+        withHostTest {}
         @Suppress("UnstableApiUsage")
         optimization {
             consumerKeepRules.apply {
@@ -58,7 +59,7 @@ mavenPublishing {
         licenses {
             license {
                 name = "Apache License 2.0"
-                url = "https://api.github.com/licenses/apache-2.0"
+                url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
             }
         }
         developers {

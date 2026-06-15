@@ -10,6 +10,7 @@ group = "io.github.tiper.sample.composable2"
 kotlin {
     androidLibrary {
         namespace = group.toString()
+        withHostTest {}
         experimentalProperties["android.experimental.kmp.enableAndroidResources"] = true
     }
     sourceSets {
