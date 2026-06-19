@@ -11,8 +11,8 @@ class AndroidLibrary : Plugin<Project> {
     override fun apply(target: Project) = with(target) {
         pluginManager.apply("com.android.library")
         extensions.configure<LibraryExtension> {
+            compileSdk(CompileSdk)
             defaultConfig.apply {
-                compileSdk(CompileSdk)
                 minSdk(MinSdk)
             }
             publishing {

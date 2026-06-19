@@ -11,8 +11,8 @@ class AndroidApplication : Plugin<Project> {
     override fun apply(target: Project) = with(target) {
         pluginManager.apply("com.android.application")
         extensions.configure<ApplicationExtension> {
+            compileSdk(CompileSdk)
             defaultConfig.apply {
-                compileSdk(CompileSdk)
                 minSdk(MinSdk)
             }
         }
