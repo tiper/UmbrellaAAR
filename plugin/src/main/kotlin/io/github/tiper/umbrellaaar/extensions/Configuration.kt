@@ -27,6 +27,7 @@ internal fun Project.findAllProjectDependencies(config: Configuration): Set<Proj
         if (result.add(project)) queue.add(project)
     }
 
+    @Suppress("DEPRECATION")
     fun Configuration.projectDependencies() = dependencies.withType<ProjectDependency>().mapNotNull {
         findProject(it.dependencyProject.path)
     }
@@ -44,8 +45,6 @@ internal fun Project.findAllProjectDependencies(config: Configuration): Set<Proj
 }
 
 internal fun Project.createAndroidResolutionConfig(buildType: String): Configuration = configurations.detachedConfiguration().apply {
-    isCanBeResolved = true
-    isCanBeConsumed = false
     configureKotlinPlatformAttribute(listOf(this))
     attributes {
         attribute(ATTRIBUTE, objects.named(BuildTypeAttr::class.java, buildType))

@@ -1,6 +1,5 @@
 package io.github.tiper.umbrellaaar.tasks
 
-import java.io.Serializable
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
@@ -24,39 +23,16 @@ abstract class CollectExternalDependencies : DefaultTask() {
         val output = outputFile.get().asFile
         output.parentFile.mkdirs()
 
-        // Parse and deduplicate dependencies
+        // Input is already deduplicated by Collector — just validate, sort, and write.
         val externalDeps = inputDeps
-            .map { it.split(":") }
-            .filter { it.size == 4 }
-            .map {
-                DependencyInfo(
-                    group = it[0],
-                    name = it[1],
-                    version = it[2],
-                    scope = it[3],
-                )
-            }
-            .distinctBy { "${it.group}:${it.name}" }
-            .sortedWith(compareBy({ it.group }, { it.name }))
+            .filter { it.count { c -> c == ':' } == 3 }
+            .sorted()
 
         if (externalDeps.isNotEmpty()) {
-            output.writeText(
-                externalDeps.joinToString("\n") {
-                    "${it.group}:${it.name}:${it.version}:${it.scope}"
-                },
-            )
-            val deduplicatedCount = inputDeps.size - externalDeps.size
-            logger.lifecycle(
-                "Collected ${externalDeps.size} unique external dependencies" +
-                    if (deduplicatedCount > 0) " (deduplicated $deduplicatedCount duplicate entries)" else "",
-            )
-        } else output.writeText("") // Gradle @OutputFile needs the file even if empty
+            output.writeText(externalDeps.joinToString("\n"))
+            logger.lifecycle("Collected ${externalDeps.size} external dependencies")
+        } else {
+            output.writeText("") // Gradle @OutputFile needs the file even if empty
+        }
     }
-
-    data class DependencyInfo(
-        val group: String,
-        val name: String,
-        val version: String,
-        val scope: String,
-    ) : Serializable
 }

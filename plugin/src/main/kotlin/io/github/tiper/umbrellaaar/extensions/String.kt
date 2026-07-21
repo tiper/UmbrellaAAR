@@ -26,6 +26,8 @@ internal fun String.isApplicable(buildType: String): Boolean = when {
     contains("commonMain") -> true
     contains("androidMain") -> true
     contains("android$buildType", true) -> true
+    this == "implementation" -> true
+    this == "api" -> true
     else -> false
 }
 

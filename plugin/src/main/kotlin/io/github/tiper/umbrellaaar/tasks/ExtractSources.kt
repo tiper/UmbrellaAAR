@@ -28,21 +28,20 @@ internal abstract class ExtractSources : DefaultTask() {
             it.mkdirs()
         }
         var jarsProcessed = 0
-        var filesExtracted = 0
 
         dependencySourcesJars.forEach { jarFile ->
             if (jarFile.extension == "jar") {
                 logger.debug("Extracting sources from: ${jarFile.name}")
                 jarFile.unzip(to = outDir) {
-                    val shouldInclude = !it.isDirectory && (it.name.endsWith(".java") || it.name.endsWith(".kt"))
-                    if (shouldInclude) filesExtracted++
-                    shouldInclude
+                    !it.isDirectory && (it.name.endsWith(".java") || it.name.endsWith(".kt"))
                 }
                 jarsProcessed++
             } else {
                 logger.debug("Ignoring non-jar file: ${jarFile.name}")
             }
         }
+
+        val filesExtracted = outDir.walk().count { it.isFile }
         logger.lifecycle("Extracted sources: $filesExtracted files from $jarsProcessed JARs")
     }
 }

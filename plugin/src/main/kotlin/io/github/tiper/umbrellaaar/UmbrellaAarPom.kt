@@ -170,7 +170,8 @@ class UmbrellaAarPom : Plugin<Project> {
                 .map { resolveToAndroidx(it, androidxMap) }
                 .also { logger.debug("[UmbrellaAarPom] Resolved ${it.size} direct dependencies") }
         } catch (e: Exception) {
-            logger.error("[UmbrellaAarPom] Resolution failed: ${e.message}", e)
+            logger.warn("[UmbrellaAarPom] Resolution failed, using unresolved coordinates as fallback: ${e.message}")
+            logger.debug("[UmbrellaAarPom] Resolution failure details:", e)
             dependencies.mapNotNull { dep ->
                 val group = dep.group ?: return@mapNotNull null
                 val version = dep.version ?: return@mapNotNull null

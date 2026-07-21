@@ -31,9 +31,9 @@ abstract class ExtractDependencies : DefaultTask() {
     abstract val outputDir: DirectoryProperty
 
     @get:Internal
-    abstract val rootDir: Property<File>
+    abstract val rootDir: DirectoryProperty
 
-    private fun File.folderName(): String = relativeToOrNull(rootDir.get())?.path
+    private fun File.folderName(): String = relativeToOrNull(rootDir.get().asFile)?.path
         ?.replace(File.separatorChar, '_')
         ?.removeSuffix(".$extension")
         ?: nameWithoutExtension

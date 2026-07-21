@@ -36,7 +36,7 @@ class UmbrellaAar : Plugin<Project> {
 
         val extractDependencies = tasks.register<ExtractDependencies>("extract${taskBuildTypeCapitalized}Dependencies") {
             mainNamespace.convention(namespace)
-            rootDir.convention(project.rootProject.projectDir)
+            rootDir.convention(project.rootProject.layout.projectDirectory)
             outputDir.convention(
                 layout.buildDirectory.dir("$INTERMEDIATES_PATH/$taskBuildType/dependencies"),
             )
@@ -79,7 +79,6 @@ class UmbrellaAar : Plugin<Project> {
         }
 
         val mergeDependencies = tasks.register<MergeDependencies>("merge${taskBuildTypeCapitalized}UmbrellaAarDependencies") {
-            dependsOn(extractMain, extractDependencies)
             dependencies.set(extractDependencies.flatMap { it.outputDir })
             mainAarDir.set(extractMain.flatMap { it.unpackedAarDir })
             mergedAarDir.convention(
@@ -90,7 +89,6 @@ class UmbrellaAar : Plugin<Project> {
         tasks.register<BundleUmbrellaAar>("bundle${taskBuildTypeCapitalized}UmbrellaAar") {
             group = "umbrellaaar"
             description = "Bundles all merged dependencies into a single AAR for $taskBuildType"
-            dependsOn(mergeDependencies)
             unpackedMainAar.set(mergeDependencies.flatMap { it.mergedAarDir })
             umbrellaAarOutput.convention(
                 layout.buildDirectory.file("$OUTPUTS_PATH/${project.name}-$taskBuildType.aar"),
@@ -100,7 +98,7 @@ class UmbrellaAar : Plugin<Project> {
         val mainSources = findSourcesJarTask(aarBuildTypeCapitalized, taskBuildTypeCapitalized)
 
         val mergeSources = tasks.register<MergeSources>("merge${taskBuildTypeCapitalized}UmbrellaAarSources") {
-            dependsOn(extractSources, mainSources)
+            dependsOn(mainSources)
             dependencySources.set(extractSources.flatMap { it.extractedSourcesDir })
             mainSourcesJars.from(mainSources.map { it.outputs.files })
 
@@ -133,7 +131,12 @@ class UmbrellaAar : Plugin<Project> {
                 buildTypes.forEach {
                     setup(
                         taskBuildType = it.name,
-                        namespace = provider { namespace },
+                        namespace = provider {
+                            requireNotNull(namespace) {
+                                "android.namespace must be set for UmbrellaAar to work. " +
+                                    "Set it in the android {} block of ${project.path}."
+                            }
+                        },
                         filteredProjectsProvider = filteredProjectsProvider,
                     )
                 }
