@@ -34,7 +34,7 @@ class Collector {
         fun throwIfNot(new: String) {
             if (version != new) {
                 throw GradleException(
-                    "Version conflict for $group:$name — resolved version=$version conflicts with version=$new. " +
+                    "Version conflict for $group:$name — existing version=$version conflicts with new version=$new. " +
                         "Align versions across all merged modules using a version catalog or dependency constraints.",
                 )
             }

@@ -25,7 +25,10 @@ abstract class CollectExternalDependencies : DefaultTask() {
 
         // Input is already deduplicated by Collector — just validate, sort, and write.
         val externalDeps = inputDeps
-            .filter { it.count { c -> c == ':' } == 3 }
+            .filter { coord ->
+                val parts = coord.split(":")
+                parts.size == 4 && parts.all { it.isNotBlank() }
+            }
             .sorted()
 
         if (externalDeps.isNotEmpty()) {
