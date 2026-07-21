@@ -17,7 +17,7 @@ java {
 }
 
 dependencies {
-    compileOnly(libs.android.gradle.plugin.min)
+    compileOnly(libs.android.gradle.plugin)
     implementation(libs.asm.commons)
     implementation(libs.android.tools.common)
 

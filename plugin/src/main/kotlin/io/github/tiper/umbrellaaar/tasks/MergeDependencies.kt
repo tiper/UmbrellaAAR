@@ -1,9 +1,12 @@
 package io.github.tiper.umbrellaaar.tasks
 
 import com.android.manifmerger.ManifestMerger2
+import com.android.manifmerger.ManifestMerger2.Invoker.Feature.USES_SDK_IN_MANIFEST_LENIENT_HANDLING
+import com.android.manifmerger.ManifestMerger2.MergeType.LIBRARY
 import com.android.manifmerger.ManifestProvider
-import com.android.manifmerger.ManifestSystemProperty
-import com.android.manifmerger.MergingReport
+import com.android.manifmerger.ManifestSystemProperty.Document.PACKAGE
+import com.android.manifmerger.MergingReport.MergedManifestKind.MERGED
+import com.android.manifmerger.MergingReport.Record.Severity.ERROR
 import com.android.utils.ILogger
 import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
 import io.github.tiper.umbrellaaar.extensions.normalizePath
@@ -147,11 +150,12 @@ abstract class MergeDependencies : DefaultTask() {
         }
 
         try {
-            val report = ManifestMerger2.newMerger(to, GradleILogger(logger), ManifestMerger2.MergeType.LIBRARY)
+            val report = ManifestMerger2.newMerger(to, GradleILogger(logger), LIBRARY)
                 .addManifestProviders(listOf(toManifestProvider()))
+                .withFeatures(USES_SDK_IN_MANIFEST_LENIENT_HANDLING)
                 .apply {
                     if (packageOverride.isNotEmpty()) {
-                        setOverride(ManifestSystemProperty.Document.PACKAGE, packageOverride)
+                        setOverride(PACKAGE, packageOverride)
                         setNamespace(packageOverride)
                     }
                 }
@@ -160,13 +164,13 @@ abstract class MergeDependencies : DefaultTask() {
             when {
                 report.result.isError -> {
                     val errors = report.loggingRecords
-                        .filter { it.severity == MergingReport.Record.Severity.ERROR }
+                        .filter { it.severity == ERROR }
                         .joinToString("\n") { it.message }
                     throw GradleException("Manifest merge failed:\n$errors")
                 }
 
                 else -> {
-                    val mergedXml = report.getMergedDocument(MergingReport.MergedManifestKind.MERGED)
+                    val mergedXml = report.getMergedDocument(MERGED)
                         ?: throw GradleException("Manifest merge succeeded but produced no output")
                     to.writeText(mergedXml)
                 }
