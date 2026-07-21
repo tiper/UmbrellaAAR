@@ -148,7 +148,6 @@ abstract class MergeDependencies : DefaultTask() {
         try {
             val report = ManifestMerger2.newMerger(to, GradleILogger(logger), ManifestMerger2.MergeType.LIBRARY)
                 .addManifestProviders(listOf(toManifestProvider()))
-                .withFeatures(ManifestMerger2.Invoker.Feature.USES_SDK_IN_MANIFEST_LENIENT_HANDLING)
                 .apply {
                     if (packageOverride.isNotEmpty()) {
                         setOverride(ManifestSystemProperty.Document.PACKAGE, packageOverride)

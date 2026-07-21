@@ -1,6 +1,7 @@
 [versions]
 agp = "8.13.2" # https://developer.android.com/build/releases/gradle-plugin
-android-tools = "31.1.4"
+agp-min = "8.2.0" # Minimum supported AGP version for plugin compileOnly
+android-tools = "31.2.0"
 androidx-activity-compose = "1.9.3" # https://developer.android.com/jetpack/androidx/releases/activity
 asm-commons = "9.6" # https://asm.ow2.io/versions.html
 compose = "1.6.11" # https://github.com/JetBrains/compose-multiplatform/releases
@@ -12,6 +13,7 @@ ktlint-gradle = "14.0.1" # https://github.com/JLLeitschuh/ktlint-gradle/releases
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+android-gradle-plugin-min = { module = "com.android.tools.build:gradle", version.ref = "agp-min" }
 android-tools-common = { module = "com.android.tools:common", version.ref = "android-tools" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
 asm-commons = { module = "org.ow2.asm:asm-commons", version.ref = "asm-commons" }
