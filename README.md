@@ -15,15 +15,15 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 
 ⚠️ **Only merges local modules from your project.** External dependencies (like AndroidX) stay separate.
 
-> ⚠️ **AGP 9 / Gradle 9 compatibility is not yet available.** The current version supports **AGP 8.13.2+** with Gradle 8.x only. AGP 9 support is being worked on.
+> ⚠️ **AGP 9 / Gradle 9 compatibility is not yet available.** The current version supports **AGP 8.13.0+** with Gradle 8.x only. AGP 9 support is being worked on.
 >
 > **AGP version compatibility history:**
 >
 > | Plugin version | Supported AGP range | Notes |
 > |---|---|---|
-> | `< 2.x` | `8.0.0 – 8.11.x` | Uses the original `mergeManifests` signature |
-> | *(gap)* | `8.12.x – 8.13.1` | ❌ Not supported — AGP introduced a breaking internal API change in 8.12.1 |
-> | `2.x` (this version) | `8.13.2+` | AGP introduced a second signature change in 8.13.2; this version targets that API |
+> | `< 2.x` | `8.0.0 – 8.11.x` | Uses the internal `mergeManifests` function (broke in AGP 8.12.1) |
+> | *(gap)* | `8.12.x – 8.12.x` | ❌ Not supported — AGP removed the internal API; replacement feature not yet available |
+> | `2.x` (this version) | `8.13.0+` | Uses the public `ManifestMerger2` builder API with `USES_SDK_IN_MANIFEST_LENIENT_HANDLING` |
 
 ## Quick Start
 

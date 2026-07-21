@@ -31,6 +31,10 @@ internal fun ByteArray.transformClass(mainNsInternal: String): ByteArray {
             if (rIndex > 0) {
                 return mainNsInternal + internalName.substring(rIndex)
             }
+            // Remap bare R class (e.g. com/dep/R → mainNs/R)
+            if (internalName.endsWith("/R")) {
+                return "$mainNsInternal/R"
+            }
             return super.map(internalName)
         }
     }
@@ -39,19 +43,29 @@ internal fun ByteArray.transformClass(mainNsInternal: String): ByteArray {
     return writer.toByteArray()
 }
 
-// Scans bytecode for "/R$" or "/R;" patterns
+// Scans bytecode for R class patterns: "/R$", "/R;", or "/R" followed by a non-identifier byte
 internal fun ByteArray.containsRClassReference(): Boolean {
     val slash = '/'.code.toByte()
     val rByte = 'R'.code.toByte()
-    val dollar = '$'.code.toByte()
-    val semicolon = ';'.code.toByte()
 
-    for (i in 0 until size - 2) {
-        if ((this[i] == slash && this[i + 1] == rByte && this[i + 2] == dollar) ||
-            (this[i] == slash && this[i + 1] == rByte && this[i + 2] == semicolon)
-        ) {
-            return true
-        }
+    for (i in 0 until size - 1) {
+        if (this[i] != slash || this[i + 1] != rByte) continue
+        // Found "/R" — check what follows
+        if (i + 2 >= size) return true // "/R" at end of bytecode = bare R
+        val next = this[i + 2]
+        if (next == '$'.code.toByte() || next == ';'.code.toByte()) return true
+        // Bare R: next byte can't continue a valid class name
+        if (!next.isJavaIdentifierPart()) return true
     }
     return false
 }
+
+private fun Byte.isJavaIdentifierPart(): Boolean {
+    val c = toInt() and 0xFF
+    return c in 'a'.code..'z'.code ||
+        c in 'A'.code..'Z'.code ||
+        c in '0'.code..'9'.code ||
+        c == '_'.code ||
+        c == '$'.code
+}
+

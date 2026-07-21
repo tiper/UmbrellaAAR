@@ -1,10 +1,17 @@
 package io.github.tiper.umbrellaaar.tasks
 
-import com.android.build.gradle.internal.tasks.manifest.mergeManifests
+import com.android.manifmerger.ManifestMerger2
+import com.android.manifmerger.ManifestMerger2.Invoker.Feature.USES_SDK_IN_MANIFEST_LENIENT_HANDLING
+import com.android.manifmerger.ManifestMerger2.MergeType.LIBRARY
 import com.android.manifmerger.ManifestProvider
+import com.android.manifmerger.ManifestSystemProperty.Document.PACKAGE
+import com.android.manifmerger.MergingReport.MergedManifestKind.MERGED
+import com.android.manifmerger.MergingReport.Record.Severity.ERROR
 import com.android.utils.ILogger
+import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
 import io.github.tiper.umbrellaaar.extensions.normalizePath
 import io.github.tiper.umbrellaaar.extensions.stripPackageAttribute
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -111,14 +118,14 @@ abstract class MergeDependencies : DefaultTask() {
             if (exists()) delete()
         }
         val classes = File(out, "classes")
-        ZipOutputStream(FileOutputStream(jar)).use { zos ->
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(jar), IO_BUFFER_SIZE)).use { zos ->
             classes.walk()
                 .filter { it.isFile }
                 .map { it to it.relativeTo(classes).path.normalizePath() }
                 .sortedBy { (_, entryName) -> entryName }
                 .forEach { (classFile, entryName) ->
                     zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
-                    classFile.inputStream().use { it.copyTo(zos) }
+                    classFile.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
                     zos.closeEntry()
                 }
         }
@@ -143,36 +150,33 @@ abstract class MergeDependencies : DefaultTask() {
         }
 
         try {
-            mergeManifests(
-                mainManifest = to,
-                manifestOverlays = emptyList(),
-                dependencies = listOf(toManifestProvider()),
-                navigationJsons = emptyList(),
-                featureName = null,
-                packageOverride = packageOverride,
-                namespace = packageOverride,
-                profileable = false,
-                versionCode = null,
-                versionName = null,
-                minSdkVersion = null,
-                targetSdkVersion = null,
-                maxSdkVersion = null,
-                testOnly = false,
-                extractNativeLibs = null,
-                outMergedManifestLocation = to.absolutePath,
-                outAaptSafeManifestLocation = null,
-                mergeType = com.android.manifmerger.ManifestMerger2.MergeType.LIBRARY,
-                placeHolders = emptyMap(),
-                optionalFeatures = emptyList(),
-                dependencyFeatureNames = emptyList(),
-                generatedLocaleConfigAttribute = null,
-                reportFile = null,
-                logger = GradleILogger(logger),
-                checkIfPackageInMainManifest = false,
-                checkIfInstantModule = false,
-                compileSdk = null,
-                usesSdkInManifestLenientHandling = true,
-            )
+            val report = ManifestMerger2.newMerger(to, GradleILogger(logger), LIBRARY)
+                .addManifestProviders(listOf(toManifestProvider()))
+                .withFeatures(USES_SDK_IN_MANIFEST_LENIENT_HANDLING)
+                .apply {
+                    if (packageOverride.isNotEmpty()) {
+                        setOverride(PACKAGE, packageOverride)
+                        setNamespace(packageOverride)
+                    }
+                }
+                .merge()
+
+            when {
+                report.result.isError -> {
+                    val errors = report.loggingRecords
+                        .filter { it.severity == ERROR }
+                        .joinToString("\n") { it.message }
+                    throw GradleException("Manifest merge failed:\n$errors")
+                }
+
+                else -> {
+                    val mergedXml = report.getMergedDocument(MERGED)
+                        ?: throw GradleException("Manifest merge succeeded but produced no output")
+                    to.writeText(mergedXml)
+                }
+            }
+        } catch (e: GradleException) {
+            throw e
         } catch (e: Exception) {
             throw GradleException("Failed to merge manifests: ${e.message}", e)
         }

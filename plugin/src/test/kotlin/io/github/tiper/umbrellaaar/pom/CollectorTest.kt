@@ -179,7 +179,7 @@ class CollectorTest {
         }
 
         assert(exception.message?.contains("Version conflict") == true)
-        assert(exception.message?.contains("Make sure all configs use the same version") == true)
+        assert(exception.message?.contains("Align versions") == true)
     }
 
     @Test

@@ -214,6 +214,19 @@ class StringExtensionsTest {
     }
 
     @Test
+    fun `isApplicable returns true for plain implementation`() {
+        assertTrue("implementation".isApplicable("release"))
+        assertTrue("implementation".isApplicable("debug"))
+    }
+
+    @Test
+    fun `isApplicable returns true for plain api`() {
+        assertTrue("api".isApplicable("release"))
+        assertTrue("api".isApplicable("debug"))
+    }
+
+
+    @Test
     fun `matches returns true when both group and module match`() {
         val rule = "com.example" to "library"
         assertTrue(rule.matches("com.example", "library"))
