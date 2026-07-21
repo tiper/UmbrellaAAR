@@ -184,7 +184,7 @@ class ByteArrayExtensionsTest {
                 access: Int, name: String?, descriptor: String?, signature: String?, exceptions: Array<out String>?,
             ) = object : org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
                 override fun visitFieldInsn(opcode: Int, owner: String, name: String?, descriptor: String?) {
-                    owners.add(owner)
+                    if (opcode == GETSTATIC) owners.add(owner)
                 }
             }
         }, 0)
