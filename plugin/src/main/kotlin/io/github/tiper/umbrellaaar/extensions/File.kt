@@ -6,7 +6,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
-private const val IO_BUFFER_SIZE = 65_536
+internal const val IO_BUFFER_SIZE = 65_536
 
 internal fun String.normalizePath(): String = replace("\\", "/")
 

@@ -5,6 +5,7 @@ import com.android.manifmerger.ManifestProvider
 import com.android.manifmerger.ManifestSystemProperty
 import com.android.manifmerger.MergingReport
 import com.android.utils.ILogger
+import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
 import io.github.tiper.umbrellaaar.extensions.normalizePath
 import io.github.tiper.umbrellaaar.extensions.stripPackageAttribute
 import java.io.BufferedOutputStream
@@ -114,14 +115,14 @@ abstract class MergeDependencies : DefaultTask() {
             if (exists()) delete()
         }
         val classes = File(out, "classes")
-        ZipOutputStream(BufferedOutputStream(FileOutputStream(jar), 65_536)).use { zos ->
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(jar), IO_BUFFER_SIZE)).use { zos ->
             classes.walk()
                 .filter { it.isFile }
                 .map { it to it.relativeTo(classes).path.normalizePath() }
                 .sortedBy { (_, entryName) -> entryName }
                 .forEach { (classFile, entryName) ->
                     zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
-                    classFile.inputStream().use { it.copyTo(zos, 65_536) }
+                    classFile.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
                     zos.closeEntry()
                 }
         }

@@ -1,5 +1,6 @@
 package io.github.tiper.umbrellaaar.tasks
 
+import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
 import io.github.tiper.umbrellaaar.extensions.normalizePath
 import java.io.BufferedOutputStream
 import java.io.FileOutputStream
@@ -43,7 +44,7 @@ internal abstract class MergeSources : DefaultTask() {
 
         logger.lifecycle("Merging sources from ${mainSourcesJars.files.size} source JARs")
 
-        ZipOutputStream(BufferedOutputStream(FileOutputStream(outputJar), 65_536)).use { zos ->
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(outputJar), IO_BUFFER_SIZE)).use { zos ->
 
             // Dep sources first, then main sources — duplicates throw, consistent with MergeDependencies
             val depRoot = dependencySources.get().asFile
@@ -55,7 +56,7 @@ internal abstract class MergeSources : DefaultTask() {
                         val entryName = srcFile.relativeTo(depRoot).path.normalizePath()
                         if (seen.add(entryName)) {
                             zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
-                            srcFile.inputStream().use { it.copyTo(zos, 65_536) }
+                            srcFile.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
                             zos.closeEntry()
                             sourceFilesCollected++
                         } else {
@@ -75,7 +76,7 @@ internal abstract class MergeSources : DefaultTask() {
                             val entryName = entry.name.normalizePath()
                             if (seen.add(entryName)) {
                                 zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
-                                zip.getInputStream(entry).use { it.copyTo(zos, 65_536) }
+                                zip.getInputStream(entry).use { it.copyTo(zos, IO_BUFFER_SIZE) }
                                 zos.closeEntry()
                                 sourceFilesCollected++
                             } else {
