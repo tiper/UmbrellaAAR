@@ -1,29 +1,12 @@
 plugins {
-    alias(libs.plugins.kotlin.multiplatform.tiper)
+    alias(libs.plugins.android.application)
     alias(libs.plugins.android.application.tiper)
     alias(libs.plugins.compose.multiplatform)
-}
-
-kotlin {
-    androidTarget()
-    sourceSets {
-        androidMain.dependencies {
-            implementation(libs.androidx.activity.compose)
-            implementation(libs.sample.export)
-        }
-        commonMain.dependencies {
-            implementation(compose.material3)
-            implementation(compose.components.resources)
-        }
-    }
+    alias(libs.plugins.compose.compiler)
 }
 
 android {
     namespace = "io.github.tiper.sample"
-
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-    sourceSets["main"].res.srcDirs("src/androidMain/res")
-    sourceSets["main"].resources.srcDirs("src/commonMain/resources")
 
     defaultConfig {
         applicationId = "io.github.tiper.sample"
@@ -43,10 +26,13 @@ android {
     buildFeatures {
         compose = true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.3"
-    }
-    dependencies {
-        debugImplementation(compose.uiTooling)
-    }
+}
+
+dependencies {
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.sample.export)
+    implementation(compose.material3)
+    implementation(compose.components.resources)
+
+    debugImplementation(compose.uiTooling)
 }

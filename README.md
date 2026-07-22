@@ -5,9 +5,9 @@
 [![Gradle Plugin Portal](https://img.shields.io/maven-metadata/v/https/plugins.gradle.org/m2/io/github/tiper/umbrellaaar/io.github.tiper.umbrellaaar.gradle.plugin/maven-metadata.xml.svg?colorB=007ec6&label=gradlePluginPortal)](https://plugins.gradle.org/plugin/io.github.tiper.umbrellaaar)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.tiper/umbrellaaar)](https://central.sonatype.com/search?q=g%3Aio.github.tiper)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Kotlin](https://img.shields.io/badge/Kotlin-1.9.23+-blue.svg)](https://kotlinlang.org/)
-[![Gradle](https://img.shields.io/badge/Gradle-8.0--8.x-blue.svg)](https://gradle.org/)
-[![AGP](https://img.shields.io/badge/AGP-8.13.2%2B-green.svg)](https://developer.android.com/build/releases/gradle-plugin)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.0.0%2B-blue.svg)](https://kotlinlang.org/)
+[![Gradle](https://img.shields.io/badge/Gradle-9.1.0-blue.svg)](https://gradle.org/)
+[![AGP](https://img.shields.io/badge/AGP-9.0.0-green.svg)](https://developer.android.com/build/releases/gradle-plugin)
 
 Gradle plugin for merging multiple Android/KMP modules into a single AAR. Useful when you have a multi-module project but want to ship one consolidated library.
 
@@ -15,7 +15,8 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 
 ⚠️ **Only merges local modules from your project.** External dependencies (like AndroidX) stay separate.
 
-> ⚠️ **AGP 9 / Gradle 9 compatibility is not yet available.** The current version supports **AGP 8.13.0+** with Gradle 8.x only. AGP 9 support is being worked on.
+> ✅ **The current `3.x` line is validated in this repository with AGP `9.0.0` and Gradle `9.1.0`.**
+> If you need the AGP `8.13.0+` / Gradle `8.x` toolchain, use the `2.x` release line instead.
 >
 > **AGP version compatibility history:**
 >
@@ -23,7 +24,8 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 > |---|---|---|
 > | `< 2.x` | `8.0.0 – 8.11.x` | Uses the internal `mergeManifests` function (broke in AGP 8.12.1) |
 > | *(gap)* | `8.12.x – 8.12.x` | ❌ Not supported — AGP removed the internal API; replacement feature not yet available |
-> | `2.x` (this version) | `8.13.0+` | Uses the public `ManifestMerger2` builder API with `USES_SDK_IN_MANIFEST_LENIENT_HANDLING` |
+> | `2.x` | `8.13.0+` | Uses the public `ManifestMerger2` builder API with `USES_SDK_IN_MANIFEST_LENIENT_HANDLING` |
+> | `3.x` (this version) | `9.0.x` | Current branch / repo toolchain; validated here with Gradle `9.1.0` |
 
 ## Quick Start
 
@@ -40,7 +42,7 @@ dependencies {
 }
 ```
 
-Build: `./gradlew bundleReleaseUmbrellaAAR`
+Build: `./gradlew bundleReleaseUmbrellaAar`
 
 Output: `build/outputs/umbrellaaar/your-library-release.aar`
 
@@ -229,16 +231,14 @@ pluginManagement {
    ```
 
 3. **Tasks** (Typical Flow)
-   - `ensure<BuildType>DependenciesBuilt`: Ensures that local modules have their outputs ready (AAR/JAR).
-   - `extract<BuildType>Classes`: Extracts and merges `.jar` files from local modules.
-   - `extract<BuildType>Resources`: Unpacks resources from each local library.
+   - Upstream AGP/KMP archive tasks such as `bundleReleaseAar`, `bundleDebugAar`, or `bundleAndroidMainAar` build the main and exported module artifacts first.
+   - `extract<BuildType>Dependencies`: Unpacks exported dependency AARs/JARs and rewrites `R` references where needed.
    - `extract<BuildType>MainClasses`: Extracts the classes of your main library module.
-   - `merge<BuildType>UmbrellaAARResources`: Merges all resources from local modules + your main library.
-   - `merge<BuildType>UmbrellaAARClasses`: Merges class files into a single JAR.
-   - `relocate<BuildType>UmbrellaAARRClasses`: Uses ASM to relocate `R` classes to your main library's namespace.
-   - `bundle<BuildType>UmbrellaAAR`: Final step—packages everything as a single `.aar`.
-   - `extract<BuildType>Sources`: Extracts Java/Kotlin sources from local modules (if relevant).
-   - `merge<BuildType>UmbrellaAARSources`: Merges them with your main library's source for a single `-sources.jar`.
+   - `merge<BuildType>UmbrellaAarDependencies`: Merges dependency manifests, resources, classes, and consumer rules into the main unpacked AAR.
+   - `bundle<BuildType>UmbrellaAar`: Final step—packages everything as a single `.aar`.
+   - `extract<BuildType>Sources`: Extracts Java/Kotlin sources from exported local modules.
+   - `merge<BuildType>UmbrellaAarSources`: Merges them with your main library sources into a single `-sources.jar`.
+   - `android<BuildType>UmbrellaAarSourcesJar`: Lifecycle task that produces the merged sources JAR artifact.
 
    **UmbrellaAarPom Plugin Tasks** (when applied):
    - `collect<BuildType>ExternalDependencies`: Analyzes and collects all external dependencies from merged modules.
@@ -269,7 +269,7 @@ android {
 To build the merged `.aar`:
 
 ```bash
-./gradlew bundleDebugUmbrellaAAR
+./gradlew bundleDebugUmbrellaAar
 ```
 
 This outputs the merged `.aar` in:
@@ -343,7 +343,7 @@ The UmbrellaAarPom plugin will:
 If you also want a merged `-sources.jar`:
 
 ```bash
-./gradlew androidDebugUmbrellaAARSourcesJar
+./gradlew androidDebugUmbrellaAarSourcesJar
 ```
 
 Which outputs in:

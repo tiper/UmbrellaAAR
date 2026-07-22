@@ -1,0 +1,3 @@
+<resources>
+    <string name="composable_string">Hello from composables common module</string>
+</resources>

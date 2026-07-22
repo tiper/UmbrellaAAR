@@ -1,5 +1,6 @@
 package io.github.tiper.umbrellaaar
 
+import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryExtension
 import com.android.build.api.dsl.LibraryExtension
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.capitalize
@@ -17,7 +18,7 @@ import io.github.tiper.umbrellaaar.tasks.MergeSources
 import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.api.artifacts.Configuration
+import org.gradle.api.plugins.ExtensionAware
 import org.gradle.api.provider.Provider
 import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.register
@@ -115,18 +116,19 @@ class UmbrellaAar : Plugin<Project> {
         }
     }
 
-    private fun Project.createExportConfig(): Configuration = configurations.create(UMBRELLA_AAR_CONFIG) {
+    private fun Project.filteredProjectsProvider() = configurations.maybeCreate(UMBRELLA_AAR_CONFIG).apply {
         isCanBeResolved = true
         isCanBeConsumed = false
+    }.let { config ->
+        provider {
+            val rules = config.allExcludeRules()
+            findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }
+        }
     }
 
     override fun apply(target: Project) = with(target) {
         plugins.withId("com.android.library") {
-            val config = createExportConfig()
-            val filteredProjectsProvider = provider {
-                val rules = config.allExcludeRules()
-                findAllProjectDependencies(config).filterNot { it.isExcluded(rules) }
-            }
+            val filteredProjectsProvider = filteredProjectsProvider()
             extensions.configure<LibraryExtension> {
                 buildTypes.forEach {
                     setup(
@@ -139,6 +141,25 @@ class UmbrellaAar : Plugin<Project> {
                         },
                         filteredProjectsProvider = filteredProjectsProvider,
                     )
+                }
+            }
+        }
+
+        // AGP9: com.android.kotlin.multiplatform.library — single "androidMain" variant, no build types.
+        // We still create both release and debug task sets (mirroring AGP8 behavior) so callers
+        // can choose which publication to use. Both point to the same upstream "bundleAndroidMainAar".
+        plugins.withId("com.android.kotlin.multiplatform.library") {
+            val filteredProjectsProvider = filteredProjectsProvider()
+            extensions.configure<ExtensionAware> {
+                extensions.configure<KotlinMultiplatformAndroidLibraryExtension> {
+                    listOf("release", "debug").forEach {
+                        setup(
+                            taskBuildType = it,
+                            aarBuildType = "androidMain",
+                            namespace = provider { namespace },
+                            filteredProjectsProvider = filteredProjectsProvider,
+                        )
+                    }
                 }
             }
         }

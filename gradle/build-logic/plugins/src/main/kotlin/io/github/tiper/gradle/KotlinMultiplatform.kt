@@ -9,6 +9,7 @@ import org.gradle.api.Project
 import org.gradle.kotlin.dsl.assign
 import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.withType
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinAndroidTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
@@ -22,8 +23,8 @@ class KotlinMultiplatform : Plugin<Project> {
         configureJava()
         extensions.configure<KotlinMultiplatformExtension> {
             targets.withType<KotlinAndroidTarget> {
-                compilations.configureEach {
-                    kotlinOptions.jvmTarget = "1.8"
+                compilerOptions {
+                    jvmTarget.set(JVM_1_8)
                 }
             }
             targets.addArgs("-Xexpect-actual-classes")

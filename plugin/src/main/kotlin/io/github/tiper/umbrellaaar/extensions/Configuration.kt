@@ -27,9 +27,8 @@ internal fun Project.findAllProjectDependencies(config: Configuration): Set<Proj
         if (result.add(project)) queue.add(project)
     }
 
-    @Suppress("DEPRECATION")
     fun Configuration.projectDependencies() = dependencies.withType<ProjectDependency>().mapNotNull {
-        findProject(it.dependencyProject.path)
+        findProject(it.path)
     }
 
     config.projectDependencies().forEach(::enqueue)
@@ -45,9 +44,20 @@ internal fun Project.findAllProjectDependencies(config: Configuration): Set<Proj
 }
 
 internal fun Project.createAndroidResolutionConfig(buildType: String): Configuration = configurations.detachedConfiguration().apply {
-    configureKotlinPlatformAttribute(listOf(this))
+    configureKotlinPlatformAttribute(this)
     attributes {
         attribute(ATTRIBUTE, objects.named(BuildTypeAttr::class.java, buildType))
+        attribute(CATEGORY_ATTRIBUTE, objects.named(Category::class.java, LIBRARY))
+        attribute(USAGE_ATTRIBUTE, objects.named(Usage::class.java, JAVA_RUNTIME))
+        attribute(TARGET_JVM_ENVIRONMENT_ATTRIBUTE, objects.named(TargetJvmEnvironment::class.java, ANDROID))
+    }
+}
+
+// AGP9: com.android.kotlin.multiplatform.library has no build types, so no BuildTypeAttr is set.
+@Suppress("UNUSED_PARAMETER")
+internal fun Project.createKmpResolutionConfig(buildType: String): Configuration = configurations.detachedConfiguration().apply {
+    configureKotlinPlatformAttribute(this)
+    attributes {
         attribute(CATEGORY_ATTRIBUTE, objects.named(Category::class.java, LIBRARY))
         attribute(USAGE_ATTRIBUTE, objects.named(Usage::class.java, JAVA_RUNTIME))
         attribute(TARGET_JVM_ENVIRONMENT_ATTRIBUTE, objects.named(TargetJvmEnvironment::class.java, ANDROID))

@@ -10,7 +10,6 @@ internal class MockDependency(
     override fun getName(): String = name
     override fun getVersion(): String? = "1.0.0"
     override fun getReason(): String? = null
-    override fun contentEquals(dependency: Dependency): Boolean = false
     override fun copy(): Dependency = this
     override fun because(reason: String?) {}
 }
