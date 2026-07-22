@@ -3,19 +3,19 @@ package io.github.tiper.umbrellaaar.integration
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.gradle.testkit.runner.TaskOutcome.UP_TO_DATE
+import org.junit.Assume.assumeNotNull
 
 class UmbrellaAarPluginIntegrationTest {
 
     @Test
     fun `bundleReleaseUmbrellaAar builds a merged AAR for the sample export project`() {
         val workspaceRoot = findWorkspaceRoot()
-        assertNotNull(findAndroidSdkDir(), "Android SDK is required for TestKit integration coverage")
+        assumeNotNull(findAndroidSdkDir())
 
         val result = gradleRunner(workspaceRoot)
             .withArguments(":sample:export:bundleReleaseUmbrellaAar", "--stacktrace", "--no-configuration-cache")
@@ -31,7 +31,7 @@ class UmbrellaAarPluginIntegrationTest {
     @Test
     fun `generatePomFileForAndroidReleaseUmbrellaAarPublication publishes only external dependencies for the sample export project`() {
         val workspaceRoot = findWorkspaceRoot()
-        assertNotNull(findAndroidSdkDir(), "Android SDK is required for TestKit integration coverage")
+        assumeNotNull(findAndroidSdkDir())
 
         val result = gradleRunner(workspaceRoot)
             .withArguments(

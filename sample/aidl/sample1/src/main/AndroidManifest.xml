@@ -4,8 +4,7 @@
     <application>
         <service
             android:name=".MyAidlService"
-            android:exported="true"
-            android:permission="android.permission.BIND_CALL_SERVICE">
+            android:exported="false">
             <intent-filter>
                 <action android:name="io.github.tiper.sample.aidl1.IMyAidlService" />
             </intent-filter>
