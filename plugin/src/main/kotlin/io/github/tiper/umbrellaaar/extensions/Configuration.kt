@@ -27,7 +27,6 @@ internal fun Project.findAllProjectDependencies(config: Configuration): Set<Proj
         if (result.add(project)) queue.add(project)
     }
 
-    @Suppress("DEPRECATION")
     fun Configuration.projectDependencies() = dependencies.withType<ProjectDependency>().mapNotNull {
         findProject(it.path)
     }
@@ -57,8 +56,6 @@ internal fun Project.createAndroidResolutionConfig(buildType: String): Configura
 // AGP9: com.android.kotlin.multiplatform.library has no build types, so no BuildTypeAttr is set.
 @Suppress("UNUSED_PARAMETER")
 internal fun Project.createKmpResolutionConfig(buildType: String): Configuration = configurations.detachedConfiguration().apply {
-    isCanBeResolved = true
-    isCanBeConsumed = false
     configureKotlinPlatformAttribute(this)
     attributes {
         attribute(CATEGORY_ATTRIBUTE, objects.named(Category::class.java, LIBRARY))
