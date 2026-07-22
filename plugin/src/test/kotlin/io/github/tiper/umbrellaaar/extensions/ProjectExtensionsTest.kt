@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.gradle.api.GradleException
 import org.gradle.testfixtures.ProjectBuilder
 
 class ProjectExtensionsTest {
@@ -33,11 +34,11 @@ class ProjectExtensionsTest {
             outputs.file(project.layout.buildDirectory.file("outputs/aar/consumer-release-signed.aar"))
         }
 
-        val error = assertFailsWith<IllegalArgumentException> {
+        val error = assertFailsWith<GradleException> {
             project.findAar("Release").get()
         }
 
-        assertTrue(error.message?.contains("more than one element") == true)
+        assertTrue(error.message?.contains("Found 2 output file(s)") == true)
     }
 
     private fun org.gradle.api.Project.outputFile(relativePath: String, lastModified: Long) =
