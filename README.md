@@ -33,6 +33,8 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 
 ```kotlin
 plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
     id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
 }
 
@@ -41,6 +43,10 @@ dependencies {
     export(project(":module2"))
 }
 ```
+
+> The plugin detects `com.android.kotlin.multiplatform.library` (AGP 9) and maps to the single `androidMain` variant, creating both `release` and `debug` task sets for compatibility.
+>
+> For AGP 8 (`com.android.library`), use the `2.x` release line instead.
 
 Build: `./gradlew bundleReleaseUmbrellaAar`
 
@@ -254,15 +260,14 @@ pluginManagement {
 ```kotlin
 // In your library module's build.gradle.kts:
 plugins {
-    id("com.android.library")
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
     id("io.github.tiper.umbrellaaar")
 }
 
-android {
-    dependencies {
-        export(project(":localModuleOne"))
-        export(project(":localModuleTwo"))
-    }
+dependencies {
+    export(project(":localModuleOne"))
+    export(project(":localModuleTwo"))
 }
 ```
 
@@ -282,34 +287,23 @@ build/outputs/umbrellaaar/myMainLibrary-debug.aar
 ```kotlin
 // In your library module's build.gradle.kts:
 plugins {
-    id("com.android.library")
     id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
     id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
     id("io.github.tiper.umbrellaaar.pom") version "$umbrellaVersion"
     id("maven-publish")
 }
 
-android {
-    namespace = "com.example.mylibrary"
-    compileSdk = 34
-}
-
 kotlin {
-    androidTarget {
-        publishLibraryVariants("release")
+    androidLibrary {
+        namespace = "com.example.mylibrary"
     }
 }
 
-android {
-    dependencies {
-        // Local modules to merge
-        export(project(":localModuleOne"))
-        export(project(":localModuleTwo"))
-
-        // External dependencies (will be declared in POM, not bundled)
-        implementation("androidx.core:core-ktx:1.12.0")
-        implementation("org.jetbrains.compose.ui:ui:1.5.0")
-    }
+dependencies {
+    // Local modules to merge
+    export(project(":localModuleOne"))
+    export(project(":localModuleTwo"))
 }
 
 publishing {
@@ -376,6 +370,9 @@ build/outputs/umbrellaaar/myMainLibrary-debug-sources.jar
       - Resource collisions or unusual build logic can break merging steps.
 
    ***In short***: Test your final `.aar` thoroughly after merging, especially if your modules have advanced or custom code.
+
+7. **Supported Source Sets**
+   The POM plugin collects dependencies from `commonMain`, `androidMain`, `android{BuildType}` (e.g., `androidRelease`), and plain `implementation`/`api` configurations. Custom KMP source sets (e.g., `desktopMain`, `nativeMain`) are not included in the POM — only Android-relevant dependencies are collected.
 
 ---
 
