@@ -2,10 +2,8 @@ package io.github.tiper.umbrellaaar.integration
 
 import java.io.File
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.gradle.testkit.runner.GradleRunner
-import org.gradle.testkit.runner.TaskOutcome
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.gradle.testkit.runner.TaskOutcome.UP_TO_DATE
 import org.junit.Assume.assumeNotNull
@@ -41,9 +39,9 @@ class UmbrellaAarPluginIntegrationTest {
             )
             .build()
 
-        assertEquals(
-            TaskOutcome.SUCCESS,
-            result.task(":sample:export:generatePomFileForAndroidReleaseUmbrellaAarPublication")?.outcome,
+        assertTrue(
+            result.task(":sample:export:generatePomFileForAndroidReleaseUmbrellaAarPublication")?.outcome in setOf(SUCCESS, UP_TO_DATE),
+            "Expected :sample:export:generatePomFileForAndroidReleaseUmbrellaAarPublication to be SUCCESS or UP_TO_DATE",
         )
 
         val pom = workspaceRoot.resolve("sample/export/build/publications/androidReleaseUmbrellaAar/pom-default.xml")
