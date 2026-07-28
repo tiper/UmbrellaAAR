@@ -9,6 +9,7 @@ import com.android.manifmerger.MergingReport.MergedManifestKind.MERGED
 import com.android.manifmerger.MergingReport.Record.Severity.ERROR
 import com.android.utils.ILogger
 import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
+import io.github.tiper.umbrellaaar.extensions.declaredResourceNames
 import io.github.tiper.umbrellaaar.extensions.normalizePath
 import io.github.tiper.umbrellaaar.extensions.stripPackageAttribute
 import java.io.BufferedOutputStream
@@ -39,11 +40,25 @@ abstract class MergeDependencies : DefaultTask() {
     @get:PathSensitive(RELATIVE)
     abstract val mainAarDir: DirectoryProperty
 
+
     @get:OutputDirectory
     abstract val mergedAarDir: DirectoryProperty
 
+    /** `entry path -> module folder that contributed it`, so duplicates can name *both* sides. */
+    private val contributors = mutableMapOf<String, String>()
+
+    /** `res/values*` folder + resource name -> module folders that declared it. */
+    private val resourceNames = mutableMapOf<String, MutableList<String>>()
+
+    /** Lines already written to each appended file (`R.txt`, `public.txt`), to keep merging linear. */
+    private val seenLines = mutableMapOf<File, MutableSet<String>>()
+
     @TaskAction
     fun execute() {
+        contributors.clear()
+        resourceNames.clear()
+        seenLines.clear()
+
         val src = mainAarDir.get().asFile
         val out = mergedAarDir.get().asFile.apply {
             deleteRecursively()
@@ -51,14 +66,17 @@ abstract class MergeDependencies : DefaultTask() {
         }
 
         src.copyRecursively(out, overwrite = true)
+        src.walk().filter { it.isFile }.forEach { contributors[it.relativeTo(src).path.normalizePath()] = MAIN }
 
         val manifest = File(out, "AndroidManifest.xml")
         val packageOverride = manifest.removePackage()
         val touchedProguardFiles = mutableSetOf<File>()
+        val appendedFiles = mutableSetOf<File>()
         var filesProcessed = 0
 
         dependencies.get().asFile.listFiles()?.sortedBy { it.name }?.forEach { subLibFolder ->
             if (!subLibFolder.isDirectory) return@forEach
+            val owner = subLibFolder.name
 
             subLibFolder.walk()
                 .filter { it.isFile }
@@ -68,51 +86,44 @@ abstract class MergeDependencies : DefaultTask() {
                     val destFile = File(out, relativePath)
 
                     when {
-                        relativePath.startsWith("res/values") -> srcFile.copyValues(
-                            owner = subLibFolder.name,
-                            to = destFile,
-                        )
+                        relativePath.startsWith("res/values") -> {
+                            recordResourceNames(owner, relativePath, srcFile)
+                            srcFile.copyValues(owner = owner, to = destFile)
+                        }
 
-                        relativePath.endsWith(".kotlin_module") -> srcFile.copyValues(
-                            owner = subLibFolder.name,
-                            to = destFile,
-                        )
+                        relativePath.endsWith(".kotlin_module") -> srcFile.copyValues(owner = owner, to = destFile)
 
-                        relativePath.endsWith("R.txt") -> srcFile.append(
-                            to = destFile,
-                        )
+                        // R.txt is a line-based symbol table: concatenating it verbatim produced
+                        // duplicated (and potentially conflicting) symbols.
+                        relativePath.endsWith("R.txt") -> appendedFiles += srcFile.appendLines(to = destFile, deduplicate = true)
 
-                        relativePath.endsWith(".pro") -> srcFile.append(
-                            to = File(out, "consumer-rules.pro"),
-                        )
+                        // Consumer rules live in `proguard.txt` inside an AAR — `consumer-rules.pro`
+                        // is not part of the AAR spec and consumers simply ignore it.
+                        relativePath.endsWith("proguard.txt") || relativePath.endsWith(".pro") -> {
+                            val target = File(out, "proguard.txt")
+                            touchedProguardFiles += srcFile.appendLines(to = target, deduplicate = false)
+                        }
 
                         relativePath.endsWith("AndroidManifest.xml") -> srcFile.mergeManifest(
                             to = manifest,
                             packageOverride = packageOverride,
                         )
 
-                        relativePath.endsWith("proguard.txt") -> {
-                            srcFile.append(to = destFile)
-                            touchedProguardFiles += destFile
-                        }
-
-                        destFile.exists() -> throw GradleException(
-                            "Resource duplicate '$relativePath' already exists. Contributed by: ${subLibFolder.name}",
-                        )
+                        destFile.exists() -> onDuplicate(owner, relativePath, srcFile, destFile)
 
                         else -> {
                             destFile.parentFile?.mkdirs()
                             srcFile.copyTo(destFile, overwrite = true)
+                            contributors[relativePath] = owner
                         }
                     }
                     filesProcessed++
                 }
         }
 
-        // Ensure all merged text files end with a newline
-        File(out, "R.txt").ensureTrailingNewline()
-        File(out, "consumer-rules.pro").ensureTrailingNewline()
-        touchedProguardFiles.forEach { it.ensureTrailingNewline() }
+        reportDuplicateResources()
+
+        (appendedFiles + touchedProguardFiles).forEach { it.ensureTrailingNewline() }
 
         val jar = File(out, "classes.jar").apply {
             if (exists()) delete()
@@ -131,6 +142,57 @@ abstract class MergeDependencies : DefaultTask() {
         }
         classes.deleteRecursively()
         logger.lifecycle("Merged dependencies into main AAR (processed $filesProcessed files)")
+    }
+
+    /**
+     * Two modules contributed the same entry. Identical bytes are harmless (the same generated file
+     * shipped twice); anything else is a real conflict and must name *both* contributors — the old
+     * message only named the second one, which made this class of failure very hard to diagnose.
+     */
+    private fun onDuplicate(owner: String, relativePath: String, srcFile: File, destFile: File) {
+        if (srcFile.length() == destFile.length() && srcFile.readBytes().contentEquals(destFile.readBytes())) {
+            logger.info("[UmbrellaAar] Duplicate but identical '$relativePath' from '$owner' — keeping one copy.")
+            return
+        }
+        throw GradleException(
+            buildString {
+                appendLine("UmbrellaAar cannot merge '$relativePath': it is contributed by two modules with different content.")
+                appendLine("  First contributor : ${contributors[relativePath] ?: "unknown"}")
+                appendLine("  Second contributor: $owner")
+                append(
+                    when {
+                        relativePath.startsWith("assets/") -> "  Rename the asset in one of the modules, or move it to a module-specific sub-folder."
+                        relativePath.startsWith("jni/") -> "  Two modules ship a native library with the same name — rename one of them."
+                        relativePath.startsWith("libs/") -> "  Two modules embed a local jar with the same name — rename one of them."
+                        relativePath.startsWith("classes/") -> "  Two modules declare the same class. If one of them is the umbrella module itself, " +
+                            "check build/reports/umbrellaaar for the merged module list."
+                        else -> "  Rename the file in one of the modules, or exclude the module from the umbrellaAar configuration."
+                    },
+                )
+            },
+        )
+    }
+
+    private fun recordResourceNames(owner: String, relativePath: String, srcFile: File) {
+        val folder = relativePath.substringBeforeLast('/')
+        srcFile.readText().declaredResourceNames().forEach { resource ->
+            resourceNames.getOrPut("$folder/$resource") { mutableListOf() } += owner
+        }
+    }
+
+    private fun reportDuplicateResources() {
+        val duplicates = resourceNames.filterValues { it.size > 1 }
+        if (duplicates.isEmpty()) return
+
+        logger.warn(
+            buildString {
+                appendLine("UmbrellaAar found ${duplicates.size} duplicate resource name(s) across merged modules; AAPT2 resolves these last-one-wins in the consumer:")
+                duplicates.entries.sortedBy { it.key }.take(MAX_REPORTED).forEach { (key, owners) ->
+                    appendLine("  $key <- ${owners.joinToString()}")
+                }
+                if (duplicates.size > MAX_REPORTED) append("  … and ${duplicates.size - MAX_REPORTED} more")
+            }.trimEnd(),
+        )
     }
 
     private fun File.removePackage(): String {
@@ -210,12 +272,26 @@ abstract class MergeDependencies : DefaultTask() {
         overwrite = true,
     )
 
-    private fun File.append(to: File) {
-        val content = bufferedReader().use { it.lineSequence().filter(String::isNotBlank).joinToString("\n") }
-        if (content.isEmpty()) return
+    /**
+     * Streams [this] into [to] line by line. `R.txt` reaches megabytes on large graphs, so the file
+     * is never held in memory, and [deduplicate] keeps repeated symbols out of the merged table.
+     */
+    private fun File.appendLines(to: File, deduplicate: Boolean): File {
+        val existing = if (deduplicate && to.exists()) to.readLines().filter(String::isNotBlank).toMutableSet() else mutableSetOf()
+        val appendToExisting = to.exists() && to.length() > 0L
+        to.parentFile?.mkdirs()
 
-        if (to.exists() && to.length() > 0L) to.appendText("\n$content")
-        else to.also { it.parentFile.mkdirs() }.writeText(content)
+        to.bufferedWriter(options = if (appendToExisting) APPEND else CREATE).use { writer ->
+            var first = !appendToExisting
+            bufferedReader().useLines { lines ->
+                lines.filter(String::isNotBlank).forEach { line ->
+                    if (deduplicate && !existing.add(line)) return@forEach
+                    if (first) first = false else writer.append('\n')
+                    writer.append(line)
+                }
+            }
+        }
+        return to
     }
 
     private fun File.ensureTrailingNewline() {
@@ -225,4 +301,16 @@ abstract class MergeDependencies : DefaultTask() {
             if (it.read().toByte() != '\n'.code.toByte()) appendText("\n")
         }
     }
+
+    private companion object {
+        const val MAIN = "<main module>"
+        const val MAX_REPORTED = 20
+        val APPEND = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)
+        val CREATE = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)
+    }
 }
+
+private fun File.bufferedWriter(options: Array<java.nio.file.StandardOpenOption>) = java.io.BufferedWriter(
+    java.io.OutputStreamWriter(java.nio.file.Files.newOutputStream(toPath(), *options), Charsets.UTF_8),
+)
+

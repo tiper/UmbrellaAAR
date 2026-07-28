@@ -14,6 +14,9 @@ import kotlin.test.assertTrue
 
 class ByteArrayExtensionsTest {
 
+    /** Namespaces of the modules being merged, as read from each dependency AAR's manifest. */
+    private val MERGED_NAMESPACES = setOf("com/dep", "com/main")
+
     @Test
     fun `containsRClassReference detects R class with dollar sign`() {
         val bytecode = "/R$".toByteArray()
@@ -71,14 +74,14 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass returns same bytecode when no R class reference`() {
         val originalBytes = byteArrayOf(1, 2, 3, 4, 5)
-        val transformed = originalBytes.transformClass("com/main")
+        val transformed = originalBytes.transformClass("com/main", MERGED_NAMESPACES)
         assertEquals(originalBytes.size, transformed.size)
     }
 
     @Test
     fun `transformClass handles empty bytecode`() {
         val emptyBytes = ByteArray(0)
-        val transformed = emptyBytes.transformClass("com/main")
+        val transformed = emptyBytes.transformClass("com/main", MERGED_NAMESPACES)
 
         assertEquals(0, transformed.size)
     }
@@ -88,7 +91,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass remaps inner R class to main namespace`() {
         val bytecode = classReferencingField("com/dep/R\$drawable", "icon", "I")
-        val transformed = bytecode.transformClass("com/main")
+        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)
         val refs = extractFieldOwners(transformed)
         assertTrue("com/main/R\$drawable" in refs, "Inner R class should be remapped to main namespace")
         assertFalse("com/dep/R\$drawable" in refs, "Original R class reference should be gone")
@@ -97,7 +100,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass remaps bare R class to main namespace`() {
         val bytecode = classWithTypeReference("com/dep/R")
-        val transformed = bytecode.transformClass("com/main")
+        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)
         val superName = extractSuperName(transformed)
         assertEquals("com/main/R", superName, "Bare R class should be remapped to main namespace")
     }
@@ -105,7 +108,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap main namespace R class`() {
         val bytecode = classReferencingField("com/main/R\$drawable", "icon", "I")
-        val transformed = bytecode.transformClass("com/main")
+        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)
         val refs = extractFieldOwners(transformed)
         assertTrue("com/main/R\$drawable" in refs, "Main namespace R should remain unchanged")
     }
@@ -113,7 +116,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap bare R in main namespace`() {
         val bytecode = classWithTypeReference("com/main/R")
-        val transformed = bytecode.transformClass("com/main")
+        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)
         val superName = extractSuperName(transformed)
         assertEquals("com/main/R", superName, "Main namespace bare R should remain unchanged")
     }
@@ -121,7 +124,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap android framework R`() {
         val bytecode = classReferencingField("android/R\$layout", "activity_main", "I")
-        val transformed = bytecode.transformClass("com/main")
+        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)
         val refs = extractFieldOwners(transformed)
         assertTrue("android/R\$layout" in refs, "Android framework R should remain unchanged")
     }
@@ -129,7 +132,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap androidx R`() {
         val bytecode = classReferencingField("androidx/core/R\$attr", "colorPrimary", "I")
-        val transformed = bytecode.transformClass("com/main")
+        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)
         val refs = extractFieldOwners(transformed)
         assertTrue("androidx/core/R\$attr" in refs, "AndroidX R should remain unchanged")
     }
@@ -137,7 +140,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap material R`() {
         val bytecode = classReferencingField("com/google/android/material/R\$style", "theme", "I")
-        val transformed = bytecode.transformClass("com/main")
+        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)
         val refs = extractFieldOwners(transformed)
         assertTrue("com/google/android/material/R\$style" in refs, "Material R should remain unchanged")
     }
@@ -145,9 +148,27 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap non-R classes`() {
         val bytecode = classWithTypeReference("com/dep/Router")
-        val transformed = bytecode.transformClass("com/main")
+        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)
         val superName = extractSuperName(transformed)
         assertEquals("com/dep/Router", superName, "Non-R class should remain unchanged")
+    }
+
+    @Test
+    fun `transformClass does not remap R of a third-party AAR that is not being merged`() {
+        // A third-party library bundled inside the umbrella ships its own R. Rewriting it would
+        // point at a class that does not declare those fields -> NoSuchFieldError at runtime.
+        val bytecode = classReferencingField("com/vendor/sdk/R\$string", "label", "I")
+        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)
+        val refs = extractFieldOwners(transformed)
+        assertTrue("com/vendor/sdk/R\$string" in refs, "Third-party R must not be relocated")
+        assertFalse("com/main/R\$string" in refs)
+    }
+
+    @Test
+    fun `transformClass is a no-op when nothing is being merged`() {
+        val bytecode = classReferencingField("com/dep/R\$drawable", "icon", "I")
+        val transformed = bytecode.transformClass("com/main", emptySet())
+        assertTrue("com/dep/R\$drawable" in extractFieldOwners(transformed))
     }
 
     // ── Test helpers ───────────────────────────────────────────────────────

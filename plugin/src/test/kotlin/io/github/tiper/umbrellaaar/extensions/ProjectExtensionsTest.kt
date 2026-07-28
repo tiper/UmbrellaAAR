@@ -29,7 +29,7 @@ class ProjectExtensionsTest {
         project.outputFile("outputs/aar/consumer-release.aar", lastModified = 1_000L)
         project.outputFile("outputs/aar/consumer-release-signed.aar", lastModified = 2_000L)
 
-        project.tasks.register("assembleRelease") {
+        project.tasks.register("bundleReleaseAar") {
             outputs.file(project.layout.buildDirectory.file("outputs/aar/consumer-release.aar"))
             outputs.file(project.layout.buildDirectory.file("outputs/aar/consumer-release-signed.aar"))
         }
@@ -39,6 +39,29 @@ class ProjectExtensionsTest {
         }
 
         assertTrue(error.message?.contains("Found 2 output file(s)") == true)
+    }
+
+    @Test
+    fun `findAarTask fails with an actionable message when the module produces no archive`() {
+        val project = ProjectBuilder.builder().withName("consumer").build()
+        // `assemble` is a lifecycle task with no outputs: falling back to it used to produce the
+        // misleading "Cannot find AAR output for task 'assemble'".
+        project.tasks.register("assemble")
+        project.tasks.register("assembleRelease")
+
+        val error = assertFailsWith<GradleException> {
+            project.findAarTask("Release").get()
+        }
+
+        assertTrue(error.message?.contains("cannot find an archive task") == true)
+        assertTrue(error.message?.contains("bundleReleaseAar") == true)
+    }
+
+    @Test
+    fun `findSourcesJarTask returns null instead of failing when there is no sources jar`() {
+        val project = ProjectBuilder.builder().withName("consumer").build()
+
+        assertEquals(null, project.findSourcesJarTask("Release").orNull)
     }
 
     private fun org.gradle.api.Project.outputFile(relativePath: String, lastModified: Long) =

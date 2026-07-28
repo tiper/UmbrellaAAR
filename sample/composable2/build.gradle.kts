@@ -13,6 +13,10 @@ kotlin {
         withHostTest {}
         experimentalProperties["android.experimental.kmp.enableAndroidResources"] = true
     }
+    // Regression guard: a desktop target and a custom intermediate source set that deliberately
+    // excludes Android. Nothing declared below `nonAndroidMain` may reach the umbrella AAR or its
+    // POM — see `Known limitations` in the README.
+    jvm()
     sourceSets {
         androidMain.dependencies {
         }
@@ -21,6 +25,13 @@ kotlin {
             implementation(compose.material3)
             implementation(compose.components.resources)
         }
+        val nonAndroidMain by creating {
+            dependsOn(commonMain.get())
+            dependencies {
+                implementation(libs.ktor.mock)
+            }
+        }
+        jvmMain.get().dependsOn(nonAndroidMain)
     }
 }
 
