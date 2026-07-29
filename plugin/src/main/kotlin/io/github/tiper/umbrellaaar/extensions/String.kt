@@ -22,12 +22,9 @@ internal fun String.stripPackageAttribute(): Pair<String, String?> {
     return replaceFirst(Regex("""(<manifest\b[^>]*?)\s+package\s*=\s*"${escape(pkg)}""""), "$1") to pkg
 }
 
-internal fun String.packageName(): String? = hardenedDocumentBuilderFactory()
-    .newDocumentBuilder()
-    .parse(byteInputStream())
-    .documentElement
-    .getAttribute("package")
-    .takeIf { it.isNotBlank() }
+internal fun String.packageName(): String? = parseXml()
+    ?.getAttribute("package")
+    ?.takeIf { it.isNotBlank() }
 
 /**
  * `"<type>/<name>"` for every resource declared *directly* under `<resources>`.
@@ -35,24 +32,39 @@ internal fun String.packageName(): String? = hardenedDocumentBuilderFactory()
  * Parsed rather than regex-matched so that nested elements — `<item>` inside `<style>`, `<enum>` and
  * `<flag>` inside `<declare-styleable>` — are not mistaken for resource declarations.
  */
-internal fun String.declaredResourceNames(): List<String> = runCatching {
-    val root = hardenedDocumentBuilderFactory().newDocumentBuilder().parse(byteInputStream()).documentElement
+internal fun String.declaredResourceNames(): List<String> {
+    val root = parseXml() ?: return emptyList()
     val children = root.childNodes
-    (0 until children.length).mapNotNull { index ->
+    return (0 until children.length).mapNotNull { index ->
         val node = children.item(index) as? org.w3c.dom.Element ?: return@mapNotNull null
         val name = node.getAttribute("name").takeIf { it.isNotBlank() } ?: return@mapNotNull null
         val type = node.getAttribute("type").takeIf { it.isNotBlank() } ?: node.tagName
         "$type/$name"
     }
-}.getOrElse { emptyList() }
+}
 
-// Hardened against XXE / entity expansion: a build tool has no business resolving external entities.
-private fun hardenedDocumentBuilderFactory(): DocumentBuilderFactory = DocumentBuilderFactory.newInstance().apply {
-    runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
-    runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
-    runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
-    runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }
-    isXIncludeAware = false
-    isExpandEntityReferences = false
+private fun String.parseXml(): org.w3c.dom.Element? = runCatching {
+    documentBuilder.get().run {
+        reset()
+        parse(byteInputStream()).documentElement
+    }
+}.getOrNull()
+
+/**
+ * `DocumentBuilderFactory.newInstance()` performs JAXP service discovery on every call, which is far
+ * more expensive than the parse itself when reading hundreds of small `res/values` files. Builders
+ * are not thread-safe, so one is cached per thread and `reset()` between uses.
+ *
+ * Hardened against XXE / entity expansion: a build tool has no business resolving external entities.
+ */
+private val documentBuilder = ThreadLocal.withInitial {
+    DocumentBuilderFactory.newInstance().apply {
+        runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
+        runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
+        runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
+        runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }
+        isXIncludeAware = false
+        isExpandEntityReferences = false
+    }.newDocumentBuilder()
 }
 

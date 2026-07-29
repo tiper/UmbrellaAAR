@@ -6,8 +6,8 @@
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.tiper/umbrellaaar)](https://central.sonatype.com/search?q=g%3Aio.github.tiper)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.0%2B-blue.svg)](https://kotlinlang.org/)
-[![Gradle](https://img.shields.io/badge/Gradle-9.1.0-blue.svg)](https://gradle.org/)
-[![AGP](https://img.shields.io/badge/AGP-9.0.0-green.svg)](https://developer.android.com/build/releases/gradle-plugin)
+[![Gradle](https://img.shields.io/badge/Gradle-9.0%2B-blue.svg)](https://gradle.org/)
+[![AGP](https://img.shields.io/badge/AGP-9.0.0%2B-green.svg)](https://developer.android.com/build/releases/gradle-plugin)
 
 Gradle plugin for merging multiple Android/KMP modules into a single AAR. Useful when you have a multi-module project but want to ship one consolidated library.
 
@@ -15,7 +15,9 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 
 ⚠️ **Only merges local modules from your project.** External dependencies (like AndroidX) stay separate.
 
-> ✅ **The current `3.x` line is validated in this repository with AGP `9.0.0` and Gradle `9.1.0`.**
+> ✅ **The current `3.x` line is validated in this repository with AGP `9.0.0` / Gradle `9.1.0`, and
+> downstream on a 160-project Kotlin Multiplatform build with AGP `9.3.1` / Gradle `9.5.1` /
+> Kotlin `2.4.10`.**
 > If you need the AGP `8.13.0+` / Gradle `8.x` toolchain, use the `2.x` release line instead.
 >
 > **AGP version compatibility history:**
@@ -25,18 +27,21 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 > | `< 2.x` | `8.0.0 – 8.11.x` | Uses the internal `mergeManifests` function (broke in AGP 8.12.1) |
 > | *(gap)* | `8.12.x – 8.12.x` | ❌ Not supported — AGP removed the internal API; replacement feature not yet available |
 > | `2.x` | `8.13.0+` | Uses the public `ManifestMerger2` builder API with `USES_SDK_IN_MANIFEST_LENIENT_HANDLING` |
-> | `3.x` (this version) | `9.0.x` | Current branch / repo toolchain; validated here with Gradle `9.1.0` |
+> | `3.x` (this version) | `9.0.0+` | Validated on `9.0.0` and `9.3.1` |
 
 ### Compatibility matrix
 
-| | Minimum | Validated here | Notes |
-|---|---|---|---|
-| Gradle | `9.0` | `9.1.0` | Uses `configurations.dependencyScope(…)` and Gradle 9 configuration roles. |
-| AGP | `9.0.0` | `9.0.0` | Both `com.android.library` and `com.android.kotlin.multiplatform.library`. |
-| Kotlin | `2.0.0` | `2.2.10` | Tested against KGP `2.0`–`2.4`. |
-| Java toolchain | `17` | `21` | |
-| Configuration cache | supported | ✅ | Store + reuse verified in this repository. |
-| Project isolation | ❌ not supported | | The module graph is resolved by walking sibling projects; see *Known limitations*. |
+| | Minimum | Validated here | Validated downstream | Notes |
+|---|---|---|---|---|
+| Gradle | `9.0` | `9.1.0` | `9.5.1` | |
+| AGP | `9.0.0` | `9.0.0` | `9.3.1` | Both `com.android.library` and `com.android.kotlin.multiplatform.library`. |
+| Kotlin | `2.0.0` | `2.2.10` | `2.4.10` | Source sets are read from KGP, so no version-specific configuration names are assumed. |
+| Java toolchain | `17` | `21` | `21` | |
+| Configuration cache | supported | ✅ | ✅ | Store **and** reuse verified, including POM generation. |
+| Project isolation | ❌ not supported | | | The module graph is resolved by walking sibling projects; see *Known limitations*. |
+
+> The downstream column refers to a 160-project build merging 95 modules into one SDK AAR, verified
+> to produce an identical published dependency set to the AGP 8 / `2.x` baseline.
 
 **Umbrella module plugin support**
 
@@ -77,15 +82,17 @@ Output: `build/outputs/umbrellaaar/your-library-release.aar`
 
 ## Table of Contents
 
-1. [Motivation](#motivation)
-2. [Advantages](#advantages)
-3. [Disadvantages & Risks](#disadvantages--risks)
-4. [Plugin Usage & Setup](#plugin-usage--setup)
+1. [Compatibility matrix](#compatibility-matrix)
+2. [Motivation](#motivation)
+3. [Advantages](#advantages)
+4. [Disadvantages & Risks](#disadvantages--risks)
+5. [Plugin Usage & Setup](#plugin-usage--setup)
    1. [Applying the Plugin](#applying-the-plugin)
    2. [Configuration & Tasks](#configuration--tasks)
-5. [Examples](#examples)
-6. [Recommendations](#recommendations)
-7. [License](#license)
+   3. [Known limitations](#known-limitations)
+6. [Examples](#examples)
+7. [Recommendations](#recommendations)
+8. [License](#license)
 
 ---
 
@@ -277,7 +284,7 @@ pluginManagement {
    |---|---|---|
    | `extract<Pipeline>Dependencies` | shared | Unpacks exported dependency AARs/JARs (in parallel) and relocates `R` references. |
    | `extract<Pipeline>MainClasses` | shared | Extracts the classes of your main library module. |
-   | `merge<Pipeline>UmbrellaAarDependencies` | shared | Merges manifests, resources, classes and consumer rules into the main unpacked AAR. |
+   | `merge<Pipeline>UmbrellaAarDependencies` | shared | Merges manifests, resources and consumer rules into the main unpacked AAR, and writes `classes.jar` straight from the extracted modules. |
    | `bundle<Variant>UmbrellaAar` | per variant | **Public** — packages everything as a single `.aar`. |
    | `merge<Variant>UmbrellaAarSources` | per variant | Streams every module's sources jar into one merged jar. |
    | `android<Variant>UmbrellaAarSourcesJar` | per variant | **Public** — lifecycle task producing the merged sources jar. |
@@ -324,10 +331,22 @@ pluginManagement {
   sibling projects' configurations. The plugin forces evaluation of every module it visits so the
   result never depends on the task graph or on configuration-cache warmth, but that is fundamentally
   incompatible with project isolation.
+- **The generated POM reflects dependencies as declared at execution time.** The Kotlin plugin adds
+  some dependencies lazily — `kotlin-stdlib` appears in every KMP project's `commonMainApi` only
+  once a JVM-target project has been configured, for example — so a POM generated in a task graph
+  that also builds a desktop target can contain one extra coordinate. It always resolves to the same
+  version, but if you need byte-reproducible POMs, generate them in a dedicated invocation
+  (`./gradlew :sdk:publish…`) rather than as part of a larger build.
 - **`R.txt` is concatenated, not regenerated.** Symbols are de-duplicated, but IDs are not
   re-numbered. AAPT2 in the consumer assigns the final IDs.
 - **Duplicate resource *names*** across merged modules are reported as a warning but resolved
   last-one-wins by AAPT2 in the consumer, which mirrors AGP's own behaviour.
+- **Files that cannot be merged fail the build.** `R.txt` is de-duplicated line-wise, `proguard.txt`
+  (and `.pro`) are concatenated, and `res/values*` plus `.kotlin_module` files are namespaced per
+  module. Anything else contributed by two modules at the same path — `assets/**`, `libs/*.jar`,
+  `jni/<abi>/*.so`, `public.txt`, `navigation.json`, `prefab/**` — is an error naming both
+  contributors, unless the bytes are identical, in which case one copy is kept. Rename the file in
+  one of the modules, or move it under a module-specific sub-folder.
 - **`R` class relocation only touches merged modules.** Namespaces are read from each dependency
   AAR's `AndroidManifest.xml`; a third-party AAR bundled inside one of your modules keeps its own
   `R`. The bytecode pre-scan that decides whether ASM runs at all is best-effort (false positives

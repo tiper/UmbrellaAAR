@@ -3,7 +3,9 @@ package io.github.tiper.umbrellaaar.integration
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertTrue
+import org.gradle.testkit.runner.BuildResult
 import org.gradle.testkit.runner.GradleRunner
+import org.gradle.testkit.runner.TaskOutcome.FROM_CACHE
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.gradle.testkit.runner.TaskOutcome.UP_TO_DATE
 import org.junit.Assume.assumeNotNull
@@ -19,10 +21,7 @@ class UmbrellaAarPluginIntegrationTest {
             .withArguments(":sample:export:bundleReleaseUmbrellaAar", "--stacktrace", "--no-configuration-cache")
             .build()
 
-        assertTrue(
-            result.task(":sample:export:bundleReleaseUmbrellaAar")?.outcome in setOf(SUCCESS, UP_TO_DATE),
-            "Expected :sample:export:bundleReleaseUmbrellaAar to be SUCCESS or UP_TO_DATE",
-        )
+        result.assertSucceeded(":sample:export:bundleReleaseUmbrellaAar")
         assertTrue(workspaceRoot.resolve("sample/export/build/outputs/umbrellaaar/export-release.aar").exists())
     }
 
@@ -39,10 +38,7 @@ class UmbrellaAarPluginIntegrationTest {
             )
             .build()
 
-        assertTrue(
-            result.task(":sample:export:generatePomFileForAndroidReleaseUmbrellaAarPublication")?.outcome in setOf(SUCCESS, UP_TO_DATE),
-            "Expected :sample:export:generatePomFileForAndroidReleaseUmbrellaAarPublication to be SUCCESS or UP_TO_DATE",
-        )
+        result.assertSucceeded(":sample:export:generatePomFileForAndroidReleaseUmbrellaAarPublication")
 
         val pom = workspaceRoot.resolve("sample/export/build/publications/androidReleaseUmbrellaAar/pom-default.xml")
         assertTrue(pom.exists(), "Expected generated POM at ${pom.absolutePath}")
@@ -51,6 +47,19 @@ class UmbrellaAarPluginIntegrationTest {
         assertTrue(pomXml.contains("<artifactId>material3</artifactId>"))
         assertTrue(pomXml.contains("<artifactId>lifecycle-viewmodel-compose</artifactId>"))
         assertTrue(!pomXml.contains("<artifactId>viewmodel</artifactId>"), "Project dependency must not leak into the published POM")
+    }
+
+    /**
+     * The repository builds with `org.gradle.caching=true`, so a task whose outputs are already in
+     * the build cache reports `FROM_CACHE` rather than `SUCCESS`. All three outcomes mean "the task
+     * produced its outputs"; asserting on only two made these tests depend on cache state.
+     */
+    private fun BuildResult.assertSucceeded(taskPath: String) {
+        val outcome = task(taskPath)?.outcome
+        assertTrue(
+            outcome in setOf(SUCCESS, UP_TO_DATE, FROM_CACHE),
+            "Expected $taskPath to be SUCCESS, UP_TO_DATE or FROM_CACHE but was $outcome",
+        )
     }
 
     private fun gradleRunner(projectDir: File): GradleRunner = GradleRunner.create()

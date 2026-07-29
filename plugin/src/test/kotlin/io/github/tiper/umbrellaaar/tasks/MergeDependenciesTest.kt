@@ -115,6 +115,74 @@ class MergeDependenciesTest {
         assertEquals("""{"shared":true}""", File(out, "assets/shared.json").readText())
     }
 
+    // ── classes.jar is streamed straight from the extracted module folders ────────────────────
+
+    @Test
+    fun `class files from every module land in classes jar`() {
+        mainAar("classes/com/example/umbrella/Main.class" to "main")
+        module("moduleA", "com.example.a", "classes/com/example/a/A.class" to "a")
+        module("moduleB", "com.example.b", "classes/com/example/b/B.class" to "b")
+
+        val out = merge()
+
+        assertEquals(
+            listOf("com/example/a/A.class", "com/example/b/B.class", "com/example/umbrella/Main.class"),
+            jarEntries(File(out, "classes.jar")),
+        )
+        // The exploded tree must not survive into the packaged AAR.
+        assertFalse(File(out, "classes").exists())
+    }
+
+    @Test
+    fun `kotlin_module files are namespaced per module inside classes jar`() {
+        mainAar("classes/META-INF/umbrella.kotlin_module" to "main")
+        module("moduleA", "com.example.a", "classes/META-INF/lib.kotlin_module" to "a")
+        module("moduleB", "com.example.b", "classes/META-INF/lib.kotlin_module" to "b")
+
+        val entries = jarEntries(File(merge(), "classes.jar"))
+
+        assertEquals(
+            listOf("META-INF/moduleA-lib.kotlin_module", "META-INF/moduleB-lib.kotlin_module", "META-INF/umbrella.kotlin_module"),
+            entries,
+        )
+    }
+
+    @Test
+    fun `two modules declaring the same class with different content fail with both contributors`() {
+        mainAar()
+        module("moduleA", "com.example.a", "classes/com/example/Shared.class" to "version-a")
+        module("moduleB", "com.example.b", "classes/com/example/Shared.class" to "version-b")
+
+        val error = assertFailsWith<GradleException> { merge() }
+
+        assertTrue("classes/com/example/Shared.class" in error.message.orEmpty())
+        assertTrue("First contributor : moduleA" in error.message.orEmpty(), error.message.orEmpty())
+        assertTrue("Second contributor: moduleB" in error.message.orEmpty(), error.message.orEmpty())
+    }
+
+    @Test
+    fun `a dependency duplicating a main module class fails`() {
+        mainAar("classes/com/example/Shared.class" to "from-main")
+        module("moduleA", "com.example.a", "classes/com/example/Shared.class" to "from-dep")
+
+        val error = assertFailsWith<GradleException> { merge() }
+
+        assertTrue("First contributor : <main module>" in error.message.orEmpty(), error.message.orEmpty())
+    }
+
+    @Test
+    fun `identical class contributed twice is tolerated`() {
+        mainAar()
+        module("moduleA", "com.example.a", "classes/com/example/Same.class" to "identical")
+        module("moduleB", "com.example.b", "classes/com/example/Same.class" to "identical")
+
+        assertEquals(listOf("com/example/Same.class"), jarEntries(File(merge(), "classes.jar")))
+    }
+
+    private fun jarEntries(jar: File): List<String> = java.util.zip.ZipFile(jar).use { zip ->
+        zip.entries().asSequence().map { it.name }.sorted().toList()
+    }
+
     private fun write(dir: File, path: String, content: String) = File(dir, path).apply {
         parentFile.mkdirs()
         writeText(content)

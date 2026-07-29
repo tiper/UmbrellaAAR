@@ -50,7 +50,7 @@ abstract class MergeDependencies : DefaultTask() {
     /** `res/values*` folder + resource name -> module folders that declared it. */
     private val resourceNames = mutableMapOf<String, MutableList<String>>()
 
-    /** Lines already written to each appended file (`R.txt`, `public.txt`), to keep merging linear. */
+    /** Lines already written to each appended file (`R.txt`), to keep merging linear. */
     private val seenLines = mutableMapOf<File, MutableSet<String>>()
 
     @TaskAction
@@ -70,6 +70,8 @@ abstract class MergeDependencies : DefaultTask() {
 
         val manifest = File(out, "AndroidManifest.xml")
         val packageOverride = manifest.removePackage()
+        val libraryManifests = mutableListOf<Pair<String, File>>()
+        val classEntries = mutableListOf<Triple<String, String, File>>()
         val touchedProguardFiles = mutableSetOf<File>()
         val appendedFiles = mutableSetOf<File>()
         var filesProcessed = 0
@@ -86,6 +88,12 @@ abstract class MergeDependencies : DefaultTask() {
                     val destFile = File(out, relativePath)
 
                     when {
+                        // Class-path entries are never copied into the merged tree: they are streamed
+                        // straight from the extracted module folder into `classes.jar` below. Copying
+                        // ~3 000 class files only to walk and re-zip them was the single biggest cost
+                        // of this task.
+                        relativePath.startsWith("classes/") -> classEntries += classEntry(owner, relativePath, srcFile)
+
                         relativePath.startsWith("res/values") -> {
                             recordResourceNames(owner, relativePath, srcFile)
                             srcFile.copyValues(owner = owner, to = destFile)
@@ -104,10 +112,7 @@ abstract class MergeDependencies : DefaultTask() {
                             touchedProguardFiles += srcFile.appendLines(to = target, deduplicate = false)
                         }
 
-                        relativePath.endsWith("AndroidManifest.xml") -> srcFile.mergeManifest(
-                            to = manifest,
-                            packageOverride = packageOverride,
-                        )
+                        relativePath.endsWith("AndroidManifest.xml") -> libraryManifests += owner to srcFile
 
                         destFile.exists() -> onDuplicate(owner, relativePath, srcFile, destFile)
 
@@ -121,27 +126,62 @@ abstract class MergeDependencies : DefaultTask() {
                 }
         }
 
+        mergeManifests(into = manifest, libraries = libraryManifests, packageOverride = packageOverride)
+
         reportDuplicateResources()
 
         (appendedFiles + touchedProguardFiles).forEach { it.ensureTrailingNewline() }
 
-        val jar = File(out, "classes.jar").apply {
-            if (exists()) delete()
+        buildClassesJar(out, classEntries)
+        logger.lifecycle("Merged dependencies into main AAR (processed $filesProcessed files)")
+    }
+
+    /** `classes/<path>` -> the jar entry name, applying the `.kotlin_module` per-module rename. */
+    private fun classEntry(owner: String, relativePath: String, srcFile: File): Triple<String, String, File> {
+        val entryName = relativePath.removePrefix("classes/")
+        val renamed = when {
+            entryName.endsWith(".kotlin_module") -> {
+                val dir = entryName.substringBeforeLast('/', missingDelimiterValue = "")
+                val file = entryName.substringAfterLast('/')
+                if (dir.isEmpty()) "$owner-$file" else "$dir/$owner-$file"
+            }
+
+            else -> entryName
         }
+        return Triple(renamed, owner, srcFile)
+    }
+
+    /**
+     * Writes `classes.jar` from the main module's exploded tree plus every dependency's class files,
+     * read directly from where `ExtractDependencies` left them.
+     *
+     * Duplicate detection is unchanged — it simply happens on jar entry names instead of on files
+     * that had been copied into place first.
+     */
+    private fun buildClassesJar(out: File, dependencyEntries: List<Triple<String, String, File>>) {
         val classes = File(out, "classes")
+        val entries = linkedMapOf<String, Pair<String, File>>()
+
+        if (classes.isDirectory) {
+            classes.walk().filter { it.isFile }.forEach {
+                entries[it.relativeTo(classes).path.normalizePath()] = MAIN to it
+            }
+        }
+
+        dependencyEntries.forEach { (entryName, owner, file) ->
+            val existing = entries.putIfAbsent(entryName, owner to file)
+            if (existing != null) onDuplicate(owner, "classes/$entryName", file, existing.second, existing.first)
+        }
+
+        val jar = File(out, "classes.jar").apply { if (exists()) delete() }
         ZipOutputStream(BufferedOutputStream(FileOutputStream(jar), IO_BUFFER_SIZE)).use { zos ->
-            classes.walk()
-                .filter { it.isFile }
-                .map { it to it.relativeTo(classes).path.normalizePath() }
-                .sortedBy { (_, entryName) -> entryName }
-                .forEach { (classFile, entryName) ->
-                    zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
-                    classFile.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
-                    zos.closeEntry()
-                }
+            entries.entries.sortedBy { it.key }.forEach { (entryName, source) ->
+                zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
+                source.second.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
+                zos.closeEntry()
+            }
         }
         classes.deleteRecursively()
-        logger.lifecycle("Merged dependencies into main AAR (processed $filesProcessed files)")
     }
 
     /**
@@ -149,7 +189,13 @@ abstract class MergeDependencies : DefaultTask() {
      * shipped twice); anything else is a real conflict and must name *both* contributors — the old
      * message only named the second one, which made this class of failure very hard to diagnose.
      */
-    private fun onDuplicate(owner: String, relativePath: String, srcFile: File, destFile: File) {
+    private fun onDuplicate(
+        owner: String,
+        relativePath: String,
+        srcFile: File,
+        destFile: File,
+        firstContributor: String = contributors[relativePath] ?: "unknown",
+    ) {
         if (srcFile.length() == destFile.length() && srcFile.readBytes().contentEquals(destFile.readBytes())) {
             logger.info("[UmbrellaAar] Duplicate but identical '$relativePath' from '$owner' — keeping one copy.")
             return
@@ -157,7 +203,7 @@ abstract class MergeDependencies : DefaultTask() {
         throw GradleException(
             buildString {
                 appendLine("UmbrellaAar cannot merge '$relativePath': it is contributed by two modules with different content.")
-                appendLine("  First contributor : ${contributors[relativePath] ?: "unknown"}")
+                appendLine("  First contributor : $firstContributor")
                 appendLine("  Second contributor: $owner")
                 append(
                     when {
@@ -205,15 +251,26 @@ abstract class MergeDependencies : DefaultTask() {
         return pkgName.orEmpty()
     }
 
-    private fun File.mergeManifest(to: File, packageOverride: String) {
-        if (!to.exists()) {
-            copyTo(to, overwrite = true)
-            return
+    /**
+     * Merges every library manifest in a **single** [ManifestMerger2] invocation.
+     *
+     * Merging them one at a time re-parsed the accumulating result from disk and re-ran the whole
+     * merge algorithm for each of N libraries — quadratic in manifest size, and ~23% of the merge
+     * step at 95 modules. `addManifestProviders` takes a collection precisely so this can be done
+     * in one pass, which is also how AGP itself merges library manifests.
+     */
+    private fun mergeManifests(into: File, libraries: List<Pair<String, File>>, packageOverride: String) {
+        if (libraries.isEmpty()) return
+
+        if (!into.exists()) {
+            // No main manifest: seed with the first library's, then merge the rest into it.
+            libraries.first().second.copyTo(into, overwrite = true)
+            return mergeManifests(into, libraries.drop(1), packageOverride)
         }
 
         try {
-            val report = ManifestMerger2.newMerger(to, GradleILogger(logger), LIBRARY)
-                .addManifestProviders(listOf(toManifestProvider()))
+            val report = ManifestMerger2.newMerger(into, GradleILogger(logger), LIBRARY)
+                .addManifestProviders(libraries.map { (owner, file) -> manifestProvider(owner, file) })
                 .withFeatures(USES_SDK_IN_MANIFEST_LENIENT_HANDLING)
                 .apply {
                     if (packageOverride.isNotEmpty()) {
@@ -234,7 +291,7 @@ abstract class MergeDependencies : DefaultTask() {
                 else -> {
                     val mergedXml = report.getMergedDocument(MERGED)
                         ?: throw GradleException("Manifest merge succeeded but produced no output")
-                    to.writeText(mergedXml)
+                    into.writeText(mergedXml)
                 }
             }
         } catch (e: GradleException) {
@@ -244,9 +301,10 @@ abstract class MergeDependencies : DefaultTask() {
         }
     }
 
-    private fun File.toManifestProvider() = object : ManifestProvider {
-        override fun getName(): String = this@toManifestProvider.name
-        override fun getManifest(): File = this@toManifestProvider
+    /** [owner] is the module folder, so merge conflicts name the module rather than 95 identical file names. */
+    private fun manifestProvider(owner: String, file: File) = object : ManifestProvider {
+        override fun getName(): String = owner
+        override fun getManifest(): File = file
     }
 
     private class GradleILogger(private val logger: Logger) : ILogger {
