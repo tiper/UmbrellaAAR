@@ -341,12 +341,18 @@ pluginManagement {
   re-numbered. AAPT2 in the consumer assigns the final IDs.
 - **Duplicate resource *names*** across merged modules are reported as a warning but resolved
   last-one-wins by AAPT2 in the consumer, which mirrors AGP's own behaviour.
-- **Files that cannot be merged fail the build.** `R.txt` is de-duplicated line-wise, `proguard.txt`
-  (and `.pro`) are concatenated, and `res/values*` plus `.kotlin_module` files are namespaced per
-  module. Anything else contributed by two modules at the same path — `assets/**`, `libs/*.jar`,
-  `jni/<abi>/*.so`, `public.txt`, `navigation.json`, `prefab/**` — is an error naming both
-  contributors, unless the bytes are identical, in which case one copy is kept. Rename the file in
-  one of the modules, or move it under a module-specific sub-folder.
+- **Files that cannot be merged fail the build.** `R.txt` and `public.txt` are de-duplicated
+  line-wise, `proguard.txt` (and `.pro`) are concatenated, and `res/values*` plus `.kotlin_module`
+  files are namespaced per module. Anything else contributed by two modules at the same path —
+  `assets/**`, `libs/*.jar`, `jni/<abi>/*.so`, `navigation.json`, `prefab/**` — is an error naming
+  both contributors, unless the bytes are identical, in which case one copy is kept. Rename the file
+  in one of the modules, or move it under a module-specific sub-folder.
+- **`public.txt` is only published when every module declares one.** In an AAR, `public.txt` is the
+  whitelist of public resources: if it is present, everything *not* listed becomes private. A module
+  that ships no `public.txt` is saying "all my resources are public". So if only some of the merged
+  modules use `<public>`, publishing the union of their declarations would silently make every other
+  module's resources private — the merged file is dropped instead, with a warning naming both sets
+  of modules. Declare `<public>` in every module contributing resources to publish a public surface.
 - **`R` class relocation only touches merged modules.** Namespaces are read from each dependency
   AAR's `AndroidManifest.xml`; a third-party AAR bundled inside one of your modules keeps its own
   `R`. The bytecode pre-scan that decides whether ASM runs at all is best-effort (false positives

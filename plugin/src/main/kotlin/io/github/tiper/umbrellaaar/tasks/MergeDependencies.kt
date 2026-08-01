@@ -50,14 +50,20 @@ abstract class MergeDependencies : DefaultTask() {
     /** `res/values*` folder + resource name -> module folders that declared it. */
     private val resourceNames = mutableMapOf<String, MutableList<String>>()
 
-    /** Lines already written to each appended file (`R.txt`), to keep merging linear. */
+    /** Lines already written to each appended file (`R.txt`, `public.txt`), to keep merging linear. */
     private val seenLines = mutableMapOf<File, MutableSet<String>>()
+
+    /** Modules contributing Android resources, and the subset declaring a public resource surface. */
+    private val modulesWithResources = mutableSetOf<String>()
+    private val modulesDeclaringPublicResources = mutableSetOf<String>()
 
     @TaskAction
     fun execute() {
         contributors.clear()
         resourceNames.clear()
         seenLines.clear()
+        modulesWithResources.clear()
+        modulesDeclaringPublicResources.clear()
 
         val src = mainAarDir.get().asFile
         val out = mergedAarDir.get().asFile.apply {
@@ -66,7 +72,12 @@ abstract class MergeDependencies : DefaultTask() {
         }
 
         src.copyRecursively(out, overwrite = true)
-        src.walk().filter { it.isFile }.forEach { contributors[it.relativeTo(src).path.normalizePath()] = MAIN }
+        src.walk().filter { it.isFile }.forEach {
+            val relativePath = it.relativeTo(src).path.normalizePath()
+            contributors[relativePath] = MAIN
+            if (relativePath.startsWith("res/")) modulesWithResources += MAIN
+            if (relativePath == PUBLIC_TXT) modulesDeclaringPublicResources += MAIN
+        }
 
         val manifest = File(out, "AndroidManifest.xml")
         val packageOverride = manifest.removePackage()
@@ -86,6 +97,7 @@ abstract class MergeDependencies : DefaultTask() {
                 .sortedBy { (_, relativePath) -> relativePath }
                 .forEach { (srcFile, relativePath) ->
                     val destFile = File(out, relativePath)
+                    if (relativePath.startsWith("res/")) modulesWithResources += owner
 
                     when {
                         // Class-path entries are never copied into the merged tree: they are streamed
@@ -104,6 +116,14 @@ abstract class MergeDependencies : DefaultTask() {
                         // R.txt is a line-based symbol table: concatenating it verbatim produced
                         // duplicated (and potentially conflicting) symbols.
                         relativePath.endsWith("R.txt") -> appendedFiles += srcFile.appendLines(to = destFile, deduplicate = true)
+
+                        // public.txt is the same shape — one `<type> <name>` per line — so it merges
+                        // the same way. See finalisePublicResources for why merging alone is not
+                        // enough.
+                        relativePath == PUBLIC_TXT -> {
+                            modulesDeclaringPublicResources += owner
+                            appendedFiles += srcFile.appendLines(to = destFile, deduplicate = true)
+                        }
 
                         // Consumer rules live in `proguard.txt` inside an AAR — `consumer-rules.pro`
                         // is not part of the AAR spec and consumers simply ignore it.
@@ -132,8 +152,46 @@ abstract class MergeDependencies : DefaultTask() {
 
         (appendedFiles + touchedProguardFiles).forEach { it.ensureTrailingNewline() }
 
+        finalisePublicResources(out)
+
         buildClassesJar(out, classEntries)
         logger.lifecycle("Merged dependencies into main AAR (processed $filesProcessed files)")
+    }
+
+    /**
+     * Decides whether the merged `public.txt` may be published.
+     *
+     * In an AAR, `public.txt` is the whitelist of public resources: if it is present, **everything
+     * not listed becomes private**; if it is absent, everything is public. A module that ships no
+     * `public.txt` is therefore saying "all of my resources are public" — and there are no lines to
+     * merge that express it.
+     *
+     * So merging the files that do exist is not enough on its own: publishing the union of two
+     * modules' declarations would silently make every *other* merged module's resources private.
+     * The file is only kept when every module that contributes resources declared its public
+     * surface; otherwise it is dropped, which restores "everything public" — the state the
+     * non-declaring modules already expected. Widening one module's intent is recoverable; silently
+     * hiding another module's resources breaks the consumer's build.
+     */
+    private fun finalisePublicResources(out: File) {
+        val publicTxt = File(out, PUBLIC_TXT)
+        if (!publicTxt.exists()) return
+
+        val implicitlyPublic = modulesWithResources - modulesDeclaringPublicResources
+        if (implicitlyPublic.isEmpty()) return
+
+        publicTxt.delete()
+        logger.warn(
+            buildString {
+                appendLine("UmbrellaAar dropped public.txt from the merged AAR, so every merged resource stays public.")
+                appendLine("  Declared a public resource surface: ${modulesDeclaringPublicResources.sorted().joinToString()}")
+                appendLine("  Contribute resources but declared none: ${implicitlyPublic.sorted().joinToString()}")
+                append(
+                    "  Keeping it would have made those modules' resources private to consumers. " +
+                        "Add <public> declarations to every module contributing resources to publish a public surface.",
+                )
+            },
+        )
     }
 
     /** `classes/<path>` -> the jar entry name, applying the `.kotlin_module` per-module rename. */
@@ -362,6 +420,7 @@ abstract class MergeDependencies : DefaultTask() {
 
     private companion object {
         const val MAIN = "<main module>"
+        const val PUBLIC_TXT = "public.txt"
         const val MAX_REPORTED = 20
         val APPEND = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)
         val CREATE = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)

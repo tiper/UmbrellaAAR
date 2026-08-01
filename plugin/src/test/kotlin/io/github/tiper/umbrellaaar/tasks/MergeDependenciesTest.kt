@@ -179,6 +179,65 @@ class MergeDependenciesTest {
         assertEquals(listOf("com/example/Same.class"), jarEntries(File(merge(), "classes.jar")))
     }
 
+    // ── public.txt: the AAR's public-resource whitelist ──────────────────────────────────────
+
+    @Test
+    fun `public resource declarations are merged when every contributing module declares one`() {
+        mainAar(
+            "res/values/values.xml" to values("umbrella_name" to "U"),
+            "public.txt" to "string umbrella_name",
+        )
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to values("a_name" to "A"),
+            "public.txt" to "string a_name",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to values("b_name" to "B"),
+            // Same symbol declared twice must not be duplicated.
+            "public.txt" to "string a_name\nstring b_name",
+        )
+
+        val lines = File(merge(), "public.txt").readLines().filter { it.isNotBlank() }
+
+        assertEquals(listOf("string a_name", "string b_name", "string umbrella_name"), lines.sorted())
+        assertEquals(lines.distinct(), lines)
+    }
+
+    @Test
+    fun `public txt is dropped when a resource-contributing module declares no public surface`() {
+        mainAar()
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to values("a_name" to "A"),
+            "public.txt" to "string a_name",
+        )
+        // Ships resources but no public.txt, i.e. "all of my resources are public". Keeping
+        // moduleA's public.txt would silently make this module's resources private.
+        module("moduleB", "com.example.b", "res/values/values.xml" to values("b_name" to "B"))
+
+        assertFalse(File(merge(), "public.txt").exists())
+    }
+
+    @Test
+    fun `a module without resources does not force public txt to be dropped`() {
+        mainAar()
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to values("a_name" to "A"),
+            "public.txt" to "string a_name",
+        )
+        // Code only — contributes no resources, so it has no public surface to lose.
+        module("moduleB", "com.example.b", "classes/com/example/b/B.class" to "b")
+
+        assertEquals(listOf("string a_name"), File(merge(), "public.txt").readLines().filter { it.isNotBlank() })
+    }
+
     private fun jarEntries(jar: File): List<String> = java.util.zip.ZipFile(jar).use { zip ->
         zip.entries().asSequence().map { it.name }.sorted().toList()
     }
