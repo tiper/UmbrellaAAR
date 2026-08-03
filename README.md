@@ -305,6 +305,32 @@ pluginManagement {
    > twice. All **public** task and publication names are unchanged. `extract<Variant>Sources` was
    > removed — `merge<Variant>UmbrellaAarSources` now streams the jars directly.
 
+   > 🔴 **Publish the umbrella with its own task, or give it its own coordinates.**
+   > The umbrella publication defaults to `project.group:project.name:project.version`, which in a KMP
+   > project is *already taken* by the `kotlinMultiplatform` publication — and `androidRelease…` and
+   > `androidDebug…` share it with each other. Maven publications are addressed by their coordinates,
+   > so `publish` and `publishToMavenLocal` write colliding publications to the same location and the
+   > last one wins: the umbrella `.aar` survives, but another publication's `.pom` and `.module`
+   > replace the flattened dependency list this plugin exists to produce. The build still succeeds, so
+   > the corruption is silent — consumers then fail on internal project coordinates such as
+   > `Could not find <RootProject>.<path>:<module>:unspecified`.
+   >
+   > The plugin logs a warning naming every colliding publication. Either publish only the umbrella:
+   >
+   > ```bash
+   > ./gradlew publishAndroidReleaseUmbrellaAarPublicationToMavenLocal
+   > ```
+   >
+   > …or give the publications distinct coordinates:
+   >
+   > ```kotlin
+   > publishing {
+   >     publications.named<MavenPublication>("androidReleaseUmbrellaAar") {
+   >         artifactId = "my-library-umbrella"
+   >     }
+   > }
+   > ```
+
 4. **Reports**
 
    Every build writes, per pipeline/variant:
@@ -320,6 +346,12 @@ pluginManagement {
 
 ### Known limitations
 
+- **The umbrella publication does not claim unique coordinates.** It defaults to
+  `project.group:project.name:project.version`, so it collides with the `kotlinMultiplatform`
+  publication in a KMP project, and `androidRelease…`/`androidDebug…` collide with each other. Only
+  the targeted `publish<Variant>UmbrellaAarPublicationTo<Repo>Repository` task is safe unless you give
+  them distinct coordinates — see the warning above. The plugin reports the clash rather than
+  resolving it, because it cannot know which publication you want at those coordinates.
 - **`compileOnly` project dependencies are not merged.** `compileOnly` means "provided by the
   consumer", so those modules are left out of the AAR — but because `2.x` *did* merge them, every
   module reachable only through `compileOnly` is listed in a build warning rather than dropped
