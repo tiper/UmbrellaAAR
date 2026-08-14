@@ -35,21 +35,16 @@ class CollectorTest {
     }
 
     @Test
-    fun `add duplicate dependency with different version throws exception`() {
+    fun `add duplicate dependency with different version does not throw`() {
         val collector = Collector()
         val dep1 = Collector.Dependency("com.example", "library", "1.0.0", "compile")
         val dep2 = Collector.Dependency("com.example", "library", "2.0.0", "compile")
 
         collector.add(dep1)
+        collector.add(dep2)
 
-        val exception = assertFailsWith<GradleException> {
-            collector.add(dep2)
-        }
-
-        assert(exception.message?.contains("Version conflict") == true)
-        assert(exception.message?.contains("com.example:library") == true)
-        assert(exception.message?.contains("1.0.0") == true)
-        assert(exception.message?.contains("2.0.0") == true)
+        assertEquals(listOf("com.example:library:1.0.0:compile"), collector.getDependencies())
+        assertEquals(setOf("1.0.0", "2.0.0"), collector.getConflicts()["com.example:library"])
     }
 
     @Test
@@ -165,21 +160,22 @@ class CollectorTest {
     }
 
     @Test
-    fun `throwIfNot does not throw for same version`() {
-        val dep = Collector.Dependency("com.example", "lib", "1.0.0", "compile")
-        dep.throwIfNot("1.0.0")
+    fun `version disagreements keep the first value and are reported`() {
+        val collector = Collector()
+        collector.add(Collector.Dependency("com.example", "lib", "1.0.0", "compile"))
+        collector.add(Collector.Dependency("com.example", "lib", "2.1.0", "compile"))
+
+        assertEquals(listOf("com.example:lib:1.0.0:compile"), collector.getDependencies())
+        assertEquals(setOf("1.0.0", "2.1.0"), collector.getConflicts()["com.example:lib"])
     }
 
     @Test
-    fun `throwIfNot throws for different version`() {
-        val dep = Collector.Dependency("com.example", "lib", "1.0.0", "compile")
+    fun `same version is not reported as a disagreement`() {
+        val collector = Collector()
+        collector.add(Collector.Dependency("com.example", "lib", "1.0.0", "compile"))
+        collector.add(Collector.Dependency("com.example", "lib", "1.0.0", "compile"))
 
-        val exception = assertFailsWith<GradleException> {
-            dep.throwIfNot("2.0.0")
-        }
-
-        assert(exception.message?.contains("Version conflict") == true)
-        assert(exception.message?.contains("Align versions") == true)
+        assert(collector.getConflicts().isEmpty())
     }
 
     @Test
@@ -195,7 +191,7 @@ class CollectorTest {
     }
 
     @Test
-    fun `collector replaces dependency with same group and name`() {
+    fun `collector keeps the first entry for the same group and name`() {
         val collector = Collector()
         val dep1 = Collector.Dependency("com.example", "library", "1.0.0", "compile")
         val dep2 = Collector.Dependency("com.example", "library", "1.0.0", "runtime")
@@ -205,8 +201,7 @@ class CollectorTest {
 
         val deps = collector.getDependencies()
         assertEquals(1, deps.size)
-        // Should have the second one (runtime scope)
-        assertEquals("com.example:library:1.0.0:runtime", deps[0])
+        assertEquals("com.example:library:1.0.0:compile", deps[0])
     }
 
     @Test

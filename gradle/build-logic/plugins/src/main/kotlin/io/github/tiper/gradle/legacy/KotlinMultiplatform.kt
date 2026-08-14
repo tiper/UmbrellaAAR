@@ -1,0 +1,56 @@
+package io.github.tiper.gradle.legacy
+
+import io.github.tiper.gradle.extensions.addArgs
+import io.github.tiper.gradle.extensions.configureJava
+import io.github.tiper.gradle.extensions.fixArchiveName
+import io.github.tiper.gradle.extensions.libraryName
+import org.gradle.api.Plugin
+import org.gradle.api.Project
+import org.gradle.kotlin.dsl.assign
+import org.gradle.kotlin.dsl.configure
+import org.gradle.kotlin.dsl.withType
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8
+import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
+import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinAndroidTarget
+import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompileCommon
+import org.jlleitschuh.gradle.ktlint.KtlintExtension
+
+class KotlinMultiplatform : Plugin<Project> {
+    override fun apply(target: Project) = with(target) {
+        pluginManager.apply("org.jlleitschuh.gradle.ktlint")
+        pluginManager.apply("org.jetbrains.kotlin.multiplatform")
+        configureJava()
+        extensions.configure<KotlinMultiplatformExtension> {
+            targets.withType<KotlinAndroidTarget> {
+                compilerOptions {
+                    jvmTarget.set(JVM_1_8)
+                }
+            }
+            targets.addArgs("-Xexpect-actual-classes")
+            targets.withType<KotlinNativeTarget>().addArgs("-Xexport-kdoc")
+        }
+        if (pluginManager.hasPlugin("com.android.library")) {
+            extensions.configure<KtlintExtension> {
+                android = true
+            }
+        } else if (pluginManager.hasPlugin("com.android.application")) {
+            extensions.configure<KtlintExtension> {
+                android = true
+            }
+        }
+        fixArchiveName()
+        extensions.configure<KotlinMultiplatformExtension> {
+            metadata {
+                compilations.configureEach {
+                    val compilation = name
+                    compileTaskProvider.configure {
+                        if (this is KotlinCompileCommon) {
+                            moduleName = "${libraryName}_$compilation"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,10 +1,13 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform.tiper)
-    alias(libs.plugins.android.library.tiper)
+    alias(libs.plugins.android.library.multiplatform.tiper)
 }
 
 kotlin {
-    androidTarget()
+    androidLibrary {
+        namespace = "io.github.tiper.sample.test"
+        withHostTest {}
+    }
     sourceSets {
         commonMain.dependencies {
             api(libs.ktor.mock)

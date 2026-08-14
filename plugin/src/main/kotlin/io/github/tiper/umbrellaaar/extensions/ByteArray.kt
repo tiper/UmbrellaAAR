@@ -5,9 +5,18 @@ import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.commons.ClassRemapper
 import org.objectweb.asm.commons.Remapper
 
-internal fun ByteArray.transformClass(mainNsInternal: String): ByteArray {
-    // Skip classes that don't reference R classes
-    if (!containsRClassReference()) {
+/**
+ * Rewrites `R` class references of the merged modules to the umbrella module's namespace.
+ *
+ * [mergedNamespaces] is the exact set of namespaces (in internal form, e.g. `com/example/feature`)
+ * that are being merged, read from each dependency AAR's `AndroidManifest.xml`. Anything else —
+ * a third-party AAR shipped inside the umbrella, `android/`, `androidx/`, … — keeps its own `R`,
+ * because rewriting it would point at a class that does not declare those fields and blow up with
+ * `NoSuchFieldError` at runtime, far away from the cause.
+ */
+internal fun ByteArray.transformClass(mainNsInternal: String, mergedNamespaces: Set<String>): ByteArray {
+    // Fast path: classes that cannot possibly mention an R class are returned untouched.
+    if (mergedNamespaces.isEmpty() || !containsRClassReference()) {
         return this
     }
 
@@ -15,35 +24,24 @@ internal fun ByteArray.transformClass(mainNsInternal: String): ByteArray {
     val writer = ClassWriter(reader, 0)
     val remapper = object : Remapper() {
         override fun map(internalName: String): String {
-            // Don't remap Android framework classes
-            if (internalName.startsWith("android/") ||
-                internalName.startsWith("androidx/") ||
-                internalName.startsWith("com/google/android/material/")
-            ) {
-                return super.map(internalName)
-            }
-            // Already using main module's R, skip it
-            if (internalName.startsWith("$mainNsInternal/R")) {
-                return super.map(internalName)
-            }
-            // Remap R class refs to main namespace
-            val rIndex = internalName.indexOf("/R$")
-            if (rIndex > 0) {
-                return mainNsInternal + internalName.substring(rIndex)
-            }
-            // Remap bare R class (e.g. com/dep/R → mainNs/R)
-            if (internalName.endsWith("/R")) {
-                return "$mainNsInternal/R"
-            }
-            return super.map(internalName)
+            val owner = internalName.rClassOwner() ?: return internalName
+            // Already the umbrella's own R, or an R we are not merging: leave it alone.
+            if (owner == mainNsInternal || owner !in mergedNamespaces) return internalName
+            return mainNsInternal + internalName.substring(owner.length)
         }
     }
-    val remapperVisitor = ClassRemapper(writer, remapper)
-    reader.accept(remapperVisitor, 0)
+    reader.accept(ClassRemapper(writer, remapper), 0)
     return writer.toByteArray()
 }
 
-// Scans bytecode for R class patterns: "/R$", "/R;", or "/R" followed by a non-identifier byte
+/** `com/example/R` -> `com/example`, `com/example/R$string` -> `com/example`, anything else -> null. */
+private fun String.rClassOwner(): String? = when {
+    endsWith("/R") -> substring(0, length - 2)
+    else -> indexOf("/R$").takeIf { it > 0 }?.let { substring(0, it) }
+}
+
+// Best-effort scan for R class patterns: "/R$", "/R;", or "/R" followed by a non-identifier byte.
+// False positives only cost an extra (identity) rewrite, so being approximate here is fine.
 internal fun ByteArray.containsRClassReference(): Boolean {
     val slash = '/'.code.toByte()
     val rByte = 'R'.code.toByte()
@@ -68,4 +66,3 @@ private fun Byte.isJavaIdentifierPart(): Boolean {
         c == '_'.code ||
         c == '$'.code
 }
-

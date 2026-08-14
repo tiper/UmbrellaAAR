@@ -7,29 +7,6 @@ internal fun String.capitalize() = replaceFirstChar { it.uppercaseChar() }
 
 internal fun String.cleanPlatformSuffixes() = listOf("-android", "-jvm", "-java8").fold(this) { acc, suffix -> acc.removeSuffix(suffix) }
 
-// TODO: Support projects with custom source sets.
-internal fun String.isRelevantForDependencies(buildType: String): Boolean {
-    if (contains("test", ignoreCase = true)) return false
-    if (contains("compilation", ignoreCase = true)) return false
-    if (contains("dependenciesmetadata", ignoreCase = true)) return false
-    if (!contains("api", ignoreCase = true) && !contains("implementation", ignoreCase = true)) return false
-    return contains("commonMain", ignoreCase = true) ||
-        contains("androidMain", ignoreCase = true) ||
-        contains("android$buildType", ignoreCase = true) ||
-        contains("jvmMain", ignoreCase = true) ||
-        this == "implementation" ||
-        this == "api"
-}
-
-// TODO: Support projects with custom source sets.
-internal fun String.isApplicable(buildType: String): Boolean = when {
-    contains("commonMain") -> true
-    contains("androidMain") -> true
-    contains("android$buildType", true) -> true
-    this == "implementation" -> true
-    this == "api" -> true
-    else -> false
-}
 
 internal fun Pair<String, String>.matches(group: String?, module: String?): Boolean = when {
     first.isNotEmpty() && second.isNotEmpty() -> first == group && second == module
@@ -45,9 +22,49 @@ internal fun String.stripPackageAttribute(): Pair<String, String?> {
     return replaceFirst(Regex("""(<manifest\b[^>]*?)\s+package\s*=\s*"${escape(pkg)}""""), "$1") to pkg
 }
 
-internal fun String.packageName(): String? = DocumentBuilderFactory.newInstance()
-    .newDocumentBuilder()
-    .parse(byteInputStream())
-    .documentElement
-    .getAttribute("package")
-    .takeIf { it.isNotBlank() }
+internal fun String.packageName(): String? = parseXml()
+    ?.getAttribute("package")
+    ?.takeIf { it.isNotBlank() }
+
+/**
+ * `"<type>/<name>"` for every resource declared *directly* under `<resources>`.
+ *
+ * Parsed rather than regex-matched so that nested elements — `<item>` inside `<style>`, `<enum>` and
+ * `<flag>` inside `<declare-styleable>` — are not mistaken for resource declarations.
+ */
+internal fun String.declaredResourceNames(): List<String> {
+    val root = parseXml() ?: return emptyList()
+    val children = root.childNodes
+    return (0 until children.length).mapNotNull { index ->
+        val node = children.item(index) as? org.w3c.dom.Element ?: return@mapNotNull null
+        val name = node.getAttribute("name").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        val type = node.getAttribute("type").takeIf { it.isNotBlank() } ?: node.tagName
+        "$type/$name"
+    }
+}
+
+private fun String.parseXml(): org.w3c.dom.Element? = runCatching {
+    documentBuilder.get().run {
+        reset()
+        parse(byteInputStream()).documentElement
+    }
+}.getOrNull()
+
+/**
+ * `DocumentBuilderFactory.newInstance()` performs JAXP service discovery on every call, which is far
+ * more expensive than the parse itself when reading hundreds of small `res/values` files. Builders
+ * are not thread-safe, so one is cached per thread and `reset()` between uses.
+ *
+ * Hardened against XXE / entity expansion: a build tool has no business resolving external entities.
+ */
+private val documentBuilder = ThreadLocal.withInitial {
+    DocumentBuilderFactory.newInstance().apply {
+        runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
+        runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
+        runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
+        runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }
+        isXIncludeAware = false
+        isExpandEntityReferences = false
+    }.newDocumentBuilder()
+}
+

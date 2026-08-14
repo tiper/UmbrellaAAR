@@ -29,10 +29,12 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "UmbrellaAAR"
+includeBuild("sample-legacy")
 include(
     ":sample:aidl:sample1",
     ":sample:aidl:sample2",
     ":sample:composable",
+    ":sample:composable2",
     ":sample:export",
     ":sample:jni:sample1",
     ":sample:jni:sample2",

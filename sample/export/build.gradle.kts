@@ -1,6 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform.tiper)
-    alias(libs.plugins.android.library.tiper)
+    alias(libs.plugins.android.library.multiplatform.tiper)
     alias(libs.plugins.umbrella.aar)
     alias(libs.plugins.umbrella.aar.pom)
     alias(libs.plugins.vanniktech.maven.publish)
@@ -8,11 +8,21 @@ plugins {
 }
 
 group = "io.github.tiper.sample"
-version = "0.0.1"
+version = "0.0.3"
+
+fun <T : ModuleDependency> T.exclude(dependency: Dependency) = exclude(dependency.group, dependency.name)
 
 kotlin {
-    androidTarget {
-        publishLibraryVariants("debug", "release")
+    androidLibrary {
+        namespace = "$group.framework"
+        withHostTest {}
+        @Suppress("UnstableApiUsage")
+        optimization {
+            consumerKeepRules.apply {
+                publish = true
+                files("consumer-rules.pro")
+            }
+        }
     }
     sourceSets {
         commonMain.dependencies {
@@ -20,23 +30,14 @@ kotlin {
     }
 }
 
-fun <T : ModuleDependency> T.exclude(dependency: Dependency) = exclude(dependency.group, dependency.name)
-
-android {
-    namespace = "$group.framework"
-    defaultConfig {
-        consumerProguardFiles("consumer-rules.pro")
+dependencies {
+    export(projects.sample.viewmodel) // This one will include aidl.sample1
+    export(projects.sample.composable) {
+//         exclude(projects.sample.jni.sample1) // This one will exclude jni.sample1
     }
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-    sourceSets["main"].res.srcDirs("src/androidMain/res")
-    dependencies {
-        export(projects.sample.viewmodel) // This one will include aidl.sample1
-        export(projects.sample.composable) {
-            exclude(projects.sample.jni.sample1) // This one will exclude jni.sample1
-        }
-        export(projects.sample.aidl.sample2)
-        export(projects.sample.jni.sample2)
-    }
+    export(projects.sample.composable2)
+    export(projects.sample.aidl.sample2)
+    export(projects.sample.jni.sample2)
 }
 
 signing {
@@ -58,7 +59,7 @@ mavenPublishing {
         licenses {
             license {
                 name = "Apache License 2.0"
-                url = "https://api.github.com/licenses/apache-2.0"
+                url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
             }
         }
         developers {

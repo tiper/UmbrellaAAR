@@ -31,9 +31,25 @@ gradlePlugin {
             id = "io.github.tiper.android.library"
             implementationClass = "io.github.tiper.gradle.AndroidLibrary"
         }
-        register("androidTest") {
-            id = "io.github.tiper.android.test"
-            implementationClass = "io.github.tiper.gradle.AndroidTest"
+        register("androidLibraryMultiplatform") {
+            id = "io.github.tiper.android.library.multiplatform"
+            implementationClass = "io.github.tiper.gradle.AndroidLibraryMultiplatform"
+        }
+        register("kotlinMultiplatformLegacy") {
+            id = "io.github.tiper.legacy.kotlin.multiplatform"
+            implementationClass = "io.github.tiper.gradle.legacy.KotlinMultiplatform"
+        }
+        register("androidApplicationLegacy") {
+            id = "io.github.tiper.legacy.android.application"
+            implementationClass = "io.github.tiper.gradle.legacy.AndroidApplication"
+        }
+        register("androidLibraryLegacy") {
+            id = "io.github.tiper.legacy.android.library"
+            implementationClass = "io.github.tiper.gradle.legacy.AndroidLibrary"
+        }
+        register("androidTestLegacy") {
+            id = "io.github.tiper.legacy.android.test"
+            implementationClass = "io.github.tiper.gradle.legacy.AndroidTest"
         }
     }
 }

@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.4.1)
 
+project(sample_jni_sample2 C)
+
 add_library(
         native-lib2
         SHARED
-        src/androidMain/c/native-lib2.c
+        src/main/c/native-lib2.c
 )
 
 find_library(

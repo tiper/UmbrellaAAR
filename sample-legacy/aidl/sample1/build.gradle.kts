@@ -1,0 +1,26 @@
+plugins {
+    alias(libs.plugins.kotlin.multiplatform.tiper.legacy)
+    alias(libs.plugins.android.library.tiper.legacy)
+}
+
+kotlin {
+    androidTarget()
+    jvm()
+    iosX64()
+    iosArm64()
+    iosSimulatorArm64()
+
+    sourceSets {
+        all {
+            languageSettings.optIn("kotlin.experimental.ExperimentalObjCName")
+        }
+    }
+}
+
+android {
+    namespace = "io.github.tiper.sample.aidl1"
+    buildFeatures.aidl = true
+    defaultConfig {
+        consumerProguardFiles("consumer-rules.pro")
+    }
+}

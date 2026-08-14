@@ -8,21 +8,24 @@ plugins {
 }
 
 group = "io.github.tiper"
-version = "2.5.0"
+version = "3.0.0"
 
 java {
     toolchain {
-        languageVersion = of(11)
+        languageVersion = of(17)
     }
 }
 
 dependencies {
     compileOnly(libs.android.gradle.plugin)
+    compileOnly(libs.kotlin.gradle.plugin)
     implementation(libs.asm.commons)
     implementation(libs.android.tools.common)
 
     testImplementation(kotlin("test"))
     testImplementation(gradleTestKit())
+    testRuntimeOnly(libs.android.gradle.plugin)
+    testRuntimeOnly(libs.kotlin.gradle.plugin)
 }
 
 gradlePlugin {
@@ -97,7 +100,7 @@ mavenPublishing {
         licenses {
             license {
                 name = "Apache License 2.0"
-                url = "https://api.github.com/licenses/apache-2.0"
+                url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
             }
         }
         developers {
