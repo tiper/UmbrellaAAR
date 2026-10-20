@@ -1,9 +1,12 @@
 package io.github.tiper.umbrellaaar.extensions
 
 import org.gradle.api.Project
+import org.gradle.api.artifacts.ProjectDependency
 import org.jetbrains.kotlin.gradle.plugin.HasKotlinDependencies
 import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 import org.jetbrains.kotlin.gradle.plugin.KotlinTargetsContainer
+import org.jetbrains.kotlin.gradle.plugin.mpp.AbstractNativeLibrary
+import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 
 /**
  * Which declarable dependency scopes should be followed.
@@ -113,6 +116,21 @@ private fun Project.conventionalConfigurationNames(buildType: String, scopes: Se
             }
         }
     }
+}
+
+/**
+ * Paths of the local modules exported by this module's Apple frameworks, i.e. every
+ * `binaries.framework { export(project(":x")) }` (and static libraries) of every native target.
+ */
+internal fun Project.frameworkExports(): List<String> {
+    if (!plugins.hasPlugin("org.jetbrains.kotlin.multiplatform")) return emptyList()
+    val kotlin = extensions.findByName("kotlin") as? KotlinTargetsContainer ?: return emptyList()
+    return kotlin.targets.withType(KotlinNativeTarget::class.java)
+        .flatMap { it.binaries.withType(AbstractNativeLibrary::class.java) }
+        .mapNotNull { configurations.findByName(it.exportConfigurationName) }
+        .flatMap { it.dependencies.withType(ProjectDependency::class.java) }
+        .map { it.path }
+        .distinct()
 }
 
 private fun Project.hasAndroidPlugin(): Boolean = plugins.hasPlugin("com.android.library") ||

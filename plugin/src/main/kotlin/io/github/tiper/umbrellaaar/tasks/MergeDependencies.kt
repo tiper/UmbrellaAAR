@@ -8,22 +8,34 @@ import com.android.manifmerger.ManifestSystemProperty.Document.PACKAGE
 import com.android.manifmerger.MergingReport.MergedManifestKind.MERGED
 import com.android.manifmerger.MergingReport.Record.Severity.ERROR
 import com.android.utils.ILogger
+import io.github.tiper.umbrellaaar.extensions.AAR_METADATA_PATH
 import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
 import io.github.tiper.umbrellaaar.extensions.declaredResourceNames
+import io.github.tiper.umbrellaaar.extensions.mergeAarMetadata
+import io.github.tiper.umbrellaaar.extensions.mergeXmlChildren
 import io.github.tiper.umbrellaaar.extensions.normalizePath
+import io.github.tiper.umbrellaaar.extensions.packageName
+import io.github.tiper.umbrellaaar.extensions.parseAarMetadata
 import io.github.tiper.umbrellaaar.extensions.stripPackageAttribute
+import io.github.tiper.umbrellaaar.extensions.toAarMetadataText
+import io.github.tiper.umbrellaaar.extensions.transformClass
+import io.github.tiper.umbrellaaar.extensions.withoutResources
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.logging.Logger
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.RELATIVE
@@ -40,6 +52,14 @@ abstract class MergeDependencies : DefaultTask() {
     @get:PathSensitive(RELATIVE)
     abstract val mainAarDir: DirectoryProperty
 
+    /**
+     * The umbrella module's namespace. `R` references in the umbrella's *own* classes that point at
+     * a merged module's `R` are rewritten to it. When absent, the `package` of the umbrella AAR's
+     * manifest is used.
+     */
+    @get:Input
+    @get:Optional
+    abstract val mainNamespace: Property<String>
 
     @get:OutputDirectory
     abstract val mergedAarDir: DirectoryProperty
@@ -50,20 +70,28 @@ abstract class MergeDependencies : DefaultTask() {
     /** `res/values*` folder + resource name -> module folders that declared it. */
     private val resourceNames = mutableMapOf<String, MutableList<String>>()
 
-    /** Lines already written to each appended file (`R.txt`, `public.txt`), to keep merging linear. */
-    private val seenLines = mutableMapOf<File, MutableSet<String>>()
+    /**
+     * Keys already written to each de-duplicated file (`R.txt`, `public.txt`, `baseline-prof.txt`).
+     * Kept in memory so each module's lines are checked once, instead of re-reading the growing
+     * merged file for every module.
+     */
+    private val seenKeys = mutableMapOf<File, MutableSet<String>>()
 
     /** Modules contributing Android resources, and the subset declaring a public resource surface. */
     private val modulesWithResources = mutableSetOf<String>()
     private val modulesDeclaringPublicResources = mutableSetOf<String>()
 
+    /** Modules whose `lint.jar` was not kept, because an AAR can only carry one. */
+    private val droppedLintJars = mutableListOf<String>()
+
     @TaskAction
     fun execute() {
         contributors.clear()
         resourceNames.clear()
-        seenLines.clear()
+        seenKeys.clear()
         modulesWithResources.clear()
         modulesDeclaringPublicResources.clear()
+        droppedLintJars.clear()
 
         val src = mainAarDir.get().asFile
         val out = mergedAarDir.get().asFile.apply {
@@ -76,6 +104,8 @@ abstract class MergeDependencies : DefaultTask() {
             val relativePath = it.relativeTo(src).path.normalizePath()
             contributors[relativePath] = MAIN
             if (relativePath.startsWith("res/")) modulesWithResources += MAIN
+            // Recorded first, so the umbrella's own declaration of a resource always wins.
+            if (relativePath.startsWith("res/values")) recordResourceNames(MAIN, relativePath, it)
             if (relativePath == PUBLIC_TXT) modulesDeclaringPublicResources += MAIN
         }
 
@@ -83,6 +113,8 @@ abstract class MergeDependencies : DefaultTask() {
         val packageOverride = manifest.removePackage()
         val libraryManifests = mutableListOf<Pair<String, File>>()
         val classEntries = mutableListOf<Triple<String, String, File>>()
+        val aarMetadata = mutableListOf<Pair<String, File>>()
+        val annotationZips = mutableListOf<Pair<String, File>>()
         val touchedProguardFiles = mutableSetOf<File>()
         val appendedFiles = mutableSetOf<File>()
         var filesProcessed = 0
@@ -106,33 +138,46 @@ abstract class MergeDependencies : DefaultTask() {
                         // of this task.
                         relativePath.startsWith("classes/") -> classEntries += classEntry(owner, relativePath, srcFile)
 
+                        // All modules' values files end up in one AAR, i.e. one resource set for the
+                        // consumer, where a resource declared twice is a hard "Duplicate resources"
+                        // error. Only the first declaration is kept.
                         relativePath.startsWith("res/values") -> {
-                            recordResourceNames(owner, relativePath, srcFile)
-                            srcFile.copyValues(owner = owner, to = destFile)
+                            val alreadyDeclared = recordResourceNames(owner, relativePath, srcFile)
+                            srcFile.copyValues(owner = owner, to = destFile, dropping = alreadyDeclared)
                         }
 
                         relativePath.endsWith(".kotlin_module") -> srcFile.copyValues(owner = owner, to = destFile)
 
-                        // R.txt is a line-based symbol table: concatenating it verbatim produced
-                        // duplicated (and potentially conflicting) symbols.
-                        relativePath.endsWith("R.txt") -> appendedFiles += srcFile.appendLines(to = destFile, deduplicate = true)
+                        // R.txt is a symbol table: one symbol per `<java type> <resource type> <name>`.
+                        // The same resource declared by two modules carries a different placeholder
+                        // ID in each, so de-duplicating whole lines left both — a duplicate symbol.
+                        relativePath.endsWith("R.txt") -> appendedFiles += srcFile.appendLines(to = destFile, keyOf = SYMBOL_KEY)
 
-                        // public.txt is the same shape — one `<type> <name>` per line — so it merges
-                        // the same way. See finalisePublicResources for why merging alone is not
-                        // enough.
+                        // public.txt is one `<type> <name>` per line, so whole lines are the key. See
+                        // finalisePublicResources for why merging alone is not enough.
                         relativePath == PUBLIC_TXT -> {
                             modulesDeclaringPublicResources += owner
-                            appendedFiles += srcFile.appendLines(to = destFile, deduplicate = true)
+                            appendedFiles += srcFile.appendLines(to = destFile, keyOf = WHOLE_LINE)
                         }
+
+                        // Baseline profile rules are independent lines: every module's rules apply
+                        // to the classes it contributed.
+                        relativePath == BASELINE_PROFILE -> appendedFiles += srcFile.appendLines(to = destFile, keyOf = WHOLE_LINE)
 
                         // Consumer rules live in `proguard.txt` inside an AAR — `consumer-rules.pro`
                         // is not part of the AAR spec and consumers simply ignore it.
                         relativePath.endsWith("proguard.txt") || relativePath.endsWith(".pro") -> {
                             val target = File(out, "proguard.txt")
-                            touchedProguardFiles += srcFile.appendLines(to = target, deduplicate = false)
+                            touchedProguardFiles += srcFile.appendLines(to = target, keyOf = null)
                         }
 
                         relativePath.endsWith("AndroidManifest.xml") -> libraryManifests += owner to srcFile
+
+                        relativePath == AAR_METADATA_PATH -> aarMetadata += owner to srcFile
+
+                        relativePath == ANNOTATIONS_ZIP -> annotationZips += owner to srcFile
+
+                        relativePath == LINT_JAR && destFile.exists() -> keepFirstLintJar(owner, srcFile, destFile)
 
                         destFile.exists() -> onDuplicate(owner, relativePath, srcFile, destFile)
 
@@ -148,13 +193,26 @@ abstract class MergeDependencies : DefaultTask() {
 
         mergeManifests(into = manifest, libraries = libraryManifests, packageOverride = packageOverride)
 
+        mergeAarMetadata(into = File(out, AAR_METADATA_PATH), modules = aarMetadata)
+
+        mergeAnnotationZips(into = File(out, ANNOTATIONS_ZIP), modules = annotationZips)
+
+        reportDroppedLintJars()
+
         reportDuplicateResources()
 
         (appendedFiles + touchedProguardFiles).forEach { it.ensureTrailingNewline() }
 
         finalisePublicResources(out)
 
-        buildClassesJar(out, classEntries)
+        // The merged modules' R classes are folded into the umbrella's, so references to them from
+        // the umbrella's own code must follow. Dependency classes were already relocated while they
+        // were extracted.
+        val mergedNamespaces = libraryManifests.mapNotNullTo(mutableSetOf()) { (_, file) ->
+            file.readText().packageName()?.replace('.', '/')
+        }
+        val umbrellaNamespace = (mainNamespace.orNull ?: packageOverride).replace('.', '/')
+        buildClassesJar(out, classEntries, umbrellaNamespace, mergedNamespaces)
         logger.lifecycle("Merged dependencies into main AAR (processed $filesProcessed files)")
     }
 
@@ -194,6 +252,103 @@ abstract class MergeDependencies : DefaultTask() {
         )
     }
 
+    /**
+     * Folds every merged module's `aar-metadata.properties` into the umbrella's.
+     *
+     * The file is how an AAR tells its consumer what it needs — `minCompileSdk`, the minimum AGP
+     * version, whether core library desugaring must be enabled. Keeping only the umbrella's copy
+     * silently dropped the requirements of every merged module: a module using `java.time` with
+     * desugaring would build fine in the consumer and crash at runtime on old devices.
+     */
+    private fun mergeAarMetadata(into: File, modules: List<Pair<String, File>>) {
+        if (modules.isEmpty()) return
+
+        val merged = if (into.isFile) into.readText().parseAarMetadata() else linkedMapOf()
+        val conflicts = mutableListOf<String>()
+        modules.forEach { (owner, file) ->
+            merged.mergeAarMetadata(file.readText().parseAarMetadata()) { key, kept, dropped ->
+                conflicts += "$key: kept '$kept', dropped '$dropped' from $owner"
+            }
+        }
+
+        into.parentFile.mkdirs()
+        into.writeText(merged.toAarMetadataText())
+
+        if (conflicts.isNotEmpty()) {
+            logger.warn(
+                buildString {
+                    appendLine("UmbrellaAar found conflicting AAR metadata across merged modules; the first value was kept:")
+                    conflicts.forEach { appendLine("  $it") }
+                }.trimEnd(),
+            )
+        }
+    }
+
+    /**
+     * Merges every module's `annotations.zip` — the typedef annotations (`@IntDef`, `@StringDef`, …)
+     * that lint applies in the consumer — into one.
+     *
+     * Entries are per-package `annotations.xml` files, so modules rarely collide; when two modules
+     * share a package, their `<item>` declarations are combined.
+     */
+    private fun mergeAnnotationZips(into: File, modules: List<Pair<String, File>>) {
+        if (modules.isEmpty()) return
+
+        val entries = sortedMapOf<String, Pair<String, ByteArray>>()
+        val sources = buildList {
+            if (into.isFile) add(MAIN to into.readZipEntries())
+            modules.forEach { (owner, file) -> add(owner to file.readZipEntries()) }
+        }
+
+        sources.forEach { (owner, zipEntries) ->
+            zipEntries.forEach { (name, bytes) ->
+                val existing = entries[name]
+                entries[name] = when {
+                    existing == null -> owner to bytes
+                    existing.second.contentEquals(bytes) -> existing
+                    else -> existing.first to (
+                        existing.second.decodeToString().mergeXmlChildren(bytes.decodeToString())?.encodeToByteArray()
+                            ?: throw conflict("$ANNOTATIONS_ZIP!/$name", existing.first, owner, "  Two modules declare different typedef annotations for the same package.")
+                        )
+                }
+            }
+        }
+
+        into.parentFile.mkdirs()
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(into), IO_BUFFER_SIZE)).use { zos ->
+            entries.forEach { (name, value) ->
+                zos.putNextEntry(ZipEntry(name).also { it.time = 0L })
+                zos.write(value.second)
+                zos.closeEntry()
+            }
+        }
+    }
+
+    private fun File.readZipEntries(): List<Pair<String, ByteArray>> = ZipFile(this).use { zip ->
+        zip.entries().asSequence()
+            .filter { !it.isDirectory }
+            .map { it.name to zip.getInputStream(it).use { input -> input.readBytes() } }
+            .toList()
+    }
+
+    /**
+     * An AAR carries exactly one `lint.jar`, and lint checks cannot be combined into one jar safely
+     * (each jar registers its own issue registry). The umbrella's own — or else the first module's —
+     * is kept, and the others are reported rather than failing the whole merge.
+     */
+    private fun keepFirstLintJar(owner: String, srcFile: File, destFile: File) {
+        if (srcFile.length() == destFile.length() && srcFile.readBytes().contentEquals(destFile.readBytes())) return
+        droppedLintJars += owner
+    }
+
+    private fun reportDroppedLintJars() {
+        if (droppedLintJars.isEmpty()) return
+        logger.warn(
+            "UmbrellaAar kept the lint checks of '${contributors[LINT_JAR] ?: MAIN}' only. An AAR carries a single lint.jar, " +
+                "so the lint checks of ${droppedLintJars.joinToString()} are not shipped in the merged AAR.",
+        )
+    }
+
     /** `classes/<path>` -> the jar entry name, applying the `.kotlin_module` per-module rename. */
     private fun classEntry(owner: String, relativePath: String, srcFile: File): Triple<String, String, File> {
         val entryName = relativePath.removePrefix("classes/")
@@ -213,34 +368,67 @@ abstract class MergeDependencies : DefaultTask() {
      * Writes `classes.jar` from the main module's exploded tree plus every dependency's class files,
      * read directly from where `ExtractDependencies` left them.
      *
-     * Duplicate detection is unchanged — it simply happens on jar entry names instead of on files
-     * that had been copied into place first.
+     * - The umbrella's own classes get their `R` references relocated here (see [execute]).
+     * - Service provider files (`META-INF/services/<interface>`) contributed by several modules are merged, because each lists
+     *   implementations that exist in the merged jar. Any other duplicate entry is a conflict.
      */
-    private fun buildClassesJar(out: File, dependencyEntries: List<Triple<String, String, File>>) {
+    private fun buildClassesJar(
+        out: File,
+        dependencyEntries: List<Triple<String, String, File>>,
+        umbrellaNamespace: String,
+        mergedNamespaces: Set<String>,
+    ) {
         val classes = File(out, "classes")
         val entries = linkedMapOf<String, Pair<String, File>>()
+        val serviceFiles = mutableMapOf<String, MutableList<File>>()
 
         if (classes.isDirectory) {
             classes.walk().filter { it.isFile }.forEach {
-                entries[it.relativeTo(classes).path.normalizePath()] = MAIN to it
+                val entryName = it.relativeTo(classes).path.normalizePath()
+                entries[entryName] = MAIN to it
+                if (entryName.isServiceFile()) serviceFiles.getOrPut(entryName) { mutableListOf() } += it
             }
         }
 
         dependencyEntries.forEach { (entryName, owner, file) ->
+            if (entryName.isServiceFile()) {
+                serviceFiles.getOrPut(entryName) { mutableListOf() } += file
+                entries.putIfAbsent(entryName, owner to file)
+                return@forEach
+            }
             val existing = entries.putIfAbsent(entryName, owner to file)
             if (existing != null) onDuplicate(owner, "classes/$entryName", file, existing.second, existing.first)
         }
 
+        val relocate = umbrellaNamespace.isNotEmpty() && mergedNamespaces.isNotEmpty()
         val jar = File(out, "classes.jar").apply { if (exists()) delete() }
         ZipOutputStream(BufferedOutputStream(FileOutputStream(jar), IO_BUFFER_SIZE)).use { zos ->
             entries.entries.sortedBy { it.key }.forEach { (entryName, source) ->
+                val (owner, file) = source
                 zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
-                source.second.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
+                val services = serviceFiles[entryName]
+                when {
+                    services != null && services.size > 1 -> zos.write(services.mergeServiceFiles())
+                    relocate && owner == MAIN && entryName.endsWith(".class") ->
+                        zos.write(file.readBytes().transformClass(umbrellaNamespace, mergedNamespaces))
+                    else -> file.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
+                }
                 zos.closeEntry()
             }
         }
         classes.deleteRecursively()
     }
+
+    private fun String.isServiceFile() = startsWith(SERVICES_DIR) && length > SERVICES_DIR.length
+
+    /** Union of the providers listed by each module, in contribution order, comments dropped. */
+    private fun List<File>.mergeServiceFiles(): ByteArray = asSequence()
+        .flatMap { it.readLines().asSequence() }
+        .map { it.substringBefore('#').trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+        .joinToString(separator = "\n", postfix = "\n")
+        .encodeToByteArray()
 
     /**
      * Two modules contributed the same entry. Identical bytes are harmless (the same generated file
@@ -258,29 +446,38 @@ abstract class MergeDependencies : DefaultTask() {
             logger.info("[UmbrellaAar] Duplicate but identical '$relativePath' from '$owner' — keeping one copy.")
             return
         }
-        throw GradleException(
-            buildString {
-                appendLine("UmbrellaAar cannot merge '$relativePath': it is contributed by two modules with different content.")
-                appendLine("  First contributor : $firstContributor")
-                appendLine("  Second contributor: $owner")
-                append(
-                    when {
-                        relativePath.startsWith("assets/") -> "  Rename the asset in one of the modules, or move it to a module-specific sub-folder."
-                        relativePath.startsWith("jni/") -> "  Two modules ship a native library with the same name — rename one of them."
-                        relativePath.startsWith("libs/") -> "  Two modules embed a local jar with the same name — rename one of them."
-                        relativePath.startsWith("classes/") -> "  Two modules declare the same class. If one of them is the umbrella module itself, " +
-                            "check build/reports/umbrellaaar for the merged module list."
-                        else -> "  Rename the file in one of the modules, or exclude the module from the umbrellaAar configuration."
-                    },
-                )
+        throw conflict(
+            relativePath,
+            firstContributor,
+            owner,
+            when {
+                relativePath.startsWith("assets/") -> "  Rename the asset in one of the modules, or move it to a module-specific sub-folder."
+                relativePath.startsWith("jni/") -> "  Two modules ship a native library with the same name — rename one of them."
+                relativePath.startsWith("libs/") -> "  Two modules embed a local jar with the same name — rename one of them."
+                relativePath.startsWith("classes/") -> "  Two modules declare the same class. If one of them is the umbrella module itself, " +
+                    "check build/reports/umbrellaaar for the merged module list."
+                else -> "  Rename the file in one of the modules, or exclude the module from the umbrellaAar configuration."
             },
         )
     }
 
-    private fun recordResourceNames(owner: String, relativePath: String, srcFile: File) {
+    private fun conflict(relativePath: String, firstContributor: String, secondContributor: String, hint: String) = GradleException(
+        buildString {
+            appendLine("UmbrellaAar cannot merge '$relativePath': it is contributed by two modules with different content.")
+            appendLine("  First contributor : $firstContributor")
+            appendLine("  Second contributor: $secondContributor")
+            append(hint)
+        },
+    )
+
+    /** Records [owner]'s resource declarations and returns the ones another module already made. */
+    private fun recordResourceNames(owner: String, relativePath: String, srcFile: File): Set<String> {
         val folder = relativePath.substringBeforeLast('/')
-        srcFile.readText().declaredResourceNames().forEach { resource ->
-            resourceNames.getOrPut("$folder/$resource") { mutableListOf() } += owner
+        return srcFile.readText().declaredResourceNames().filterTo(mutableSetOf()) { resource ->
+            val owners = resourceNames.getOrPut("$folder/$resource") { mutableListOf() }
+            val declaredElsewhere = owners.any { it != owner }
+            owners += owner
+            declaredElsewhere
         }
     }
 
@@ -290,7 +487,10 @@ abstract class MergeDependencies : DefaultTask() {
 
         logger.warn(
             buildString {
-                appendLine("UmbrellaAar found ${duplicates.size} duplicate resource name(s) across merged modules; AAPT2 resolves these last-one-wins in the consumer:")
+                appendLine(
+                    "UmbrellaAar found ${duplicates.size} duplicate resource name(s) across merged modules; the first declaration was kept " +
+                        "(the umbrella module's own, otherwise the first module listed):",
+                )
                 duplicates.entries.sortedBy { it.key }.take(MAX_REPORTED).forEach { (key, owners) ->
                     appendLine("  $key <- ${owners.joinToString()}")
                 }
@@ -380,20 +580,24 @@ abstract class MergeDependencies : DefaultTask() {
         }
     }
 
-    private fun File.copyValues(owner: String, to: File) = copyTo(
-        target = File(
-            to.parentFile,
-            "$owner-${to.nameWithoutExtension}.${to.extension}",
-        ).also { it.parentFile.mkdirs() },
-        overwrite = true,
-    )
+    /** Copies a per-module file under a module-prefixed name, leaving out the resources in [dropping]. */
+    private fun File.copyValues(owner: String, to: File, dropping: Set<String> = emptySet()) {
+        val target = File(to.parentFile, "$owner-${to.nameWithoutExtension}.${to.extension}").also { it.parentFile.mkdirs() }
+        val filtered = if (dropping.isEmpty()) null else readText().withoutResources(dropping)
+        if (filtered == null) copyTo(target, overwrite = true) else target.writeText(filtered)
+    }
 
     /**
      * Streams [this] into [to] line by line. `R.txt` reaches megabytes on large graphs, so the file
-     * is never held in memory, and [deduplicate] keeps repeated symbols out of the merged table.
+     * is never held in memory. When [keyOf] is given, a line whose key was already written to [to]
+     * is skipped; `null` appends everything.
      */
-    private fun File.appendLines(to: File, deduplicate: Boolean): File {
-        val existing = if (deduplicate && to.exists()) to.readLines().filter(String::isNotBlank).toMutableSet() else mutableSetOf()
+    private fun File.appendLines(to: File, keyOf: ((String) -> String)?): File {
+        val seen = keyOf?.let { key ->
+            seenKeys.getOrPut(to) {
+                if (to.exists()) to.useLines { lines -> lines.filter(String::isNotBlank).mapTo(mutableSetOf(), key) } else mutableSetOf()
+            }
+        }
         val appendToExisting = to.exists() && to.length() > 0L
         to.parentFile?.mkdirs()
 
@@ -401,7 +605,7 @@ abstract class MergeDependencies : DefaultTask() {
             var first = !appendToExisting
             bufferedReader().useLines { lines ->
                 lines.filter(String::isNotBlank).forEach { line ->
-                    if (deduplicate && !existing.add(line)) return@forEach
+                    if (seen != null && !seen.add(keyOf(line))) return@forEach
                     if (first) first = false else writer.append('\n')
                     writer.append(line)
                 }
@@ -421,13 +625,22 @@ abstract class MergeDependencies : DefaultTask() {
     private companion object {
         const val MAIN = "<main module>"
         const val PUBLIC_TXT = "public.txt"
+        const val BASELINE_PROFILE = "baseline-prof.txt"
+        const val ANNOTATIONS_ZIP = "annotations.zip"
+        const val LINT_JAR = "lint.jar"
+        const val SERVICES_DIR = "META-INF/services/"
         const val MAX_REPORTED = 20
         val APPEND = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)
         val CREATE = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)
+
+        val WHITESPACE = Regex("\\s+")
+
+        /** `int string app_name 0x7f0e0001` -> `int string app_name`; `int[] styleable Foo { … }` -> `int[] styleable Foo`. */
+        val SYMBOL_KEY: (String) -> String = { line -> line.trim().split(WHITESPACE, limit = 4).take(3).joinToString(" ") }
+        val WHOLE_LINE: (String) -> String = String::trim
     }
 }
 
 private fun File.bufferedWriter(options: Array<java.nio.file.StandardOpenOption>) = java.io.BufferedWriter(
     java.io.OutputStreamWriter(java.nio.file.Files.newOutputStream(toPath(), *options), Charsets.UTF_8),
 )
-

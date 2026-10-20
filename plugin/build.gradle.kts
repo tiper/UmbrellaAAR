@@ -25,7 +25,7 @@ dependencies {
     testImplementation(kotlin("test"))
     testImplementation(gradleTestKit())
     testRuntimeOnly(libs.android.gradle.plugin)
-    testRuntimeOnly(libs.kotlin.gradle.plugin)
+    testImplementation(libs.kotlin.gradle.plugin)
 }
 
 gradlePlugin {

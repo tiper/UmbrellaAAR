@@ -34,12 +34,59 @@ internal fun String.packageName(): String? = parseXml()
  */
 internal fun String.declaredResourceNames(): List<String> {
     val root = parseXml() ?: return emptyList()
-    val children = root.childNodes
-    return (0 until children.length).mapNotNull { index ->
-        val node = children.item(index) as? org.w3c.dom.Element ?: return@mapNotNull null
-        val name = node.getAttribute("name").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-        val type = node.getAttribute("type").takeIf { it.isNotBlank() } ?: node.tagName
-        "$type/$name"
+    return root.childElements().mapNotNull { it.resourceKey() }
+}
+
+/**
+ * This `res/values` file without the resources in [keys] (`"<type>/<name>"`, as returned by
+ * [declaredResourceNames]). Returns `null` when the file is not parseable XML.
+ */
+internal fun String.withoutResources(keys: Set<String>): String? {
+    val root = parseXml() ?: return null
+    root.childElements().filter { it.resourceKey() in keys }.forEach { root.removeChild(it) }
+    return root.ownerDocument.serialize()
+}
+
+private fun org.w3c.dom.Element.resourceKey(): String? {
+    val name = getAttribute("name").takeIf { it.isNotBlank() } ?: return null
+    val type = getAttribute("type").takeIf { it.isNotBlank() } ?: tagName
+    return "$type/$name"
+}
+
+/**
+ * Appends to this document's root every direct child of [other]'s root whose [keyAttribute] it does
+ * not declare yet, keeping the first declaration of each key.
+ *
+ * Used for `annotations.zip`: two modules sharing a package each ship an `annotations.xml` for it,
+ * and the merged AAR must carry the typedef annotations of both. Returns `null` when either side is
+ * not parseable XML, so the caller can report a real conflict instead.
+ */
+internal fun String.mergeXmlChildren(other: String, keyAttribute: String = "name"): String? {
+    val target = parseXml() ?: return null
+    val source = other.parseXml() ?: return null
+    val document = target.ownerDocument
+    val keys = target.childElements().mapTo(mutableSetOf()) { it.getAttribute(keyAttribute) }
+    source.childElements()
+        .filter { keys.add(it.getAttribute(keyAttribute)) }
+        .forEach { target.appendChild(document.importNode(it, true)) }
+    return document.serialize()
+}
+
+private fun org.w3c.dom.Document.serialize(): String = java.io.StringWriter().also { writer ->
+    transformerFactory.newTransformer().transform(
+        javax.xml.transform.dom.DOMSource(this),
+        javax.xml.transform.stream.StreamResult(writer),
+    )
+}.toString()
+
+private fun org.w3c.dom.Element.childElements(): List<org.w3c.dom.Element> =
+    (0 until childNodes.length).mapNotNull { childNodes.item(it) as? org.w3c.dom.Element }
+
+private val transformerFactory by lazy {
+    javax.xml.transform.TransformerFactory.newInstance().apply {
+        runCatching { setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true) }
+        runCatching { setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "") }
+        runCatching { setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "") }
     }
 }
 

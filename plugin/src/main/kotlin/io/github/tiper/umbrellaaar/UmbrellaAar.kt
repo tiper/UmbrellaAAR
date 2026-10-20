@@ -8,8 +8,12 @@ import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.findAar
 import io.github.tiper.umbrellaaar.extensions.findAarTask
 import io.github.tiper.umbrellaaar.extensions.findSourcesJarTask
+import io.github.tiper.umbrellaaar.extensions.frameworkExports
 import io.github.tiper.umbrellaaar.extensions.isExcluded
+import io.github.tiper.umbrellaaar.extensions.registerUmbrellaClasspath
 import io.github.tiper.umbrellaaar.extensions.resolveProjectGraph
+import io.github.tiper.umbrellaaar.extensions.resolveUmbrella
+import io.github.tiper.umbrellaaar.extensions.useLegacyGraph
 import io.github.tiper.umbrellaaar.tasks.BundleUmbrellaAar
 import io.github.tiper.umbrellaaar.tasks.ExtractDependencies
 import io.github.tiper.umbrellaaar.tasks.ExtractMainAar
@@ -19,10 +23,13 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.plugins.ExtensionAware
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.TaskProvider
 import org.gradle.kotlin.dsl.configure
+import org.gradle.kotlin.dsl.create
+import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
 
 @Suppress("unused")
@@ -67,6 +74,7 @@ class UmbrellaAar : Plugin<Project> {
         return tasks.register<MergeDependencies>("merge${keyCapitalized}UmbrellaAarDependencies") {
             dependencies.set(extractDependencies.flatMap { it.outputDir })
             mainAarDir.set(extractMain.flatMap { it.unpackedAarDir })
+            mainNamespace.convention(namespace)
             mergedAarDir.convention(layout.buildDirectory.dir("$INTERMEDIATES_PATH/$key/merged-aar"))
         }
     }
@@ -132,22 +140,40 @@ class UmbrellaAar : Plugin<Project> {
             isCanBeConsumed = false
         }
 
+        val extension = extensions.create<UmbrellaAarExtension>("umbrellaAar").apply {
+            includeFrameworkExports.convention(false)
+        }
+        // A module also declared with export(...) is listed twice; both the resolution and the graph
+        // walk de-duplicate it. The element type is spelled out so `withType<ProjectDependency>()`
+        // readers — including the build's own logic — see these dependencies too.
+        config.dependencies.addAllLater(
+            objects.listProperty(ProjectDependency::class.java).value(
+                provider {
+                    if (!extension.includeFrameworkExports.get()) return@provider emptyList()
+                    frameworkExports().map { dependencies.project(mapOf("path" to it)) as ProjectDependency }
+                },
+            ),
+        )
+
         plugins.withId("com.android.library") {
-            extensions.configure<LibraryExtension> {
-                buildTypes.forEach { buildType ->
-                    setup(
-                        variants = listOf(buildType.name),
-                        key = buildType.name,
-                        aarBuildType = buildType.name,
-                        namespace = provider {
-                            requireNotNull(namespace) {
-                                "android.namespace must be set for UmbrellaAar to work. " +
-                                    "Set it in the android {} block of ${project.path}."
-                            }
-                        },
-                        graph = graphProvider(config, buildType.name),
-                    )
-                }
+            val android = extensions.getByType<LibraryExtension>()
+            // `configureEach`, not `forEach`: this runs while the plugins block is applied, before the
+            // build script's `android {}` block has declared any custom build type.
+            android.buildTypes.configureEach {
+                val buildType = name
+                registerUmbrellaClasspath(config, buildType)
+                setup(
+                    variants = listOf(buildType),
+                    key = buildType,
+                    aarBuildType = buildType,
+                    namespace = provider {
+                        requireNotNull(android.namespace) {
+                            "android.namespace must be set for UmbrellaAar to work. " +
+                                "Set it in the android {} block of ${project.path}."
+                        }
+                    },
+                    graph = graphProvider(config, buildType),
+                )
             }
         }
 
@@ -155,6 +181,7 @@ class UmbrellaAar : Plugin<Project> {
         // types. `release` and `debug` publications are kept for source compatibility but are thin
         // aliases over one shared extract/merge pipeline.
         plugins.withId("com.android.kotlin.multiplatform.library") {
+            registerUmbrellaClasspath(config, VARIANTS.first())
             extensions.configure<ExtensionAware> {
                 extensions.configure<KotlinMultiplatformAndroidLibraryExtension> {
                     setup(
@@ -171,22 +198,41 @@ class UmbrellaAar : Plugin<Project> {
     }
 
     /**
-     * Memoised so the breadth-first walk runs once per build type instead of once per consumer —
+     * Memoised so the graph is worked out once per build type instead of once per consumer —
      * `extractDependencies`, `mergeSources`, `findAar` and `findSourcesJar` each used to re-run it,
      * for every build type.
+     *
+     * The graph comes from Gradle's own dependency resolution (see [resolveUmbrella]), or from the
+     * hand-written walk when `umbrellaaar.legacyGraph=true`.
      */
     private fun Project.graphProvider(config: Configuration, buildType: String): Provider<ProjectGraph> {
         val memo = lazy {
             val rules = config.allExcludeRules()
-            val graph = resolveProjectGraph(config, buildType)
+            val resolution = if (useLegacyGraph()) null else resolveUmbrella(buildType)
+            val graph = resolution?.graph ?: resolveProjectGraph(config, buildType)
 
             graph.selfInclusionVia?.let { via ->
                 logger.warn(
                     "[UmbrellaAar] Project '$path' appeared in its own umbrella graph (reached via '$via') and was dropped.\n" +
-                        "  This means a dependency-scope configuration that is not a product dependency was traversed.\n" +
-                        "  Please report it at https://github.com/tiper/UmbrellaAAR/issues",
+                        "  A module merged into the umbrella depends on the umbrella module itself.",
                 )
             }
+
+            resolution?.hostProjectDependencies
+                ?.filter { dependency -> graph.modules.none { it.path == dependency } }
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { unexported ->
+                    logger.warn(
+                        buildString {
+                            appendLine("[UmbrellaAar] $path depends on local module(s) that are not exported:")
+                            unexported.forEach { appendLine("  $it") }
+                            append(
+                                "  They are neither merged into the AAR nor declared as dependencies in its POM. " +
+                                    "Add them with export(project(\"…\")) if they must ship with the umbrella.",
+                            )
+                        },
+                    )
+                }
 
             // Behaviour change vs 2.x, called out explicitly so it can never be a silent difference
             // in the published artifact.
@@ -204,6 +250,19 @@ class UmbrellaAar : Plugin<Project> {
             }
 
             val kept = graph.modules.filterNot { it.isExcluded(rules) }.toSet()
+            (graph.modules - kept).takeIf { it.isNotEmpty() }?.let { excluded ->
+                // The merged modules still call into these, so the consumer needs them from somewhere.
+                logger.warn(
+                    buildString {
+                        appendLine("[UmbrellaAar] ${excluded.size} local module(s) in the umbrella graph of $path are excluded:")
+                        excluded.sortedBy { it.path }.forEach { appendLine("  ${it.path} (via ${graph.via[it.path]})") }
+                        append(
+                            "  They are neither merged into the AAR nor declared as dependencies in its POM. " +
+                                "If the merged modules use them at runtime, publish them separately and have consumers depend on them.",
+                        )
+                    },
+                )
+            }
             logger.info("[UmbrellaAar] $path/$buildType merges ${kept.size} modules: ${kept.joinToString { it.path }}")
             graph.copy(modules = kept)
         }

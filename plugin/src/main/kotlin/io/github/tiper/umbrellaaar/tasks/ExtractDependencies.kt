@@ -25,6 +25,9 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.NONE
 import org.gradle.api.tasks.TaskAction
+import org.gradle.work.ChangeType
+import org.gradle.work.Incremental
+import org.gradle.work.InputChanges
 import org.gradle.workers.WorkAction
 import org.gradle.workers.WorkParameters
 import org.gradle.workers.WorkerExecutor
@@ -36,6 +39,7 @@ abstract class ExtractDependencies : DefaultTask() {
     abstract val mainNamespace: Property<String>
 
     // Archives are content-addressed: their absolute location must not affect the result.
+    @get:Incremental
     @get:InputFiles
     @get:PathSensitive(NONE)
     abstract val dependencies: ConfigurableFileCollection
@@ -72,20 +76,20 @@ abstract class ExtractDependencies : DefaultTask() {
     @get:Inject
     abstract val workers: WorkerExecutor
 
+    /**
+     * Incremental when only the *content* of some archives changed — the common case of rebuilding
+     * after editing one module: just those archives are extracted again.
+     *
+     * Every archive's classes are relocated against the namespaces of *all* merged modules, and
+     * folder names are derived from the whole set of archives. So when the set of archives, the
+     * folder names or the namespaces change, every archive is extracted again.
+     */
     @TaskAction
-    fun execute() {
+    fun execute(inputChanges: InputChanges) {
         val baseDir = outputDir.get().asFile
-        baseDir.deleteRecursively()
-        baseDir.mkdirs()
-
         writeReport()
 
         val archives = dependencies.files.toList()
-        if (archives.isEmpty()) {
-            logger.warn("No dependencies to extract")
-            return
-        }
-
         val folders = archives.folderNames(rootDir.get().asFile)
 
         // Pass 1 (cheap, parallel): learn which namespaces are actually being merged, so R-class
@@ -97,8 +101,33 @@ abstract class ExtractDependencies : DefaultTask() {
             .collect(java.util.stream.Collectors.toSet())
         logger.info("[UmbrellaAar] Relocating R classes for ${namespaces.size} merged namespaces")
 
+        val stateFile = File(baseDir, STATE_FILE)
+        val state = buildString {
+            appendLine(mainNamespace.get())
+            namespaces.sorted().forEach(::appendLine)
+            folders.entries.map { (file, folder) -> "${file.invariantSeparatorsPath} -> $folder" }.sorted().forEach(::appendLine)
+        }
+        val incremental = inputChanges.isIncremental && stateFile.isFile && stateFile.readText() == state
+        // Only rewritten once every archive is extracted: an interrupted run must never look complete.
+        stateFile.delete()
+
+        val toExtract = if (incremental) {
+            inputChanges.getFileChanges(dependencies)
+                .filter { it.changeType != ChangeType.REMOVED && it.file.isFile }
+                .map { it.file }
+                .onEach { File(baseDir, folders.getValue(it)).deleteRecursively() }
+        } else {
+            baseDir.deleteRecursively()
+            archives
+        }
+        baseDir.mkdirs()
+
+        if (archives.isEmpty()) {
+            logger.warn("No dependencies to extract")
+        }
+
         val queue = workers.noIsolation()
-        archives.forEach { file ->
+        toExtract.forEach { file ->
             queue.submit(ExtractArchive::class.java) {
                 archive.set(file)
                 target.set(File(baseDir, folders.getValue(file)))
@@ -107,8 +136,12 @@ abstract class ExtractDependencies : DefaultTask() {
             }
         }
         queue.await()
+        stateFile.writeText(state)
 
-        logger.lifecycle("Extracted ${archives.size} dependency archives from ${mergedModules.get().size} modules")
+        logger.lifecycle(
+            "Extracted ${toExtract.size} of ${archives.size} dependency archives from ${mergedModules.get().size} modules" +
+                if (incremental) " (incremental)" else "",
+        )
     }
 
     private fun writeReport() = reportFile.get().asFile.apply { parentFile.mkdirs() }.bufferedWriter().use { writer ->
@@ -125,6 +158,11 @@ abstract class ExtractDependencies : DefaultTask() {
             }
         }
     }.getOrNull()
+
+    private companion object {
+        /** What the extracted folders were derived from; a different value forces a full extraction. */
+        const val STATE_FILE = ".extraction-state"
+    }
 
     internal interface ExtractParameters : WorkParameters {
         val archive: RegularFileProperty
@@ -150,9 +188,9 @@ abstract class ExtractDependencies : DefaultTask() {
                             }
                             return@unzip false
                         }
-                        !entry.isDirectory &&
-                            !entry.name.endsWith("aar-metadata.properties") &&
-                            !entry.name.endsWith("classes.jar")
+                        // aar-metadata.properties is kept: MergeDependencies folds every module's
+                        // requirements (minCompileSdk, desugaring, …) into the umbrella's own.
+                        !entry.isDirectory && !entry.name.endsWith("classes.jar")
                     }
                 } catch (e: Exception) {
                     throw GradleException("Failed to extract AAR '${file.name}': ${e.message}", e)

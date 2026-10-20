@@ -35,7 +35,8 @@ internal fun Project.findAarTask(vararg buildTypes: String): Provider<Task> = pr
         "UmbrellaAar cannot find an archive task in project '$path'.\n" +
             "  Tried: ${candidates.joinToString()}\n" +
             "  Only Android library modules (com.android.library / com.android.kotlin.multiplatform.library) " +
-            "and JVM modules can be merged. Remove the module from the umbrellaAar/export graph, " +
+            "and JVM modules can be merged, and modules with product flavors are not supported. " +
+            "Remove the module from the umbrellaAar/export graph, " +
             "or exclude it with exclude(group = \"$group\", module = \"$name\").",
     )
     tasks.named(taskName).get()

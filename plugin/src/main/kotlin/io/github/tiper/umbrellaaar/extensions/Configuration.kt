@@ -66,7 +66,7 @@ internal fun Project.resolveProjectGraph(config: Configuration, buildType: Strin
         }
     }
 
-    fun Configuration.projectDependencies() = dependencies.withType<ProjectDependency>().mapNotNull {
+    fun Configuration.projectDependencies() = dependencies.filterIsInstance<ProjectDependency>().mapNotNull {
         findProject(it.path)
     }
 
@@ -136,7 +136,7 @@ internal fun Project.createKmpResolutionConfig(): Configuration = configurations
     }
 }
 
-internal fun Configuration.allExcludeRules(): List<ExcludeRule> = (excludeRules + dependencies.withType<ProjectDependency>().flatMap { it.excludeRules }).toList()
+internal fun Configuration.allExcludeRules(): List<ExcludeRule> = (excludeRules + dependencies.filterIsInstance<ProjectDependency>().flatMap { it.excludeRules }).toList()
 
 
 internal fun ExcludeRule.matches(group: String?, module: String?): Boolean = (groupOrEmpty to moduleOrEmpty).matches(group, module)

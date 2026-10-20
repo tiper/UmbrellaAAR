@@ -1,5 +1,6 @@
 package io.github.tiper.umbrellaaar.tasks
 
+import io.github.tiper.umbrellaaar.extensions.declaredResourceNames
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -69,15 +70,40 @@ class MergeDependenciesTest {
     }
 
     @Test
-    fun `duplicate resource names do not fail the build`() {
+    fun `a resource declared by two modules is kept once, from the first`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to values("app_name" to "A", "a_only" to "A"))
+        module("moduleB", "com.example.b", "res/values/values.xml" to values("app_name" to "B", "b_only" to "B"))
+
+        // Every values file lands in one AAR, i.e. one resource set for the consumer, where a
+        // resource declared twice fails the build with "Duplicate resources".
+        val out = File(merge(), "res/values")
+
+        assertEquals(listOf("moduleA-values.xml", "moduleB-values.xml"), out.list()!!.sorted())
+        assertEquals(listOf("string/a_only", "string/app_name"), File(out, "moduleA-values.xml").readText().declaredResourceNames().sorted())
+        assertEquals(listOf("string/b_only"), File(out, "moduleB-values.xml").readText().declaredResourceNames())
+    }
+
+    @Test
+    fun `the umbrella's own declaration of a resource wins`() {
+        mainAar("res/values/values.xml" to values("app_name" to "Umbrella"))
+        module("moduleA", "com.example.a", "res/values/values.xml" to values("app_name" to "A"))
+
+        val out = File(merge(), "res/values")
+
+        assertTrue("Umbrella" in File(out, "values.xml").readText())
+        assertEquals(emptyList(), File(out, "moduleA-values.xml").readText().declaredResourceNames())
+    }
+
+    @Test
+    fun `the same resource in different qualifiers is not a duplicate`() {
         mainAar()
         module("moduleA", "com.example.a", "res/values/values.xml" to values("app_name" to "A"))
-        module("moduleB", "com.example.b", "res/values/values.xml" to values("app_name" to "B"))
+        module("moduleB", "com.example.b", "res/values-pt/values-pt.xml" to values("app_name" to "B"))
 
-        // Reported as a warning; AAPT2 in the consumer resolves it last-one-wins, same as AGP.
-        val files = File(merge(), "res/values").list()!!.sorted()
+        val out = merge()
 
-        assertEquals(listOf("moduleA-values.xml", "moduleB-values.xml"), files)
+        assertEquals(listOf("string/app_name"), File(out, "res/values-pt/moduleB-values-pt.xml").readText().declaredResourceNames())
     }
 
     @Test
@@ -238,13 +264,181 @@ class MergeDependenciesTest {
         assertEquals(listOf("string a_name"), File(merge(), "public.txt").readLines().filter { it.isNotBlank() })
     }
 
+    // ── R.txt is keyed by symbol, not by line ────────────────────────────────────────────────
+
+    @Test
+    fun `the same symbol with different placeholder IDs is written once`() {
+        mainAar("R.txt" to "int string umbrella_only 0x7f010000")
+        module("moduleA", "com.example.a", "R.txt" to "int string shared 0x7f0e0001\nint[] styleable Shared { 0x7f040001 }")
+        module("moduleB", "com.example.b", "R.txt" to "int string shared 0x7f0e0042\nint[] styleable Shared { 0x7f040009 }")
+
+        val lines = File(merge(), "R.txt").readLines().filter { it.isNotBlank() }
+
+        assertEquals(
+            listOf("int string shared 0x7f0e0001", "int string umbrella_only 0x7f010000", "int[] styleable Shared { 0x7f040001 }"),
+            lines.sorted(),
+        )
+    }
+
+    // ── The umbrella's own classes follow the merged R ───────────────────────────────────────
+
+    @Test
+    fun `umbrella classes referencing a merged module R are relocated to the umbrella R`() {
+        mainAar()
+        writeBytes(mainDir, "classes/com/example/umbrella/Facade.class", classReadingField("com/example/umbrella/Facade", "com/example/a/R\$string"))
+        module("moduleA", "com.example.a", "classes/com/example/a/A.class" to "a")
+
+        val owners = fieldOwners(jarEntry(File(merge(), "classes.jar"), "com/example/umbrella/Facade.class"))
+
+        assertEquals(setOf("com/example/umbrella/R\$string"), owners)
+    }
+
+    @Test
+    fun `umbrella classes referencing a third-party R are left alone`() {
+        mainAar()
+        writeBytes(mainDir, "classes/com/example/umbrella/Facade.class", classReadingField("com/example/umbrella/Facade", "com/vendor/R\$string"))
+        module("moduleA", "com.example.a", "classes/com/example/a/A.class" to "a")
+
+        val owners = fieldOwners(jarEntry(File(merge(), "classes.jar"), "com/example/umbrella/Facade.class"))
+
+        assertEquals(setOf("com/vendor/R\$string"), owners)
+    }
+
+    // ── AAR metadata keeps the strictest requirement of every module ─────────────────────────
+
+    @Test
+    fun `aar metadata of merged modules is folded into the umbrella's`() {
+        mainAar(AAR_METADATA to metadata("minCompileSdk" to "21", "minAndroidGradlePluginVersion" to "1.0.0"))
+        module("moduleA", "com.example.a", AAR_METADATA to metadata("minCompileSdk" to "35", "coreLibraryDesugaringEnabled" to "true"))
+        module("moduleB", "com.example.b", AAR_METADATA to metadata("minCompileSdk" to "34", "minAndroidGradlePluginVersion" to "8.6.0"))
+
+        val merged = File(merge(), AAR_METADATA).readText()
+
+        assertTrue("minCompileSdk=35" in merged, merged)
+        assertTrue("minAndroidGradlePluginVersion=8.6.0" in merged, merged)
+        assertTrue("coreLibraryDesugaringEnabled=true" in merged, merged)
+        assertTrue("aarFormatVersion=1.0" in merged, merged)
+    }
+
+    // ── Files every module may legitimately ship ─────────────────────────────────────────────
+
+    @Test
+    fun `baseline profiles are concatenated without duplicates`() {
+        mainAar("baseline-prof.txt" to "HSPLcom/example/umbrella/Main;-><init>()V")
+        module("moduleA", "com.example.a", "baseline-prof.txt" to "HSPLcom/example/a/A;-><init>()V\nLkotlin/Unit;")
+        module("moduleB", "com.example.b", "baseline-prof.txt" to "HSPLcom/example/b/B;-><init>()V\nLkotlin/Unit;")
+
+        val lines = File(merge(), "baseline-prof.txt").readLines().filter { it.isNotBlank() }
+
+        assertEquals(
+            listOf("HSPLcom/example/a/A;-><init>()V", "HSPLcom/example/b/B;-><init>()V", "HSPLcom/example/umbrella/Main;-><init>()V", "Lkotlin/Unit;"),
+            lines.sorted(),
+        )
+    }
+
+    @Test
+    fun `service provider files from several modules are merged`() {
+        mainAar("classes/META-INF/services/com.example.Plugin" to "com.example.umbrella.MainPlugin")
+        module("moduleA", "com.example.a", "classes/META-INF/services/com.example.Plugin" to "# provided by a\ncom.example.a.APlugin")
+        module("moduleB", "com.example.b", "classes/META-INF/services/com.example.Plugin" to "com.example.b.BPlugin\ncom.example.a.APlugin")
+
+        val providers = jarEntry(File(merge(), "classes.jar"), "META-INF/services/com.example.Plugin").decodeToString().lines().filter { it.isNotBlank() }
+
+        assertEquals(listOf("com.example.umbrella.MainPlugin", "com.example.a.APlugin", "com.example.b.BPlugin"), providers)
+    }
+
+    @Test
+    fun `typedef annotations of every module are kept`() {
+        mainAar()
+        moduleWithZip("moduleA", "com.example.a", "annotations.zip", "com/example/a/annotations.xml" to annotations("com.example.a.A void set(int) 0"))
+        moduleWithZip(
+            "moduleB",
+            "com.example.b",
+            "annotations.zip",
+            "com/example/b/annotations.xml" to annotations("com.example.b.B void set(int) 0"),
+            // Same package as moduleA: the items of both must survive.
+            "com/example/a/annotations.xml" to annotations("com.example.a.Other int get() 0"),
+        )
+
+        val zip = File(merge(), "annotations.zip")
+
+        assertEquals(listOf("com/example/a/annotations.xml", "com/example/b/annotations.xml"), jarEntries(zip))
+        val shared = jarEntry(zip, "com/example/a/annotations.xml").decodeToString()
+        assertTrue("com.example.a.A void set(int) 0" in shared, shared)
+        assertTrue("com.example.a.Other int get() 0" in shared, shared)
+    }
+
+    @Test
+    fun `a second lint jar is dropped instead of failing the merge`() {
+        mainAar("lint.jar" to "umbrella-checks")
+        module("moduleA", "com.example.a", "lint.jar" to "a-checks")
+
+        assertEquals("umbrella-checks", File(merge(), "lint.jar").readText())
+    }
+
     private fun jarEntries(jar: File): List<String> = java.util.zip.ZipFile(jar).use { zip ->
         zip.entries().asSequence().map { it.name }.sorted().toList()
+    }
+
+    private fun jarEntry(jar: File, name: String): ByteArray = java.util.zip.ZipFile(jar).use { zip ->
+        zip.getInputStream(requireNotNull(zip.getEntry(name)) { "$name not in ${jarEntries(jar)}" }).readBytes()
     }
 
     private fun write(dir: File, path: String, content: String) = File(dir, path).apply {
         parentFile.mkdirs()
         writeText(content)
+    }
+
+    private fun writeBytes(dir: File, path: String, content: ByteArray) = File(dir, path).apply {
+        parentFile.mkdirs()
+        writeBytes(content)
+    }
+
+    private fun moduleWithZip(name: String, namespace: String, zipName: String, vararg entries: Pair<String, String>) {
+        module(name, namespace)
+        val zip = File(File(depsDir, name), zipName)
+        java.util.zip.ZipOutputStream(zip.outputStream()).use { zos ->
+            entries.forEach { (entry, content) ->
+                zos.putNextEntry(java.util.zip.ZipEntry(entry))
+                zos.write(content.encodeToByteArray())
+                zos.closeEntry()
+            }
+        }
+    }
+
+    private fun metadata(vararg entries: Pair<String, String>) =
+        (listOf("aarFormatVersion" to "1.0", "aarMetadataVersion" to "1.0") + entries).joinToString("\n") { (k, v) -> "$k=$v" }
+
+    private fun annotations(item: String) =
+        """<root><item name="$item"><annotation name="androidx.annotation.IntDef"/></item></root>"""
+
+    /** A class `name` whose single method reads a static int field of [owner]. */
+    private fun classReadingField(name: String, owner: String): ByteArray {
+        val cw = org.objectweb.asm.ClassWriter(0)
+        cw.visit(org.objectweb.asm.Opcodes.V1_8, org.objectweb.asm.Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null)
+        cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, "label", "()I", null, null).apply {
+            visitCode()
+            visitFieldInsn(org.objectweb.asm.Opcodes.GETSTATIC, owner, "label", "I")
+            visitInsn(org.objectweb.asm.Opcodes.IRETURN)
+            visitMaxs(1, 1)
+            visitEnd()
+        }
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    private fun fieldOwners(bytecode: ByteArray): Set<String> = buildSet {
+        org.objectweb.asm.ClassReader(bytecode).accept(
+            object : org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                override fun visitMethod(access: Int, name: String?, descriptor: String?, signature: String?, exceptions: Array<out String>?) =
+                    object : org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                        override fun visitFieldInsn(opcode: Int, owner: String, name: String?, descriptor: String?) {
+                            add(owner)
+                        }
+                    }
+            },
+            0,
+        )
     }
 
     private fun manifest(packageName: String) = """
@@ -262,6 +456,7 @@ class MergeDependenciesTest {
 
     private companion object {
         var counter = 0
+        const val AAR_METADATA = "META-INF/com/android/build/gradle/aar-metadata.properties"
     }
 }
 

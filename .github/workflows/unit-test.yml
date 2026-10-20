@@ -41,6 +41,13 @@ jobs:
         run: |
           ./gradlew :plugin:test --no-daemon --build-cache --parallel
 
+      # Consumes the umbrella the way a real app does: from a Maven repository, through its POM and
+      # Gradle module metadata. A throwaway repository keeps it independent of ~/.m2.
+      - name: Build the sample app against the published umbrella
+        run: |
+          ./gradlew :sample:export:publishAndroidReleaseUmbrellaAarPublicationToMavenLocal -Dmaven.repo.local="$RUNNER_TEMP/m2" --no-daemon --build-cache
+          ./gradlew :sample:app:assembleDebug -Dmaven.repo.local="$RUNNER_TEMP/m2" --no-daemon --build-cache
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4.6.0

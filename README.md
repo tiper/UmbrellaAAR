@@ -35,10 +35,10 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 |---|---|---|---|---|
 | Gradle | `9.0` | `9.1.0` | `9.5.1` | |
 | AGP | `9.0.0` | `9.0.0` | `9.3.1` | Both `com.android.library` and `com.android.kotlin.multiplatform.library`. |
-| Kotlin | `2.0.0` | `2.2.10` | `2.4.10` | Source sets are read from KGP, so no version-specific configuration names are assumed. |
+| Kotlin | `2.0.0` | `2.4.10` | `2.4.10` | Modules are resolved through their Android runtime variant, so no version-specific configuration names are assumed. |
 | Java toolchain | `17` | `21` | `21` | |
 | Configuration cache | supported | ✅ | ✅ | Store **and** reuse verified, including POM generation. |
-| Project isolation | ❌ not supported | | | The module graph is resolved by walking sibling projects; see *Known limitations*. |
+| Project isolation | ❌ not supported | | | Merged modules' AARs are read from their own tasks; see *Known limitations*. |
 
 > The downstream column refers to a 160-project build merging 95 modules into one SDK AAR, verified
 > to produce an identical published dependency set to the AGP 8 / `2.x` baseline.
@@ -222,15 +222,38 @@ pluginManagement {
 
    The plugin will only merge these local modules, ignoring any external libraries like `com.example:some-aar:1.0.0`.
 
-   **Which modules are merged?** Starting from the declared modules, the plugin follows *product*
-   dependency scopes only — `api`, `implementation` and `runtimeOnly` of every source set and
-   compilation that actually reaches the **Android** main compilation, asked from the Kotlin Gradle
-   plugin so custom intermediate source sets and `applyDefaultHierarchyTemplate()` work without name
-   guessing. When a module has no Android target, its `jvm()` target is used instead (it is merged
-   through `jvmJar`). Test scopes, `*DependenciesMetadata`, test compilations and internal
-   build-graph scopes such as Kotlin 2.4's
-   `swiftPMDependenciesForLockFilesMetadataClasspathDependencies` are **never** traversed, and the
-   umbrella module itself can never end up inside its own graph.
+   **Which modules are merged?** Gradle's own dependency resolution decides. Starting from the
+   declared modules, the plugin resolves them with the umbrella module's Android runtime
+   attributes, so every module contributes exactly what it would contribute to an Android app: the
+   `api`, `implementation` and `runtimeOnly` dependencies of its Android runtime variant, including
+   everything `commonMain` and custom intermediate source sets feed into it. When a module has no
+   Android target, its `jvm()` variant is used instead (it is merged through `jvmJar`). Test scopes,
+   `compileOnly`, metadata and internal build-graph configurations never take part, and the umbrella
+   module itself can never end up inside its own graph.
+
+   The external dependencies written to the POM come from the same resolution, so their versions
+   honour dependency constraints, platforms and resolution rules exactly as when the modules are
+   built.
+
+   > Set `umbrellaaar.legacyGraph=true` in `gradle.properties` to fall back to the `3.0` graph walk,
+   > which reads each module's configurations by name. It is kept so large builds can diff
+   > `merged-modules.txt` and `external-dependencies.txt` between both modes before upgrading.
+
+   **Keeping the AAR and the XCFramework in sync.** If the same module also builds Apple
+   frameworks, it can merge every local module those frameworks export, instead of repeating the
+   list:
+
+   ```kotlin
+   kotlin {
+       iosArm64 { binaries.framework { export(projects.feature) } }
+   }
+
+   umbrellaAar {
+       includeFrameworkExports = true
+   }
+   ```
+
+   `export(...)` dependencies keep working alongside it.
 
 2. **Publishing Configuration (UmbrellaAarPom)**
 
@@ -257,10 +280,12 @@ pluginManagement {
    ```
 
    The UmbrellaAarPom plugin will automatically:
-   - Create a Maven publication for each variant
+   - Create a Maven publication for each variant, from a software component
    - Include your UmbrellaAAR and sources JAR as artifacts
-   - Generate a POM file with all external dependencies properly declared
-   - Collect dependencies from all merged modules
+   - Publish Gradle Module Metadata (`.module`) alongside the POM, so Gradle consumers select the
+     umbrella's Android variant the same way they select any AGP-published library
+   - Declare every external dependency of the merged modules, all visible to consumers at compile
+     time (`compile` scope in the POM, both variants in the `.module`)
 
    **Excluding Dependencies from POM**:
 
@@ -342,7 +367,8 @@ pluginManagement {
 
    `merged-modules.txt` is the fastest way to check that nothing unexpected (a demo app, a test
    fixture module, a deliberately excluded feature) crept into the published artifact — diff it
-   between two builds.
+   between two builds. The edge names the module that pulled each one in and the variant it was
+   reached through, e.g. `:feature -> androidRuntimeElements`.
 
 ### Known limitations
 
@@ -353,32 +379,50 @@ pluginManagement {
   them distinct coordinates — see the warning above. The plugin reports the clash rather than
   resolving it, because it cannot know which publication you want at those coordinates.
 - **`compileOnly` project dependencies are not merged.** `compileOnly` means "provided by the
-  consumer", so those modules are left out of the AAR — but because `2.x` *did* merge them, every
-  module reachable only through `compileOnly` is listed in a build warning rather than dropped
-  silently. Declare them with `api`/`implementation` if they must ship inside the AAR.
+  consumer", so those modules are left out of the AAR. Declare them with `api`/`implementation` if
+  they must ship inside the AAR. (With `umbrellaaar.legacyGraph=true`, modules reachable only
+  through `compileOnly` are also listed in a build warning, because `2.x` *did* merge them.)
+- **Excluded or un-exported local modules are neither merged nor declared.** A module removed with
+  `exclude(...)`, or one the umbrella module depends on without exporting it, is not in the AAR and
+  not in its POM. Both cases are reported in a build warning: if the merged code needs them at
+  runtime, publish them separately and have consumers depend on them.
 - **`compileOnly` dependencies are not written to the POM** either: every coordinate in the
   generated POM carries `<scope>compile</scope>`, so publishing them would hand consumers, at
   runtime, exactly the dependencies you marked as non-transitive.
-- **Project isolation is not supported.** Resolving which local modules to merge requires reading
-  sibling projects' configurations. The plugin forces evaluation of every module it visits so the
-  result never depends on the task graph or on configuration-cache warmth, but that is fundamentally
-  incompatible with project isolation.
+- **Project isolation is not supported.** Gradle resolves which modules to merge, but each module's
+  AAR and sources jar are still taken from its `bundle<Variant>Aar` / sources-jar task, which means
+  reading sibling projects' tasks. AGP does not hand the published AAR to other modules through
+  dependency resolution — only a lint-specific copy that also carries the module's `R` classes.
+- **Product flavors are not supported**, neither on the umbrella module nor on merged modules.
 - **The generated POM reflects dependencies as declared at execution time.** The Kotlin plugin adds
   some dependencies lazily — `kotlin-stdlib` appears in every KMP project's `commonMainApi` only
   once a JVM-target project has been configured, for example — so a POM generated in a task graph
   that also builds a desktop target can contain one extra coordinate. It always resolves to the same
   version, but if you need byte-reproducible POMs, generate them in a dedicated invocation
   (`./gradlew :sdk:publish…`) rather than as part of a larger build.
-- **`R.txt` is concatenated, not regenerated.** Symbols are de-duplicated, but IDs are not
-  re-numbered. AAPT2 in the consumer assigns the final IDs.
-- **Duplicate resource *names*** across merged modules are reported as a warning but resolved
-  last-one-wins by AAPT2 in the consumer, which mirrors AGP's own behaviour.
-- **Files that cannot be merged fail the build.** `R.txt` and `public.txt` are de-duplicated
-  line-wise, `proguard.txt` (and `.pro`) are concatenated, and `res/values*` plus `.kotlin_module`
-  files are namespaced per module. Anything else contributed by two modules at the same path —
-  `assets/**`, `libs/*.jar`, `jni/<abi>/*.so`, `navigation.json`, `prefab/**` — is an error naming
-  both contributors, unless the bytes are identical, in which case one copy is kept. Rename the file
-  in one of the modules, or move it under a module-specific sub-folder.
+- **`R.txt` is merged, not regenerated.** Symbols are de-duplicated by type and name — the same
+  resource in two modules carries a different placeholder ID in each, and the first is kept. IDs are
+  not re-numbered: AAPT2 in the consumer assigns the final IDs.
+- **Duplicate resource *names*** across merged modules keep their first declaration — the
+  umbrella module's own, otherwise the first module in path order — and are reported in a warning.
+  Every merged module's resources end up in one AAR, where AGP rejects a resource declared twice
+  with "Duplicate resources", so the later declarations are left out. The same name in different
+  qualifier folders (`values` vs `values-pt`) is not a duplicate.
+- **Files that cannot be merged fail the build.** These are merged:
+  - `R.txt` (by symbol), `public.txt` and `baseline-prof.txt` (by line) are de-duplicated.
+  - `proguard.txt` (and `.pro`) are concatenated.
+  - `res/values*` and `.kotlin_module` files are namespaced per module.
+  - `META-INF/services/*` provider files inside `classes.jar` are combined.
+  - `annotations.zip` (typedef annotations) is combined, including two modules sharing a package.
+  - `aar-metadata.properties` keeps the strictest requirement of every module: the highest
+    `minCompileSdk` and minimum AGP version, and core library desugaring if any module needs it.
+  - `lint.jar`: an AAR carries only one, so the umbrella's own — or else the first module's — is
+    kept, and a warning names the modules whose lint checks are not shipped.
+
+  Anything else contributed by two modules at the same path — `assets/**`, `libs/*.jar`,
+  `jni/<abi>/*.so`, `navigation.json`, `prefab/**` — is an error naming both contributors, unless
+  the bytes are identical, in which case one copy is kept. Rename the file in one of the modules, or
+  move it under a module-specific sub-folder.
 - **`public.txt` is only published when every module declares one.** In an AAR, `public.txt` is the
   whitelist of public resources: if it is present, everything *not* listed becomes private. A module
   that ships no `public.txt` is saying "all my resources are public". So if only some of the merged
@@ -386,9 +430,10 @@ pluginManagement {
   module's resources private — the merged file is dropped instead, with a warning naming both sets
   of modules. Declare `<public>` in every module contributing resources to publish a public surface.
 - **`R` class relocation only touches merged modules.** Namespaces are read from each dependency
-  AAR's `AndroidManifest.xml`; a third-party AAR bundled inside one of your modules keeps its own
-  `R`. The bytecode pre-scan that decides whether ASM runs at all is best-effort (false positives
-  only cost a no-op rewrite).
+  AAR's `AndroidManifest.xml`; references to them — from the merged modules *and* from the umbrella
+  module's own classes — are rewritten to the umbrella's `R`. A third-party AAR bundled inside one of
+  your modules keeps its own `R`. The bytecode pre-scan that decides whether ASM runs at all is
+  best-effort (false positives only cost a no-op rewrite).
 - **Mixed-plugin umbrellas and the `debug` publication.** `com.android.kotlin.multiplatform.library`
   has no build types, so the umbrella's own AAR is the same `androidMain` artifact for both
   publications. Exported plain `com.android.library` modules are therefore also taken from their
@@ -515,12 +560,12 @@ build/outputs/umbrellaaar/myMainLibrary-debug-sources.jar
    ***In short***: Test your final `.aar` thoroughly after merging, especially if your modules have advanced or custom code.
 
 7. **Supported Source Sets**
-   Dependencies are discovered by asking the Kotlin Gradle plugin which source sets actually feed the
-   **Android** main compilation, walking the real `dependsOn` hierarchy. Custom intermediate source
-   sets and `applyDefaultHierarchyTemplate()` therefore work out of the box, and source sets that
-   never reach Android — `iosMain`, `jvmMain`/`desktopMain`, or a hand-rolled `nonAndroidMain` — are
-   correctly ignored even when the module also has a `jvm()` target. `api`, `implementation` and
-   `runtimeOnly` are collected for the POM.
+   Dependencies are discovered by resolving each module's **Android** runtime variant, which the
+   Kotlin Gradle plugin builds from every source set that actually feeds the Android main
+   compilation. Custom intermediate source sets and `applyDefaultHierarchyTemplate()` therefore work
+   out of the box, and source sets that never reach Android — `iosMain`, `jvmMain`/`desktopMain`, or a
+   hand-rolled `nonAndroidMain` — are correctly ignored even when the module also has a `jvm()`
+   target. `api`, `implementation` and `runtimeOnly` are collected for the POM.
 
 ---
 
