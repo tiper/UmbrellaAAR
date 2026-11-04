@@ -5,8 +5,8 @@
 [![Gradle Plugin Portal](https://img.shields.io/maven-metadata/v/https/plugins.gradle.org/m2/io/github/tiper/umbrellaaar/io.github.tiper.umbrellaaar.gradle.plugin/maven-metadata.xml.svg?colorB=007ec6&label=gradlePluginPortal)](https://plugins.gradle.org/plugin/io.github.tiper.umbrellaaar)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.tiper/umbrellaaar)](https://central.sonatype.com/search?q=g%3Aio.github.tiper)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Kotlin](https://img.shields.io/badge/Kotlin-2.0.0%2B-blue.svg)](https://kotlinlang.org/)
-[![Gradle](https://img.shields.io/badge/Gradle-9.0%2B-blue.svg)](https://gradle.org/)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10%2B-blue.svg)](https://kotlinlang.org/)
+[![Gradle](https://img.shields.io/badge/Gradle-9.1.0%2B-blue.svg)](https://gradle.org/)
 [![AGP](https://img.shields.io/badge/AGP-9.0.0%2B-green.svg)](https://developer.android.com/build/releases/gradle-plugin)
 
 Gradle plugin for merging multiple Android/KMP modules into a single AAR. Useful when you have a multi-module project but want to ship one consolidated library.
@@ -33,10 +33,10 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 
 | | Minimum | Validated here | Validated downstream | Notes |
 |---|---|---|---|---|
-| Gradle | `9.0` | `9.1.0` | `9.5.1` | |
+| Gradle | `9.1.0` | `9.1.0` | `9.5.1` | AGP `9.0.0` refuses anything lower. |
 | AGP | `9.0.0` | `9.0.0` | `9.3.1` | Both `com.android.library` and `com.android.kotlin.multiplatform.library`. |
-| Kotlin | `2.0.0` | `2.4.10` | `2.4.10` | Modules are resolved through their Android runtime variant, so no version-specific configuration names are assumed. |
-| Java toolchain | `17` | `21` | `21` | |
+| Kotlin | `2.2.10` | `2.4.10` | `2.4.10` | AGP `9.0.0` has a runtime dependency on KGP `2.2.10`, so a lower declared version is upgraded to it. Modules are resolved through their Android runtime variant, so no version-specific configuration names are assumed. |
+| Java toolchain | `17` | `17` | `21` | |
 | Configuration cache | supported | ✅ | ✅ | Store **and** reuse verified, including POM generation. |
 | Project isolation | ❌ not supported | | | Merged modules' AARs are read from their own tasks; see *Known limitations*. |
 
@@ -50,8 +50,11 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 | `com.android.library` | one per declared build type (`release`, `debug`, …) | one per build type |
 | `com.android.kotlin.multiplatform.library` | `release` + `debug` (aliases — the plugin is single-variant) | **one shared** `androidMain` pipeline |
 
-Exported modules may use a *different* plugin than the umbrella module — a KMP umbrella can merge
-plain `com.android.library` modules, and vice versa.
+A `com.android.kotlin.multiplatform.library` umbrella can merge plain `com.android.library` modules,
+but not the other way round. A `com.android.library` umbrella exporting a
+`com.android.kotlin.multiplatform.library` module fails with `UmbrellaAar cannot find an archive
+task`. If that module has a `jvm()` target the build succeeds, but silently merges its `jvmJar`
+instead of its Android code.
 
 ## Quick Start
 
@@ -64,6 +67,14 @@ plugins {
     id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
 }
 
+kotlin {
+    android {
+        namespace = "com.example.mylibrary"
+        compileSdk = 36
+        minSdk = 24
+    }
+}
+
 dependencies {
     export(project(":module1"))
     export(project(":module2"))
@@ -72,7 +83,9 @@ dependencies {
 
 > The plugin detects `com.android.kotlin.multiplatform.library` (AGP 9) and maps to the single `androidMain` variant, creating both `release` and `debug` task sets for compatibility.
 >
-> For AGP 8 (`com.android.library`), use the `2.x` release line instead.
+> `android` is the current name of this block. `androidLibrary` also works, but is deprecated from AGP `9.1.0`.
+>
+> For AGP 8, use the `2.x` release line instead.
 
 Build: `./gradlew bundleReleaseUmbrellaAar`
 
@@ -119,8 +132,8 @@ When developing a multi-module Kotlin Multiplatform project with an Android libr
 3. **Merged Sources**
    The plugin can also produce a combined sources JAR with all your submodules’ code for improved debugging and code review.
 
-4. **Namespace Relocation**
-   Ensures that any `R` class references from sub-libraries are properly mapped to the main library’s namespace, preventing collisions.
+4. **`R` Reference Rewriting**
+   Rewrites references to the sub-libraries’ `R` classes so they point at the main library’s `R`. No class is moved or renamed.
 
 5. **Optimized Multiplatform Builds**
    By supporting multi-module KMP setups, the plugin allows for parallel compilation, significantly speeding up the development process.
@@ -133,19 +146,19 @@ When developing a multi-module Kotlin Multiplatform project with an Android libr
 ## Disadvantages & Risks
 
 1. **Increased Complexity**
-   Merging multiple local libraries into one AAR involves tasks like relocating classes, merging manifests, and re-routing resources. If something goes wrong, it can break the final `.aar`.
+   Merging multiple local libraries into one AAR involves tasks like rewriting `R` references, merging manifests, and re-routing resources. If something goes wrong, it can break the final `.aar`.
 
 2. **Potential for Resource Conflicts**
-   If multiple local modules share resource names, they can clash in the merged artifact, causing overrides or errors.
+   If multiple local modules share resource names, they can clash in the merged artifact and fail the build, either while merging or in the consumer.
 
 3. **Bytecode Manipulation**
-   Using ASM to relocate `R` classes is delicate. If your modules use reflection, dynamic class loading, or other advanced features, relocation might cause unforeseen issues.
+   Using ASM to rewrite references to `R` classes is delicate. If your modules use reflection, dynamic class loading, or other advanced features, the rewrite might cause unforeseen issues.
 
 4. **Loss of Granular Dependency Management**
    If you typically want to update or exclude an internal sub-library, merging them into a single AAR can make it harder to isolate changes.
 
 5. **Obfuscation/ProGuard/R8**
-   Obfuscation might affect relocation logic, and you’ll need careful testing to ensure everything still works.
+   Obfuscation might affect the `R` reference rewrite, and you’ll need careful testing to ensure everything still works.
 
 ---
 
@@ -153,13 +166,15 @@ When developing a multi-module Kotlin Multiplatform project with an Android libr
 
 ### Applying the Plugin
 
-The plugin is available on **Maven Central** and **Gradle Plugin Portal**. No additional repository configuration is needed—simply add it to your module-level `build.gradle.kts`:
+The plugin is available on **Maven Central** and **Gradle Plugin Portal**. No additional repository configuration is needed—simply add it to your module-level `build.gradle.kts`, after the Kotlin and Android plugins:
 
 ```kotlin
 plugins {
     id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
 }
 ```
+
+> Keep the Kotlin Multiplatform plugin first and this plugin after it and the Android plugin. On a `com.android.kotlin.multiplatform.library` module, other orders can fail with an `Extension of type '…' does not exist` error.
 
 #### UmbrellaAarPom Plugin (Optional)
 
@@ -188,7 +203,7 @@ The plugin automatically creates publications named `android{BuildType}UmbrellaA
 
 > **Note**: GitHub Packages requires authentication even for public packages. We recommend using Maven Central or Gradle Plugin Portal instead.
 
-If you need to use GitHub Packages, configure it in your `settings.gradle.kts`:
+If you need to use GitHub Packages, add it to the plugin repositories in your `settings.gradle.kts`. Keep the other repositories, because AGP and the Kotlin plugin are not published there:
 
 ```kotlin
 pluginManagement {
@@ -200,6 +215,9 @@ pluginManagement {
             password = "<your_github_token>"
          }
       }
+      gradlePluginPortal()
+      google()
+      mavenCentral()
    }
 }
 ```
@@ -266,6 +284,9 @@ pluginManagement {
        id("maven-publish")
    }
 
+   group = "com.example"
+   version = "1.0.0"
+
    publishing {
        repositories {
            maven {
@@ -279,6 +300,8 @@ pluginManagement {
    }
    ```
 
+   Without `group` and `version`, the publication's version is `unspecified`.
+
    The UmbrellaAarPom plugin will automatically:
    - Create a Maven publication for each variant, from a software component
    - Include your UmbrellaAAR and sources JAR as artifacts
@@ -287,9 +310,9 @@ pluginManagement {
    - Declare every external dependency of the merged modules, all visible to consumers at compile
      time (`compile` scope in the POM, both variants in the `.module`)
 
-   **Excluding Dependencies from POM**:
+   **Excluding Dependencies**:
 
-   You can exclude specific dependencies from the generated POM using standard Gradle exclusion syntax:
+   You can exclude specific dependencies using standard Gradle exclusion syntax:
 
    ```kotlin
    dependencies {
@@ -299,6 +322,10 @@ pluginManagement {
    }
    ```
 
+   An `exclude` on any `export` line applies to the whole umbrella, not only to that line. It removes
+   matching external dependencies from the POM and matching local modules from the merge, whichever
+   module pulled them in. Local modules that an excluded module depends on are still merged.
+
 3. **Tasks**
 
    `<Variant>` is the publication variant (`Release`, `Debug`, …). `<Pipeline>` is the shared
@@ -307,7 +334,7 @@ pluginManagement {
 
    | Task | Kind | Purpose |
    |---|---|---|
-   | `extract<Pipeline>Dependencies` | shared | Unpacks exported dependency AARs/JARs (in parallel) and relocates `R` references. |
+   | `extract<Pipeline>Dependencies` | shared | Unpacks exported dependency AARs/JARs (in parallel) and rewrites `R` references. |
    | `extract<Pipeline>MainClasses` | shared | Extracts the classes of your main library module. |
    | `merge<Pipeline>UmbrellaAarDependencies` | shared | Merges manifests, resources and consumer rules into the main unpacked AAR, and writes `classes.jar` straight from the extracted modules. |
    | `bundle<Variant>UmbrellaAar` | per variant | **Public** — packages everything as a single `.aar`. |
@@ -346,24 +373,30 @@ pluginManagement {
    > ./gradlew publishAndroidReleaseUmbrellaAarPublicationToMavenLocal
    > ```
    >
-   > …or give the publications distinct coordinates:
+   > …or give the publications distinct coordinates. Rename both: renaming only
+   > `androidReleaseUmbrellaAar` leaves `androidDebugUmbrellaAar` colliding with `kotlinMultiplatform`.
    >
    > ```kotlin
    > publishing {
    >     publications.named<MavenPublication>("androidReleaseUmbrellaAar") {
    >         artifactId = "my-library-umbrella"
    >     }
+   >     publications.named<MavenPublication>("androidDebugUmbrellaAar") {
+   >         artifactId = "my-library-umbrella-debug"
+   >     }
    > }
    > ```
 
 4. **Reports**
 
-   Every build writes, per pipeline/variant:
-
    ```
    build/reports/umbrellaaar/<pipeline>/merged-modules.txt        # module path + the edge that pulled it in
    build/reports/umbrellaaar/<variant>/external-dependencies.txt  # exactly what lands in the POM
    ```
+
+   `merged-modules.txt` is written by `extract<Pipeline>Dependencies`.
+   `external-dependencies.txt` is written by `collect<Variant>ExternalDependencies`, which only
+   exists when the UmbrellaAarPom plugin is applied.
 
    `merged-modules.txt` is the fastest way to check that nothing unexpected (a demo app, a test
    fixture module, a deliberately excluded feature) crept into the published artifact — diff it
@@ -375,8 +408,8 @@ pluginManagement {
 - **The umbrella publication does not claim unique coordinates.** It defaults to
   `project.group:project.name:project.version`, so it collides with the `kotlinMultiplatform`
   publication in a KMP project, and `androidRelease…`/`androidDebug…` collide with each other. Only
-  the targeted `publish<Variant>UmbrellaAarPublicationTo<Repo>Repository` task is safe unless you give
-  them distinct coordinates — see the warning above. The plugin reports the clash rather than
+  the targeted `publishAndroid<Variant>UmbrellaAarPublicationTo<Repo>Repository` task is safe unless
+  you give them distinct coordinates — see the warning above. The plugin reports the clash rather than
   resolving it, because it cannot know which publication you want at those coordinates.
 - **`compileOnly` project dependencies are not merged.** `compileOnly` means "provided by the
   consumer", so those modules are left out of the AAR. Declare them with `api`/`implementation` if
@@ -419,17 +452,18 @@ pluginManagement {
   - `lint.jar`: an AAR carries only one, so the umbrella's own — or else the first module's — is
     kept, and a warning names the modules whose lint checks are not shipped.
 
-  Anything else contributed by two modules at the same path — `assets/**`, `libs/*.jar`,
-  `jni/<abi>/*.so`, `navigation.json`, `prefab/**` — is an error naming both contributors, unless
-  the bytes are identical, in which case one copy is kept. Rename the file in one of the modules, or
-  move it under a module-specific sub-folder.
+  Anything else contributed by two modules at the same path — `assets/**`, resources outside
+  `res/values*` such as `res/drawable/*`, `libs/*.jar`, `jni/<abi>/*.so`, `navigation.json`,
+  `prefab/**` — is an error naming both contributors, unless the bytes are identical, in which
+  case one copy is kept. Rename the file in one of the modules, or move it under a
+  module-specific sub-folder.
 - **`public.txt` is only published when every module declares one.** In an AAR, `public.txt` is the
   whitelist of public resources: if it is present, everything *not* listed becomes private. A module
   that ships no `public.txt` is saying "all my resources are public". So if only some of the merged
   modules use `<public>`, publishing the union of their declarations would silently make every other
   module's resources private — the merged file is dropped instead, with a warning naming both sets
   of modules. Declare `<public>` in every module contributing resources to publish a public surface.
-- **`R` class relocation only touches merged modules.** Namespaces are read from each dependency
+- **`R` reference rewriting only touches merged modules.** Namespaces are read from each dependency
   AAR's `AndroidManifest.xml`; references to them — from the merged modules *and* from the umbrella
   module's own classes — are rewritten to the umbrella's `R`. A third-party AAR bundled inside one of
   your modules keeps its own `R`. The bytecode pre-scan that decides whether ASM runs at all is
@@ -438,6 +472,11 @@ pluginManagement {
   has no build types, so the umbrella's own AAR is the same `androidMain` artifact for both
   publications. Exported plain `com.android.library` modules are therefore also taken from their
   **release** AAR for both. Publish only `release` if that distinction matters to you.
+- **Merged sources need a sources jar in the umbrella module and every merged module.** Without one,
+  `android<Variant>UmbrellaAarSourcesJar` fails with `Cannot query the value of this provider because
+  it has no value available`. Publications include the merged sources, so publishing stops too.
+  Kotlin Multiplatform modules have a sources jar by default; `com.android.library` and `java-library`
+  modules do not — see *Generating Sources JAR* under [Examples](#examples).
 
 ---
 
@@ -450,7 +489,15 @@ pluginManagement {
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
     id("com.android.kotlin.multiplatform.library")
-    id("io.github.tiper.umbrellaaar")
+    id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
+}
+
+kotlin {
+    android {
+        namespace = "com.example.mylibrary"
+        compileSdk = 36
+        minSdk = 24
+    }
 }
 
 dependencies {
@@ -482,9 +529,14 @@ plugins {
     id("maven-publish")
 }
 
+group = "com.example"
+version = "1.0.0"
+
 kotlin {
-    androidLibrary {
+    android {
         namespace = "com.example.mylibrary"
+        compileSdk = 36
+        minSdk = 24
     }
 }
 
@@ -516,7 +568,7 @@ To publish your library:
 
 The UmbrellaAarPom plugin will:
 - Bundle `:localModuleOne` and `:localModuleTwo` into the AAR
-- Generate a POM declaring `androidx.core:core-ktx` and `org.jetbrains.compose.ui:ui` as dependencies
+- Generate a POM declaring the external dependencies of the merged modules
 - Include sources JAR for better IDE support
 - Publish everything to your Maven repository
 
@@ -533,6 +585,25 @@ Which outputs in:
 build/outputs/umbrellaaar/myMainLibrary-debug-sources.jar
 ```
 
+The umbrella module and every merged module need a sources jar. Kotlin Multiplatform modules have one by default. A `com.android.library` module has to enable it for each variant it contributes:
+
+```kotlin
+android {
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+        singleVariant("debug") {
+            withSourcesJar()
+        }
+    }
+}
+```
+
+A `com.android.kotlin.multiplatform.library` umbrella takes plain `com.android.library` modules from their `release` variant for both publications, so those modules only need `release`.
+
+A `java-library` module needs `java { withSourcesJar() }`.
+
 ---
 
 ## Recommendations
@@ -547,14 +618,14 @@ build/outputs/umbrellaaar/myMainLibrary-debug-sources.jar
    Use naming conventions across modules to avoid accidental conflicts (e.g., prefix resource names with your module name).
 
 4. **Reflection and Obfuscation**
-   If your modules use reflection or advanced ProGuard/R8 settings, double-check that relocating `R` classes doesn't break things.
+   If your modules use reflection or advanced ProGuard/R8 settings, double-check that rewriting `R` references doesn't break things.
 
 5. **Watch Out for Versioning**
    Make sure all local modules are on the same version schedule. Mismatched versions can be tricky to handle once merged.
 
 6. **ASM Considerations**
    Bytecode manipulation is powerful but can be tricky:
-      - If a module uses reflection or dynamic class loading, relocated classes might not be found under their new names.
+      - If a module looks up its `R` class by name through reflection or dynamic class loading, it won't be found. Only bytecode references are rewritten, so the name still points at the module's own `R`, which the consumer no longer generates.
       - Resource collisions or unusual build logic can break merging steps.
 
    ***In short***: Test your final `.aar` thoroughly after merging, especially if your modules have advanced or custom code.
