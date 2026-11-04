@@ -1,0 +1,616 @@
+/* Colours come from the logo: Android green, charcoal umbrella, kraft boxes. */
+:root {
+  color-scheme: light dark;
+
+  --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Warm paper */
+  --bg: #f5efe3;
+  --bg-sunk: #ece3d1;
+  --bg-raised: #fbf8f1;
+  --ink: #1d222a;
+  --ink-muted: #565a5c;
+  --rule: #d6c9b1;
+  --rule-strong: #8a7d63;
+  --link: #2c660f;
+  --link-hover: #1e4a08;
+  --focus: #2c660f;
+  --button-bg: #1d222a;
+  --button-ink: #f5efe3;
+  --button-hover: #36404c;
+  --stamp: #2c660f;
+  --code-string: #2c660f;
+  --code-comment: #5c5748;
+
+  --kraft: #ecc394;
+  --kraft-top: #f4d3a6;
+  --kraft-side: #c8925f;
+  --kraft-tape: #d9a873;
+  --kraft-ink: #33210f;
+  --label-bg: #f3e0c2;
+  --label-rule: #a06a3e;
+  --label-ink: #2b1e10;
+  --label-sunk: #e9d2ad;
+  --group-bg: #ead9bb;
+  --group-ink: #33210f;
+
+  --canopy: #252c36;
+  --canopy-rib: #4a5663;
+  --canopy-ink: #f5efe3;
+  --canopy-edge: #252c36;
+  --flow: #565a5c;
+  --dash: #2c660f;
+  --logo-lift: drop-shadow(0 1px 2px rgb(60 40 15 / .28));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Deep charcoal, cut from the umbrella rather than from the paper */
+    --bg: #14181e;
+    --bg-sunk: #0d1014;
+    --bg-raised: #1c2229;
+    --ink: #efe9dd;
+    --ink-muted: #b5b2a8;
+    --rule: #333c47;
+    --rule-strong: #7b8794;
+    --link: #b6e84e;
+    --link-hover: #d4f58a;
+    --focus: #b6e84e;
+    --button-bg: #b6e84e;
+    --button-ink: #14181e;
+    --button-hover: #d4f58a;
+    --stamp: #e8c596;
+    --code-string: #e8c596;
+    --code-comment: #a3a39a;
+
+    --kraft: #d9ae7a;
+    --kraft-top: #e8c596;
+    --kraft-side: #a8774b;
+    --kraft-tape: #bd8d5c;
+    --kraft-ink: #2a1a0b;
+    --label-bg: #2b241a;
+    --label-rule: #a67c4e;
+    --label-ink: #f2e6d2;
+    --label-sunk: #1c1711;
+    --group-bg: #2b241a;
+    --group-ink: #e8c596;
+
+    --canopy: #36404c;
+    --canopy-rib: #5b6977;
+    --canopy-ink: #efe9dd;
+    --canopy-edge: #8c9aa8;
+    --flow: #b5b2a8;
+    --dash: #b6e84e;
+    --logo-lift: none;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: clamp(1rem, .96rem + .2vw, 1.0625rem);
+  line-height: 1.6;
+}
+
+/* Layout: one reading column, with the hero and the diagram allowed to run wider. */
+.col { width: min(100% - 2rem, 70ch); margin-inline: auto; }
+.wide { width: min(100% - 2rem, 70rem); margin-inline: auto; }
+
+main > section { padding-block: clamp(2.75rem, 6vw, 4.5rem) 0; scroll-margin-top: .5rem; }
+main > section:last-of-type { padding-bottom: clamp(3rem, 7vw, 5rem); }
+
+/* Type */
+h1, h2, h3, h4 { line-height: 1.15; text-wrap: balance; }
+
+h1 {
+  margin: 0;
+  /* One long word: the lower bound follows the viewport so a larger default font cannot overflow. */
+  font-size: clamp(min(2.875rem, 13vw), 7vw + .5rem, 4.75rem);
+  font-weight: 800;
+  letter-spacing: -.035em;
+  overflow-wrap: anywhere;
+}
+
+h2 {
+  margin: 0 0 1rem;
+  font-size: clamp(1.75rem, 2.5vw + 1rem, 2.5rem);
+  font-weight: 750;
+  letter-spacing: -.025em;
+}
+
+h3 {
+  margin: 2.5rem 0 .6rem;
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -.012em;
+}
+
+h4 {
+  margin: 1.75rem 0 .4rem;
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+
+p { margin: 0 0 1rem; }
+ul, ol { margin: 0 0 1rem; padding-left: 1.25rem; }
+li { margin-bottom: .4rem; }
+strong { font-weight: 700; }
+
+a {
+  color: var(--link);
+  text-decoration-thickness: .08em;
+  text-underline-offset: .16em;
+}
+a:hover { color: var(--link-hover); text-decoration-thickness: .14em; }
+
+/* The skip link moves focus here; a ring around the whole page would only confuse. */
+main:focus { outline: none; }
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: .875em;
+  padding: .08em .3em;
+  border-radius: 3px;
+  background: var(--bg-sunk);
+  overflow-wrap: anywhere;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip {
+  position: absolute;
+  left: 1rem;
+  top: -4rem;
+  z-index: 10;
+  padding: .5rem .85rem;
+  background: var(--button-bg);
+  color: var(--button-ink);
+  border-radius: 4px;
+}
+.skip:focus { top: .5rem; color: var(--button-ink); }
+
+/* Header */
+.site-header { border-bottom: 1px solid var(--rule); }
+
+.site-header-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .15rem 2rem;
+  padding-block: .8rem;
+}
+
+.wordmark {
+  color: var(--ink);
+  font-weight: 800;
+  letter-spacing: -.02em;
+  text-decoration: none;
+}
+.wordmark:hover { color: var(--ink); }
+
+.site-nav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1.1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: .9375rem;
+}
+.site-nav li { margin: 0; }
+.site-nav a { display: inline-block; padding-block: .2rem; }
+
+/* Hero */
+.hero {
+  display: grid;
+  /* minmax(0, ...) stops a long code line from setting the width of the whole page. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2rem 3.5rem;
+  padding-top: clamp(1.25rem, 3vw, 2.5rem);
+}
+
+.hero-logo {
+  --logo-size: clamp(11rem, 26vw, 15rem);
+  display: block;
+  width: var(--logo-size);
+  height: auto;
+  /* The file has about 15% transparent padding, so pull it back into line with the text. */
+  margin: -.75rem 0 -1rem max(calc(var(--logo-size) * -.13), -1rem);
+  filter: var(--logo-lift);
+}
+
+.lead {
+  margin: 1rem 0 .75rem;
+  font-size: clamp(1.25rem, 1.05rem + .6vw, 1.5rem);
+  font-weight: 500;
+  line-height: 1.32;
+  letter-spacing: -.012em;
+}
+
+.distinction {
+  margin-bottom: 1.5rem;
+  color: var(--ink-muted);
+  font-size: clamp(1.0625rem, 1rem + .25vw, 1.1875rem);
+  line-height: 1.45;
+}
+
+.hero-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+.hero-links li { margin: 0; }
+
+.button {
+  display: inline-block;
+  padding: .55rem 1rem;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  color: var(--ink);
+  font-weight: 650;
+  line-height: 1.25;
+  text-decoration: none;
+}
+.button:hover { color: var(--ink); background: var(--bg-sunk); }
+
+.button-primary {
+  border-color: var(--button-bg);
+  background: var(--button-bg);
+  color: var(--button-ink);
+}
+.button-primary:hover {
+  border-color: var(--button-hover);
+  background: var(--button-hover);
+  color: var(--button-ink);
+}
+
+/* The current version, set like the stamp on the logo's boxes. */
+.stamp {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 .55rem;
+  margin: 0;
+  padding: .3rem .65rem;
+  border: 2px solid var(--stamp);
+  border-radius: 3px;
+  color: var(--stamp);
+  font-family: var(--mono);
+  font-size: .8125rem;
+  transform: rotate(-1.25deg);
+}
+.stamp .plugin-version { font-size: 1.0625rem; font-weight: 700; }
+
+.hero-note {
+  margin: .6rem 0 0;
+  color: var(--ink-muted);
+  font-size: .875rem;
+}
+
+@media (min-width: 62rem) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr);
+    align-items: center;
+  }
+}
+
+/* Code blocks */
+.snippet { margin: 1rem 0 1.25rem; min-width: 0; }
+
+.snippet figcaption {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.file {
+  display: inline-block;
+  max-width: 100%;
+  padding: .2rem .6rem;
+  border-radius: 4px 4px 0 0;
+  background: var(--kraft);
+  color: var(--kraft-ink);
+  font-family: var(--mono);
+  font-size: .78125rem;
+  overflow-wrap: anywhere;
+}
+
+.copy {
+  flex: none;
+  min-height: 1.75rem;
+  margin-bottom: .3rem;
+  padding: .1rem .6rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: .78125rem;
+  cursor: pointer;
+}
+.copy:hover { background: var(--bg-sunk); }
+
+.scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.snippet .scroll {
+  border-top: 2px solid var(--kraft);
+  border-radius: 0 0 4px 4px;
+  background: var(--bg-sunk);
+}
+
+pre {
+  margin: 0;
+  padding: .85rem 1rem;
+  font-family: var(--mono);
+  font-size: .84375rem;
+  line-height: 1.55;
+  tab-size: 4;
+}
+
+pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+  overflow-wrap: normal;
+}
+
+.tok-string { color: var(--code-string); }
+.tok-comment { color: var(--code-comment); }
+
+pre.report { tab-size: 18; }
+
+/* Diagram */
+.diagram { margin: 1.5rem auto 2rem; }
+
+.diagram svg { width: 100%; height: auto; }
+
+/* Two drawings rather than one scaled down: labels stay readable at 320px. */
+.diagram .diagram-wide { display: block; }
+.diagram .diagram-narrow { display: none; margin-inline: auto; max-width: 23rem; }
+
+@media (max-width: 55.99rem) {
+  .diagram .diagram-wide { display: none; }
+  .diagram .diagram-narrow { display: block; }
+}
+
+.dg-canopy { fill: var(--canopy); stroke: var(--canopy-edge); stroke-width: 1.5; }
+.dg-rib { fill: none; stroke: var(--canopy-rib); stroke-width: 2; }
+.dg-tip { fill: var(--canopy-ink); stroke: var(--canopy-edge); stroke-width: 1.5; }
+.dg-ferrule { fill: var(--canopy-edge); }
+
+.dg-front { fill: var(--kraft); stroke: var(--kraft-ink); stroke-width: 1.5; stroke-linejoin: round; }
+.dg-top { fill: var(--kraft-top); stroke: var(--kraft-ink); stroke-width: 1.5; stroke-linejoin: round; }
+.dg-side { fill: var(--kraft-side); stroke: var(--kraft-ink); stroke-width: 1.5; stroke-linejoin: round; }
+.dg-tape { fill: var(--kraft-tape); }
+
+.dg-chip, .dg-doc { fill: var(--bg-raised); stroke: var(--rule-strong); stroke-width: 1.5; stroke-linejoin: round; }
+.dg-fold { fill: var(--bg-sunk); stroke: var(--rule-strong); stroke-width: 1.5; stroke-linejoin: round; }
+
+.dg-flow { fill: none; stroke: var(--flow); stroke-width: 2.5; }
+.dg-head { fill: var(--flow); }
+.dg-dash { fill: none; stroke: var(--dash); stroke-width: 2.5; stroke-dasharray: 7 7; }
+.dg-link { fill: none; stroke: var(--rule-strong); stroke-width: 2; }
+
+.diagram text { font-family: var(--sans); fill: var(--ink); }
+.diagram .dg-mono { font-family: var(--mono); }
+.diagram .dg-strong { font-weight: 700; }
+.diagram .dg-muted { fill: var(--ink-muted); }
+.diagram .dg-on-canopy { fill: var(--canopy-ink); }
+.diagram .dg-on-kraft { fill: var(--kraft-ink); }
+
+/* Quick start steps */
+.steps {
+  counter-reset: step;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps > li {
+  counter-increment: step;
+  position: relative;
+  margin: 0 0 2.25rem;
+  padding-left: 2.75rem;
+}
+
+.steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: -.05rem;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 3px;
+  background: var(--kraft);
+  color: var(--kraft-ink);
+  font-family: var(--mono);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.9rem;
+  text-align: center;
+}
+
+.steps h3 { margin-top: 0; }
+
+@media (max-width: 30rem) {
+  .steps > li { padding-left: 0; }
+  .steps > li::before { position: static; display: block; margin-bottom: .4rem; }
+}
+
+/* Tables */
+.table-scroll {
+  margin: 1.25rem 0;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--bg-raised);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .9375rem;
+  line-height: 1.5;
+}
+
+caption {
+  padding: .6rem .8rem;
+  border-bottom: 1px solid var(--rule);
+  caption-side: top;
+  color: var(--ink-muted);
+  font-size: .875rem;
+  text-align: left;
+}
+
+th, td {
+  padding: .55rem .8rem;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  border-bottom-width: 2px;
+  border-bottom-color: var(--rule-strong);
+  font-size: .875rem;
+  font-weight: 700;
+}
+
+tbody th { font-weight: 600; }
+tbody tr:last-child > * { border-bottom: 0; }
+tbody:not(:last-child) tr:last-child > * { border-bottom: 1px solid var(--rule); }
+
+.group-row th {
+  background: var(--group-bg);
+  color: var(--group-ink);
+  font-weight: 700;
+}
+.group-row span {
+  display: block;
+  font-size: .875rem;
+  font-weight: 500;
+}
+
+.table-wide { min-width: 36rem; }
+.table-compact { min-width: 30rem; }
+.table-content { min-width: 32rem; }
+.table-content th[scope="row"] { width: 33%; }
+
+/* Tables scroll in their own container, so code in them never needs to break mid-word. */
+table code { overflow-wrap: normal; }
+
+/* At phone width the two prose tables fit the screen instead, because a row of prose that needs
+   sideways panning cannot be read. Cells stay in table layout, which keeps table semantics. */
+@media (max-width: 35rem) {
+  .table-content, .table-compact { min-width: 0; }
+  .table-content th, .table-content td,
+  .table-compact th, .table-compact td { padding-inline: .5rem; }
+  .table-content th[scope="row"] { width: 36%; }
+  .table-content th[scope="row"], .table-compact th, .table-compact td {
+    -webkit-hyphens: auto;
+    hyphens: auto;
+  }
+  /* File names get read and searched for, so they must never gain a hyphen. */
+  .table-content code, .table-compact code {
+    -webkit-hyphens: none;
+    hyphens: none;
+  }
+  .table-content code { overflow-wrap: anywhere; }
+}
+
+/* Callout, set like a packing label: calm, but impossible to miss. */
+.callout {
+  margin: 2rem 0;
+  padding: 1.25rem 1.35rem 1.1rem;
+  border: 2px solid var(--label-rule);
+  border-radius: 6px;
+  outline: 1px dashed var(--label-rule);
+  outline-offset: -8px;
+  background: var(--label-bg);
+  color: var(--label-ink);
+}
+
+.callout-tag {
+  margin: 0 0 .5rem;
+  font-family: var(--mono);
+  font-size: .8125rem;
+  font-weight: 700;
+}
+
+.callout h3 { margin-top: 0; font-size: 1.375rem; }
+.callout code { background: var(--label-sunk); }
+.callout pre code { background: none; }
+.callout .snippet .scroll { background: var(--label-sunk); }
+.callout .copy { color: var(--label-ink); border-color: var(--label-rule); }
+.callout .copy:hover { background: var(--label-sunk); }
+.callout .tok-string { color: inherit; }
+.callout p:last-child { margin-bottom: 0; }
+
+/* Limits */
+.limits { margin: 1.25rem 0 0; padding: 0; list-style: none; }
+.limits li {
+  margin: 0;
+  padding: .85rem 0;
+  border-top: 1px solid var(--rule);
+}
+.limits li:first-child { border-top: 0; padding-top: 0; }
+.limits strong { display: block; margin-bottom: .1rem; }
+
+/* Footer */
+.site-footer {
+  border-top: 1px solid var(--rule);
+  padding-block: 1.75rem 2.5rem;
+  color: var(--ink-muted);
+}
+
+/* Set the size here, not on .col, so that 70ch stays the same measure as the main column. */
+.site-footer .col > * { font-size: .9375rem; }
+
+.site-footer p { margin-bottom: .35rem; }
+
+.site-footer ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1.25rem;
+  margin: 0 0 .85rem;
+  padding: 0;
+  list-style: none;
+}
+.site-footer li { margin: 0; }
+.site-footer nav a { display: inline-block; padding-block: .15rem; }
