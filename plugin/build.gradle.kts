@@ -82,9 +82,14 @@ publishing {
     }
 }
 
+val signingKey = providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKey")
+
 signing {
+    // Contributors and the functional tests publish without keys. publish.yml always sets this
+    // variable, so a release whose secret went missing still fails instead of shipping unsigned.
+    isRequired = signingKey.isPresent
     useInMemoryPgpKeys(
-        providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKey").orNull,
+        signingKey.orNull,
         providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKeyPassword").orNull,
     )
 }
