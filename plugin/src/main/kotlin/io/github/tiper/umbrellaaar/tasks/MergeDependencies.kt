@@ -109,7 +109,7 @@ abstract class MergeDependencies : DefaultTask() {
             if (relativePath == PUBLIC_TXT) modulesDeclaringPublicResources += MAIN
         }
 
-        val manifest = File(out, "AndroidManifest.xml")
+        val manifest = File(out, ANDROID_MANIFEST)
         val packageOverride = manifest.removePackage()
         val libraryManifests = mutableListOf<Pair<String, File>>()
         val classEntries = mutableListOf<Triple<String, String, File>>()
@@ -151,7 +151,7 @@ abstract class MergeDependencies : DefaultTask() {
                         // R.txt is a symbol table: one symbol per `<java type> <resource type> <name>`.
                         // The same resource declared by two modules carries a different placeholder
                         // ID in each, so de-duplicating whole lines left both — a duplicate symbol.
-                        relativePath.endsWith("R.txt") -> appendedFiles += srcFile.appendLines(to = destFile, keyOf = SYMBOL_KEY)
+                        relativePath == R_TXT -> appendedFiles += srcFile.appendLines(to = destFile, keyOf = SYMBOL_KEY)
 
                         // public.txt is one `<type> <name>` per line, so whole lines are the key. See
                         // finalisePublicResources for why merging alone is not enough.
@@ -165,13 +165,14 @@ abstract class MergeDependencies : DefaultTask() {
                         relativePath == BASELINE_PROFILE -> appendedFiles += srcFile.appendLines(to = destFile, keyOf = WHOLE_LINE)
 
                         // Consumer rules live in `proguard.txt` inside an AAR — `consumer-rules.pro`
-                        // is not part of the AAR spec and consumers simply ignore it.
-                        relativePath.endsWith("proguard.txt") || relativePath.endsWith(".pro") -> {
-                            val target = File(out, "proguard.txt")
+                        // is not part of the AAR spec and consumers simply ignore it. Away from the
+                        // AAR root (`assets/…`) neither is a rule file, just a file with that name.
+                        relativePath == PROGUARD_TXT || relativePath.isRootProFile() -> {
+                            val target = File(out, PROGUARD_TXT)
                             touchedProguardFiles += srcFile.appendLines(to = target, keyOf = null)
                         }
 
-                        relativePath.endsWith("AndroidManifest.xml") -> libraryManifests += owner to srcFile
+                        relativePath == ANDROID_MANIFEST -> libraryManifests += owner to srcFile
 
                         relativePath == AAR_METADATA_PATH -> aarMetadata += owner to srcFile
 
@@ -421,6 +422,8 @@ abstract class MergeDependencies : DefaultTask() {
 
     private fun String.isServiceFile() = startsWith(SERVICES_DIR) && length > SERVICES_DIR.length
 
+    private fun String.isRootProFile() = endsWith(".pro") && '/' !in this
+
     /** Union of the providers listed by each module, in contribution order, comments dropped. */
     private fun List<File>.mergeServiceFiles(): ByteArray = asSequence()
         .flatMap { it.readLines().asSequence() }
@@ -624,6 +627,9 @@ abstract class MergeDependencies : DefaultTask() {
 
     private companion object {
         const val MAIN = "<main module>"
+        const val ANDROID_MANIFEST = "AndroidManifest.xml"
+        const val R_TXT = "R.txt"
+        const val PROGUARD_TXT = "proguard.txt"
         const val PUBLIC_TXT = "public.txt"
         const val BASELINE_PROFILE = "baseline-prof.txt"
         const val ANNOTATIONS_ZIP = "annotations.zip"

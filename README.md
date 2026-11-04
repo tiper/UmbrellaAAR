@@ -410,7 +410,7 @@ pluginManagement {
   qualifier folders (`values` vs `values-pt`) is not a duplicate.
 - **Files that cannot be merged fail the build.** These are merged:
   - `R.txt` (by symbol), `public.txt` and `baseline-prof.txt` (by line) are de-duplicated.
-  - `proguard.txt` (and `.pro`) are concatenated.
+  - `proguard.txt` (and `.pro` files at the AAR root) are concatenated.
   - `res/values*` and `.kotlin_module` files are namespaced per module.
   - `META-INF/services/*` provider files inside `classes.jar` are combined.
   - `annotations.zip` (typedef annotations) is combined, including two modules sharing a package.

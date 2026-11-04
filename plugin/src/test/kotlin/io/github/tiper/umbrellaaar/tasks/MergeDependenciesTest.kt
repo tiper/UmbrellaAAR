@@ -3,6 +3,7 @@ package io.github.tiper.umbrellaaar.tasks
 import io.github.tiper.umbrellaaar.extensions.declaredResourceNames
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -376,6 +377,88 @@ class MergeDependenciesTest {
         assertEquals("umbrella-checks", File(merge(), "lint.jar").readText())
     }
 
+    // ── Special files are only special at the AAR root ───────────────────────────────────────
+
+    @Test
+    fun `a file whose name only ends in R txt is copied, not merged as a symbol table`() {
+        mainAar("R.txt" to "int string umbrella_only 0x0")
+        module(
+            "moduleA",
+            "com.example.a",
+            "R.txt" to "int string a_only 0x0",
+            "assets/HEADER.txt" to "first\n\nsecond",
+            "assets/docs/R.txt" to "not a\n\nsymbol table",
+        )
+
+        val out = merge()
+
+        assertEquals("first\n\nsecond", File(out, "assets/HEADER.txt").readText())
+        assertEquals("not a\n\nsymbol table", File(out, "assets/docs/R.txt").readText())
+        assertEquals(
+            listOf("int string a_only 0x0", "int string umbrella_only 0x0"),
+            File(out, "R.txt").readLines().filter { it.isNotBlank() }.sorted(),
+        )
+    }
+
+    @Test
+    fun `rules outside the AAR root are copied, not moved into proguard txt`() {
+        val files = arrayOf(
+            "assets/rules.pro" to "-dontwarn assets.pro",
+            "assets/proguard.txt" to "-dontwarn assets.proguard",
+            "assets/legacy-proguard.txt" to "-dontwarn assets.legacy",
+            "res/raw/rules.pro" to "-dontwarn raw.pro",
+            "legacy-proguard.txt" to "-dontwarn root.legacy",
+        )
+        mainAar("proguard.txt" to "-keep class com.example.umbrella.** { *; }")
+        module("moduleA", "com.example.a", "proguard.txt" to "-keep class com.example.a.** { *; }", *files)
+
+        val out = merge()
+
+        files.forEach { (path, content) -> assertEquals(content, File(out, path).readText(), path) }
+        assertEquals(
+            listOf("-keep class com.example.a.** { *; }", "-keep class com.example.umbrella.** { *; }"),
+            File(out, "proguard.txt").readLines().filter { it.isNotBlank() }.sorted(),
+        )
+    }
+
+    @Test
+    fun `a manifest outside the AAR root is copied, not sent to the manifest merger`() {
+        val template = """
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.template">
+                <uses-permission android:name="com.example.TEMPLATE_ONLY" />
+            </manifest>
+        """.trimIndent()
+        val paths = listOf("assets/template/AndroidManifest.xml", "assets/SampleAndroidManifest.xml", "GeneratedAndroidManifest.xml")
+        mainAar()
+        module("moduleA", "com.example.a", *paths.map { it to template }.toTypedArray())
+
+        val out = merge()
+
+        paths.forEach { assertEquals(template, File(out, it).readText(), it) }
+        val manifest = File(out, "AndroidManifest.xml").readText()
+        assertFalse("TEMPLATE_ONLY" in manifest, manifest)
+    }
+
+    @Test
+    fun `a jar whose name only ends in classes jar survives extraction`() {
+        val embedded = zipOf(listOf("com/vendor/Foo.class" to "foo".encodeToByteArray()))
+        mainAar()
+        extractedModule(
+            "moduleA",
+            "com.example.a",
+            "classes.jar" to zipOf(listOf("com/example/a/A.class" to "a".encodeToByteArray())),
+            "libs/foo-classes.jar" to embedded,
+            "libs/classes.jar" to embedded,
+        )
+
+        val out = merge()
+
+        assertContentEquals(embedded, File(out, "libs/foo-classes.jar").readBytes())
+        assertContentEquals(embedded, File(out, "libs/classes.jar").readBytes())
+        // Only the AAR's own classes.jar is exploded and rebuilt.
+        assertEquals(listOf("com/example/a/A.class"), jarEntries(File(out, "classes.jar")))
+    }
+
     private fun jarEntries(jar: File): List<String> = java.util.zip.ZipFile(jar).use { zip ->
         zip.entries().asSequence().map { it.name }.sorted().toList()
     }
@@ -396,15 +479,32 @@ class MergeDependenciesTest {
 
     private fun moduleWithZip(name: String, namespace: String, zipName: String, vararg entries: Pair<String, String>) {
         module(name, namespace)
-        val zip = File(File(depsDir, name), zipName)
-        java.util.zip.ZipOutputStream(zip.outputStream()).use { zos ->
+        writeBytes(File(depsDir, name), zipName, zipOf(entries.map { (entry, content) -> entry to content.encodeToByteArray() }))
+    }
+
+    /** Lays [name] out with the real extraction, from an AAR made of [entries]. */
+    private fun extractedModule(name: String, namespace: String, vararg entries: Pair<String, ByteArray>) {
+        val aar = writeBytes(root, "$name.aar", zipOf(listOf("AndroidManifest.xml" to manifest(namespace).encodeToByteArray()) + entries))
+        val extraction = project.objects.newInstance(ExtractDependencies.ExtractParameters::class.java).apply {
+            archive.set(aar)
+            target.set(File(depsDir, name))
+            mainNamespace.set("com/example/umbrella")
+            mergedNamespaces.set(emptySet<String>())
+        }
+        object : ExtractDependencies.ExtractArchive() {
+            override fun getParameters() = extraction
+        }.execute()
+    }
+
+    private fun zipOf(entries: List<Pair<String, ByteArray>>): ByteArray = java.io.ByteArrayOutputStream().also { bytes ->
+        java.util.zip.ZipOutputStream(bytes).use { zos ->
             entries.forEach { (entry, content) ->
                 zos.putNextEntry(java.util.zip.ZipEntry(entry))
-                zos.write(content.encodeToByteArray())
+                zos.write(content)
                 zos.closeEntry()
             }
         }
-    }
+    }.toByteArray()
 
     private fun metadata(vararg entries: Pair<String, String>) =
         (listOf("aarFormatVersion" to "1.0", "aarMetadataVersion" to "1.0") + entries).joinToString("\n") { (k, v) -> "$k=$v" }

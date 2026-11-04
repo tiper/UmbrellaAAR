@@ -190,7 +190,7 @@ abstract class ExtractDependencies : DefaultTask() {
                         }
                         // aar-metadata.properties is kept: MergeDependencies folds every module's
                         // requirements (minCompileSdk, desugaring, …) into the umbrella's own.
-                        !entry.isDirectory && !entry.name.endsWith("classes.jar")
+                        !entry.isDirectory
                     }
                 } catch (e: Exception) {
                     throw GradleException("Failed to extract AAR '${file.name}': ${e.message}", e)
