@@ -98,6 +98,13 @@ class ByteArrayExtensionsTest {
     }
 
     @Test
+    fun `transformClass leaves no trace of the relocated R in the constant pool`() {
+        val bytecode = classReferencingField("com/dep/R\$drawable", "icon", "I")
+        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)
+        assertFalse("com/dep/R" in transformed.decodeToString(), "The old R must not survive as a dead constant-pool entry")
+    }
+
+    @Test
     fun `transformClass remaps bare R class to main namespace`() {
         val bytecode = classWithTypeReference("com/dep/R")
         val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES)

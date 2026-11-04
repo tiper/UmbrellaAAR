@@ -21,7 +21,11 @@ internal fun ByteArray.transformClass(mainNsInternal: String, mergedNamespaces: 
     }
 
     val reader = ClassReader(this)
-    val writer = ClassWriter(reader, 0)
+    // Not `ClassWriter(reader, 0)`: that copies the original constant pool, so the relocated class
+    // kept dead entries naming the merged module's R. Harmless at runtime, but tools that scan class
+    // files for references (and people reading them) saw an R class that does not exist. Every method
+    // goes through the remapper anyway, so the copy bought no speed.
+    val writer = ClassWriter(0)
     val remapper = object : Remapper() {
         override fun map(internalName: String): String {
             val owner = internalName.rClassOwner() ?: return internalName
