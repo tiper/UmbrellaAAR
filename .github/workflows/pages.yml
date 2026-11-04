@@ -1,0 +1,84 @@
+name: Deploy site
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+
+  workflow_dispatch:
+
+  # Publishing is tag-driven, and the default github-pages environment rule refuses tag refs.
+  # workflow_run executes in default-branch context, so a release can still redeploy the site.
+  workflow_run:
+    workflows: [ "Publish" ]
+    types: [ completed ]
+
+permissions:
+  actions: read
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      # A stale version is safe, but one ahead of the published plugin breaks copy-paste, so this
+      # reads the tags of successful Publish runs, never bare tags or plugin/build.gradle.kts.
+      # A new major line is left for a person: the tables in the page describe the current line.
+      - name: Stamp plugin version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          page="$(grep -oE '<span class="plugin-version">[^<]*' site/index.html \
+            | head -n 1 \
+            | sed 's/.*>//' || true)"
+
+          if [ -z "$page" ]; then
+            echo "::warning::No plugin-version span found in site/index.html, nothing to stamp"
+            exit 0
+          fi
+
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/publish.yml/runs?status=success&event=push&per_page=100" \
+            --jq '.workflow_runs[].head_branch' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V \
+            | tail -n 1 || true)"
+
+          if [ -z "$latest" ]; then
+            echo "::warning::No successful x.y.z Publish run found, keeping version $page"
+            exit 0
+          fi
+
+          if [ "${latest%%.*}" != "${page%%.*}" ]; then
+            echo "::warning::Latest release $latest is on a different major line from the page, keeping version $page. Update the compatibility tables and the page version by hand."
+            exit 0
+          fi
+
+          sed -E -i "s#(<span class=\"plugin-version\">)[^<]*(</span>)#\1${latest}\2#g" site/index.html
+          echo "Stamped version $latest"
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6.0.0
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: site
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5.0.1

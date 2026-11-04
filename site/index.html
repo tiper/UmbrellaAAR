@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UmbrellaAAR: merge local Gradle modules into one AAR</title>
+<meta name="description" content="UmbrellaAAR is a Gradle plugin that merges the local modules of an Android or Kotlin Multiplatform project into one AAR. External dependencies stay external and land in the POM.">
+<link rel="canonical" href="https://tiper.github.io/UmbrellaAAR/">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5efe3">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14181e">
+<link rel="icon" type="image/png" sizes="64x64" href="favicon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="UmbrellaAAR">
+<meta property="og:title" content="UmbrellaAAR: merge local Gradle modules into one AAR">
+<meta property="og:description" content="A Gradle plugin that merges the local modules of an Android or Kotlin Multiplatform project into one AAR. External dependencies stay external and land in the POM.">
+<meta property="og:url" content="https://tiper.github.io/UmbrellaAAR/">
+<meta property="og:image" content="https://tiper.github.io/UmbrellaAAR/logo.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="500">
+<meta property="og:image:height" content="500">
+<meta property="og:image:alt" content="UmbrellaAAR logo: the Android robot under a charcoal umbrella, holding three kraft boxes stamped AAR.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="UmbrellaAAR: merge local Gradle modules into one AAR">
+<meta name="twitter:description" content="A Gradle plugin that merges the local modules of an Android or Kotlin Multiplatform project into one AAR. External dependencies stay external and land in the POM.">
+<meta name="twitter:image" content="https://tiper.github.io/UmbrellaAAR/logo.png">
+<meta name="twitter:image:alt" content="UmbrellaAAR logo: the Android robot under a charcoal umbrella, holding three kraft boxes stamped AAR.">
+<link rel="stylesheet" href="styles.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wide site-header-inner">
+    <a class="wordmark" href="./">UmbrellaAAR</a>
+    <nav class="site-nav" aria-label="On this page">
+      <ul>
+        <li><a href="#how-it-works">How it works</a></li>
+        <li><a href="#quick-start">Quick start</a></li>
+        <li><a href="#whats-in-the-aar">What goes in</a></li>
+        <li><a href="#publishing">Publishing</a></li>
+        <li><a href="#compatibility">Compatibility</a></li>
+        <li><a href="#before-you-adopt">Before you adopt</a></li>
+        <li><a href="#fused-library">Fused-library</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+
+  <section class="wide hero" aria-labelledby="page-title">
+    <div>
+      <img class="hero-logo" src="logo.png" width="500" height="500" alt="UmbrellaAAR logo: the Android robot under a charcoal umbrella, holding three kraft boxes stamped AAR.">
+      <h1 id="page-title">UmbrellaAAR</h1>
+      <p class="lead">A Gradle plugin that merges the local modules of your Android or Kotlin Multiplatform project into one AAR.</p>
+      <p class="distinction">Only local modules are merged. External dependencies stay external and land in the POM.</p>
+      <ul class="hero-links">
+        <li><a class="button button-primary" href="#quick-start">Quick start</a></li>
+        <li><a class="button" href="https://github.com/tiper/UmbrellaAAR">GitHub</a></li>
+        <li><a class="button" href="https://plugins.gradle.org/plugin/io.github.tiper.umbrellaaar">Gradle Plugin Portal</a></li>
+      </ul>
+      <p class="stamp"><span>Current version</span> <span class="plugin-version">3.0.0</span></p>
+    </div>
+
+    <div>
+      <figure class="snippet">
+        <figcaption><span class="file">build.gradle.kts</span></figcaption>
+        <div class="scroll" tabindex="0" role="group" aria-label="Minimal build file for the umbrella module">
+<pre><code>plugins {
+    id(<span class="tok-string">"org.jetbrains.kotlin.multiplatform"</span>)
+    id(<span class="tok-string">"com.android.kotlin.multiplatform.library"</span>)
+    id(<span class="tok-string">"io.github.tiper.umbrellaaar"</span>) version <span class="tok-string">"<span class="plugin-version">3.0.0</span>"</span>
+}
+
+kotlin {
+    android {
+        namespace = <span class="tok-string">"com.example.yourlibrary"</span>
+        compileSdk = 35
+        minSdk = 24
+    }
+}
+
+dependencies {
+    export(project(<span class="tok-string">":feature-a"</span>))
+    export(project(<span class="tok-string">":feature-b"</span>))
+}
+</code></pre>
+        </div>
+      </figure>
+      <p class="hero-note">Declare the Kotlin and Android plugins in your root build with <code>apply false</code>, or replace these lines with your version catalog aliases.</p>
+    </div>
+  </section>
+
+  <section id="how-it-works" aria-labelledby="how-it-works-title">
+    <div class="col">
+      <h2 id="how-it-works-title">How it works</h2>
+    </div>
+
+    <figure class="wide diagram">
+      <svg class="diagram-wide" viewBox="0 0 1000 496" role="img" aria-labelledby="dw-title dw-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="dw-title">Local modules merge into one AAR, external dependencies go to the POM</title>
+        <desc id="dw-desc">An umbrella canopy labelled your umbrella module, which walks the graph from export, spans three local module boxes: :feature-a and :feature-b, declared with export, and :core, reached through api. All three flow into one kraft box labelled your-library.aar, one merged artifact. Classes, manifests and resources are merged, and R references are rewritten. Outside the canopy, androidx.core and kotlinx.coroutines stay separate, with dashed lines to a pom.xml document that lists them. The AAR and the POM are published together with the POM plugin.</desc>
+        <defs>
+          <marker id="dw-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path class="dg-head" d="M0 0 10 5 0 10z"/>
+          </marker>
+        </defs>
+
+        <!-- Canopy -->
+        <path class="dg-ferrule" d="M346 14h8v24h-8z"/>
+        <circle class="dg-ferrule" cx="350" cy="12" r="6"/>
+        <path class="dg-canopy" d="M30 196C52 92 196 36 350 36s298 56 320 160q-80-40-160 0-80-40-160 0-80-40-160 0-80-40-160 0Z"/>
+        <path class="dg-rib" d="M350 36C272 62 212 120 190 196M350 36C428 62 488 120 510 196M350 36V88M350 160V196"/>
+        <circle class="dg-tip" cx="30" cy="196" r="5"/>
+        <circle class="dg-tip" cx="190" cy="196" r="5"/>
+        <circle class="dg-tip" cx="350" cy="196" r="5"/>
+        <circle class="dg-tip" cx="510" cy="196" r="5"/>
+        <circle class="dg-tip" cx="670" cy="196" r="5"/>
+        <text class="dg-on-canopy dg-strong" x="350" y="120" text-anchor="middle" font-size="21">Your umbrella module</text>
+        <text class="dg-on-canopy" x="350" y="146" text-anchor="middle" font-size="16">walks the graph from export</text>
+
+        <!-- Local modules -->
+        <g>
+          <path class="dg-top" d="M75 236l12-10h160l-12 10z"/>
+          <path class="dg-side" d="M235 236l12-10v60l-12 10z"/>
+          <rect class="dg-front" x="75" y="236" width="160" height="60"/>
+          <path class="dg-tape" d="M149 236l12-10h12l-12 10z"/>
+          <text class="dg-on-kraft dg-mono dg-strong" x="155" y="263" text-anchor="middle" font-size="18">:feature-a</text>
+          <text class="dg-on-kraft" x="155" y="284" text-anchor="middle" font-size="15.5">export</text>
+        </g>
+        <g>
+          <path class="dg-top" d="M270 236l12-10h160l-12 10z"/>
+          <path class="dg-side" d="M430 236l12-10v60l-12 10z"/>
+          <rect class="dg-front" x="270" y="236" width="160" height="60"/>
+          <path class="dg-tape" d="M344 236l12-10h12l-12 10z"/>
+          <text class="dg-on-kraft dg-mono dg-strong" x="350" y="263" text-anchor="middle" font-size="18">:feature-b</text>
+          <text class="dg-on-kraft" x="350" y="284" text-anchor="middle" font-size="15.5">export</text>
+        </g>
+        <g>
+          <path class="dg-top" d="M465 236l12-10h160l-12 10z"/>
+          <path class="dg-side" d="M625 236l12-10v60l-12 10z"/>
+          <rect class="dg-front" x="465" y="236" width="160" height="60"/>
+          <path class="dg-tape" d="M539 236l12-10h12l-12 10z"/>
+          <text class="dg-on-kraft dg-mono dg-strong" x="545" y="263" text-anchor="middle" font-size="18">:core</text>
+          <text class="dg-on-kraft" x="545" y="284" text-anchor="middle" font-size="15.5">reached through api</text>
+        </g>
+
+        <!-- Merge -->
+        <path class="dg-flow" d="M155 300C155 344 290 326 290 361" marker-end="url(#dw-arrow)"/>
+        <path class="dg-flow" d="M350 300V361" marker-end="url(#dw-arrow)"/>
+        <path class="dg-flow" d="M545 300C545 344 410 326 410 361" marker-end="url(#dw-arrow)"/>
+        <text class="dg-muted" x="205" y="412" text-anchor="end" font-size="15.5">Merged: classes,</text>
+        <text class="dg-muted" x="205" y="434" text-anchor="end" font-size="15.5">manifests, resources.</text>
+        <text class="dg-muted" x="205" y="456" text-anchor="end" font-size="15.5">R references rewritten.</text>
+
+        <!-- The AAR -->
+        <path class="dg-top" d="M225 384l18-14h250l-18 14z"/>
+        <path class="dg-side" d="M475 384l18-14v100l-18 14z"/>
+        <rect class="dg-front" x="225" y="384" width="250" height="100"/>
+        <path class="dg-tape" d="M338 384l18-14h24l-18 14z"/>
+        <rect class="dg-tape" x="338" y="385" width="24" height="16"/>
+        <text class="dg-on-kraft dg-mono dg-strong" x="350" y="438" text-anchor="middle" font-size="21">your-library.aar</text>
+        <text class="dg-on-kraft" x="350" y="464" text-anchor="middle" font-size="15.5">one merged artifact</text>
+
+        <!-- External dependencies -->
+        <text class="dg-strong" x="850" y="172" text-anchor="middle" font-size="18">External dependencies</text>
+        <text class="dg-muted" x="850" y="196" text-anchor="middle" font-size="15.5">stay outside the canopy</text>
+        <rect class="dg-chip" x="700" y="222" width="172" height="46" rx="4"/>
+        <text class="dg-mono" x="786" y="251" text-anchor="middle" font-size="16">androidx.core</text>
+        <rect class="dg-chip" x="790" y="282" width="200" height="46" rx="4"/>
+        <text class="dg-mono" x="890" y="311" text-anchor="middle" font-size="16">kotlinx.coroutines</text>
+        <path class="dg-dash" d="M740 268C740 330 806 336 812 374"/>
+        <path class="dg-dash" d="M890 328C890 350 872 354 868 374"/>
+
+        <!-- The POM -->
+        <path class="dg-doc" d="M770 376h112l28 28v80H770z"/>
+        <path class="dg-fold" d="M882 376v28h28z"/>
+        <text class="dg-mono dg-strong" x="840" y="436" text-anchor="middle" font-size="19">pom.xml</text>
+        <text class="dg-muted" x="840" y="460" text-anchor="middle" font-size="15.5">lists them</text>
+
+        <path class="dg-link" d="M499 432H766"/>
+        <text class="dg-muted" x="632" y="420" text-anchor="middle" font-size="15.5">published together</text>
+        <text class="dg-muted" x="632" y="454" text-anchor="middle" font-size="15.5">with the POM plugin</text>
+      </svg>
+
+      <svg class="diagram-narrow" viewBox="0 0 300 572" role="img" aria-labelledby="dn-title dn-desc" xmlns="http://www.w3.org/2000/svg">
+        <title id="dn-title">Local modules merge into one AAR, external dependencies go to the POM</title>
+        <desc id="dn-desc">An umbrella canopy labelled umbrella module, which walks the graph from export, spans three local module boxes: :feature-a and :feature-b, declared with export, and :core, reached through api. All three flow down into one kraft box labelled your-library.aar, one merged artifact. Classes, manifests and resources are merged, and R references are rewritten. Below it, outside the canopy, androidx.core and kotlinx.coroutines stay separate, with dashed lines to a pom.xml document that lists them. The AAR and the POM are published together with the POM plugin.</desc>
+        <defs>
+          <marker id="dn-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+            <path class="dg-head" d="M0 0 10 5 0 10z"/>
+          </marker>
+        </defs>
+
+        <path class="dg-ferrule" d="M148 12h4v20h-4z"/>
+        <circle class="dg-ferrule" cx="150" cy="10" r="3.5"/>
+        <path class="dg-canopy" d="M6 124C16 66 84 30 150 30s134 36 144 94q-36-20-72 0-36-20-72 0-36-20-72 0-36-20-72 0Z"/>
+        <path class="dg-rib" d="M150 30C104 38 84 76 78 124M150 30C196 38 216 76 222 124M150 30V52M150 100V124"/>
+        <circle class="dg-tip" cx="6" cy="124" r="3"/>
+        <circle class="dg-tip" cx="78" cy="124" r="3"/>
+        <circle class="dg-tip" cx="150" cy="124" r="3"/>
+        <circle class="dg-tip" cx="222" cy="124" r="3"/>
+        <circle class="dg-tip" cx="294" cy="124" r="3"/>
+        <text class="dg-on-canopy dg-strong" x="150" y="72" text-anchor="middle" font-size="14.5">Umbrella module</text>
+        <text class="dg-on-canopy" x="150" y="91" text-anchor="middle" font-size="12.5">walks from export</text>
+
+        <g>
+          <path class="dg-top" d="M6 146l6-5h88l-6 5z"/>
+          <path class="dg-side" d="M94 146l6-5v50l-6 5z"/>
+          <rect class="dg-front" x="6" y="146" width="88" height="50"/>
+          <path class="dg-tape" d="M44 146l6-5h6l-6 5z"/>
+          <text class="dg-on-kraft dg-mono dg-strong" x="50" y="167" text-anchor="middle" font-size="13">:feature-a</text>
+          <text class="dg-on-kraft" x="50" y="185" text-anchor="middle" font-size="12.5">export</text>
+        </g>
+        <g>
+          <path class="dg-top" d="M103 146l6-5h88l-6 5z"/>
+          <path class="dg-side" d="M191 146l6-5v50l-6 5z"/>
+          <rect class="dg-front" x="103" y="146" width="88" height="50"/>
+          <path class="dg-tape" d="M141 146l6-5h6l-6 5z"/>
+          <text class="dg-on-kraft dg-mono dg-strong" x="147" y="167" text-anchor="middle" font-size="13">:feature-b</text>
+          <text class="dg-on-kraft" x="147" y="185" text-anchor="middle" font-size="12.5">export</text>
+        </g>
+        <g>
+          <path class="dg-top" d="M200 146l6-5h88l-6 5z"/>
+          <path class="dg-side" d="M288 146l6-5v50l-6 5z"/>
+          <rect class="dg-front" x="200" y="146" width="88" height="50"/>
+          <path class="dg-tape" d="M238 146l6-5h6l-6 5z"/>
+          <text class="dg-on-kraft dg-mono dg-strong" x="244" y="167" text-anchor="middle" font-size="13">:core</text>
+          <text class="dg-on-kraft" x="244" y="185" text-anchor="middle" font-size="12.5">through api</text>
+        </g>
+
+        <path class="dg-flow" d="M50 200C50 230 112 220 112 245" marker-end="url(#dn-arrow)"/>
+        <path class="dg-flow" d="M147 200V245" marker-end="url(#dn-arrow)"/>
+        <path class="dg-flow" d="M244 200C244 230 184 220 184 245" marker-end="url(#dn-arrow)"/>
+
+        <path class="dg-top" d="M54 258l10-8h186l-10 8z"/>
+        <path class="dg-side" d="M240 258l10-8v66l-10 8z"/>
+        <rect class="dg-front" x="54" y="258" width="186" height="66"/>
+        <path class="dg-tape" d="M138 258l10-8h14l-10 8z"/>
+        <rect class="dg-tape" x="138" y="259" width="14" height="10"/>
+        <text class="dg-on-kraft dg-mono dg-strong" x="147" y="291" text-anchor="middle" font-size="15">your-library.aar</text>
+        <text class="dg-on-kraft" x="147" y="311" text-anchor="middle" font-size="12.5">one merged artifact</text>
+
+        <text class="dg-strong" x="150" y="362" text-anchor="middle" font-size="14.5">External dependencies</text>
+        <text class="dg-muted" x="150" y="380" text-anchor="middle" font-size="12.5">stay outside the canopy</text>
+        <rect class="dg-chip" x="6" y="392" width="122" height="38" rx="3"/>
+        <text class="dg-mono" x="67" y="416" text-anchor="middle" font-size="12.5">androidx.core</text>
+        <rect class="dg-chip" x="136" y="392" width="158" height="38" rx="3"/>
+        <text class="dg-mono" x="215" y="416" text-anchor="middle" font-size="12.5">kotlinx.coroutines</text>
+        <path class="dg-dash" d="M67 430C67 456 126 448 130 470"/>
+        <path class="dg-dash" d="M215 430C215 456 174 448 170 470"/>
+
+        <path class="dg-doc" d="M95 472h88l22 18v52H95z"/>
+        <path class="dg-fold" d="M183 472v18h22z"/>
+        <text class="dg-mono dg-strong" x="150" y="510" text-anchor="middle" font-size="14.5">pom.xml</text>
+        <text class="dg-muted" x="150" y="528" text-anchor="middle" font-size="12.5">lists them</text>
+        <text class="dg-muted" x="150" y="562" text-anchor="middle" font-size="12.5">published together with the AAR</text>
+      </svg>
+    </figure>
+
+    <div class="col">
+      <p>You apply the plugin to one Android library module, the umbrella module, and name other modules with <code>export</code>. From there the plugin follows <code>api</code>, <code>implementation</code> and <code>runtimeOnly</code> project dependencies through the source sets that reach the Android main compilation, so you only name the entry points.</p>
+      <p>It takes each module's archive, rewrites references to merged <code>R</code> classes so they point at your umbrella namespace, and merges everything into the umbrella module's own AAR.</p>
+      <p>External libraries are never unpacked. Add the companion POM plugin and they are listed in the published POM, so your consumers resolve them as usual.</p>
+    </div>
+  </section>
+
+  <section id="quick-start" class="col" aria-labelledby="quick-start-title">
+    <h2 id="quick-start-title">Quick start</h2>
+    <p>Pick the Android library module you want to ship. This is your umbrella module. The other modules need no source changes. The one exception is the sources jar setup under <a href="#merged-sources">Merged sources</a>, which publishing depends on.</p>
+
+    <ol class="steps" role="list">
+      <li>
+        <h3>Apply the plugin</h3>
+        <p>Apply the umbrella plugin last. If it sits after the Android plugin and before the Kotlin plugin, the build stops with <code>Extension of type 'ExtensionAware' does not exist</code>.</p>
+        <figure class="snippet">
+          <figcaption><span class="file">build.gradle.kts</span></figcaption>
+          <div class="scroll" tabindex="0" role="group" aria-label="Plugins and Android target for the umbrella module">
+<pre><code>plugins {
+    id(<span class="tok-string">"org.jetbrains.kotlin.multiplatform"</span>)
+    id(<span class="tok-string">"com.android.kotlin.multiplatform.library"</span>)
+    id(<span class="tok-string">"io.github.tiper.umbrellaaar"</span>) version <span class="tok-string">"<span class="plugin-version">3.0.0</span>"</span>
+}
+
+kotlin {
+    android {
+        namespace = <span class="tok-string">"com.example.yourlibrary"</span>
+        compileSdk = 35
+        minSdk = 24
+    }
+}
+</code></pre>
+          </div>
+        </figure>
+        <p>AGP requires <code>namespace</code> and <code>compileSdk</code> here and stops with an error without them. <code>androidLibrary</code> is the older, deprecated name for the <code>android</code> block. The repository's samples still use it, and both work.</p>
+        <p>The plugin resolves from the <a href="https://plugins.gradle.org/plugin/io.github.tiper.umbrellaaar">Gradle Plugin Portal</a> and <a href="https://central.sonatype.com/search?q=g%3Aio.github.tiper">Maven Central</a>, so it needs no extra repository if your <code>pluginManagement</code> block already has <code>gradlePluginPortal()</code> or <code>mavenCentral()</code>. The Kotlin and Android ids above carry no version. Declare the Kotlin and Android plugins in your root build with <code>apply false</code>, or replace these lines with your version catalog aliases.</p>
+        <p>Tasks are registered only when <code>com.android.library</code> or <code>com.android.kotlin.multiplatform.library</code> is applied to the module. On <code>com.android.application</code> you get the <code>export</code> configuration and no tasks.</p>
+      </li>
+      <li>
+        <h3>Declare what goes in</h3>
+        <figure class="snippet">
+          <figcaption><span class="file">build.gradle.kts</span></figcaption>
+          <div class="scroll" tabindex="0" role="group" aria-label="Export declarations for the umbrella module">
+<pre><code>dependencies {
+    export(project(<span class="tok-string">":feature-a"</span>))
+    export(project(<span class="tok-string">":feature-b"</span>))
+}
+</code></pre>
+          </div>
+        </figure>
+        <p>This goes at the top level of the build file. <code>export</code> takes local projects only. An external coordinate on <code>export</code> is ignored: it is not merged and it does not reach the POM.</p>
+      </li>
+      <li>
+        <h3>Run the task</h3>
+        <figure class="snippet">
+          <figcaption><span class="file">terminal</span></figcaption>
+          <div class="scroll" tabindex="0" role="group" aria-label="Command that builds the release AAR">
+<pre><code>./gradlew :your-library:bundleReleaseUmbrellaAar
+</code></pre>
+          </div>
+        </figure>
+        <p><code>bundleDebugUmbrellaAar</code> is the debug task. On a Kotlin Multiplatform umbrella, both come from the same <code>androidMain</code> output. The same <code>export</code> block and task names work on a <code>com.android.library</code> umbrella.</p>
+      </li>
+      <li>
+        <h3>Find the output</h3>
+        <figure class="snippet">
+          <figcaption><span class="file">output</span></figcaption>
+          <div class="scroll" tabindex="0" role="group" aria-label="Path of the merged AAR">
+<pre><code>your-library/build/outputs/umbrellaaar/your-library-release.aar
+</code></pre>
+          </div>
+        </figure>
+        <p>The file name is the project name plus the lowercase variant. For sources, run <code>androidReleaseUmbrellaAarSourcesJar</code>, which writes <code>your-library-release-sources.jar</code> next to the AAR. The bundle task does not build it for you.</p>
+      </li>
+    </ol>
+
+    <h3>Check what went in</h3>
+    <p>The task that unpacks your modules also writes a report. It is the quickest way to check which modules went in.</p>
+    <figure class="snippet">
+      <figcaption><span class="file">your-library/build/reports/umbrellaaar/androidMain/merged-modules.txt</span></figcaption>
+      <div class="scroll" tabindex="0" role="group" aria-label="Example of the merged modules report">
+<pre class="report"><code><span class="tok-comment"># Modules merged into the umbrella AAR by :your-library:extractAndroidMainDependencies</span>
+<span class="tok-comment"># &lt;project path&gt;	&lt;first edge that reached it&gt;</span>
+:core	:feature-b -&gt; commonMainApi
+:feature-a	:your-library -&gt; export
+:feature-b	:your-library -&gt; export
+</code></pre>
+      </div>
+    </figure>
+    <p>Each line is a merged project and the first edge that reached it, tab separated. On a <code>com.android.library</code> umbrella the folder is the build type, such as <code>release</code>, instead of <code>androidMain</code>. Read it after you change dependencies, and diff it between builds to catch a module you did not mean to ship.</p>
+  </section>
+
+  <section id="whats-in-the-aar" class="col" aria-labelledby="whats-in-the-aar-title">
+    <h2 id="whats-in-the-aar-title">What goes into the AAR</h2>
+    <p>The merge starts from your umbrella module's own AAR, unpacked in full and kept as it is. Each dependency module is then applied on top, in module-folder name order, and in relative-path order within a module. <code>classes.jar</code> and the final AAR are written with sorted entries and timestamp 0.</p>
+    <p>One rule covers everything that is not merged, renamed or dropped. If two modules ship the same path, identical bytes keep one copy. Different bytes fail <code>merge&lt;Pipeline&gt;UmbrellaAarDependencies</code> with an error naming both contributors. <code>&lt;Pipeline&gt;</code> is <code>AndroidMain</code> on a Kotlin Multiplatform umbrella and the build type on <code>com.android.library</code>.</p>
+
+    <div class="scroll table-scroll" tabindex="0" role="group" aria-labelledby="content-caption">
+      <table class="table-content">
+        <caption id="content-caption">What happens to each kind of content from a dependency module</caption>
+        <thead>
+          <tr><th scope="col">Content</th><th scope="col">What happens</th></tr>
+        </thead>
+        <tbody>
+          <tr class="group-row"><th colspan="2" scope="rowgroup">Merged into one file</th></tr>
+          <tr><th scope="row"><code>classes.jar</code></th><td>One jar from the umbrella's classes and every dependency's entries, including plain JVM modules. A duplicate entry follows the rule above, including a clash with the umbrella module. The comparison runs after <code>R</code> rewriting.</td></tr>
+          <tr><th scope="row"><code>AndroidManifest.xml</code></th><td>Merged with ManifestMerger2 in a single pass. A merge error fails the build with <code>Manifest merge failed:</code>.</td></tr>
+          <tr><th scope="row"><code>R.txt</code></th><td>Appended, then repeated lines removed. Whole lines are compared, so one symbol with two values stays twice. IDs are not renumbered.</td></tr>
+          <tr><th scope="row"><code>public.txt</code></th><td>Merged only if every module contributing resources ships one. Otherwise it is dropped with a warning naming both groups, and all merged resources stay public.</td></tr>
+          <tr><th scope="row"><code>proguard.txt</code>, <code>.pro</code> files</th><td>Concatenated into one root <code>proguard.txt</code>, umbrella rules first. Rules are not de-duplicated and their text is not rewritten.</td></tr>
+        </tbody>
+        <tbody>
+          <tr class="group-row"><th colspan="2" scope="rowgroup">Kept side by side, renamed per module</th></tr>
+          <tr><th scope="row"><code>res/values*</code></th><td>Not merged. Each dependency's file becomes <code>&lt;module&gt;-&lt;file&gt;</code> in the same qualifier folder, for example <code>res/values/feature-a-values.xml</code>. <code>&lt;module&gt;</code> is the module's folder path, so <code>libs/feature-a</code> gives <code>libs_feature-a</code>. A resource name declared twice logs a warning here and <a href="#before-you-adopt">fails the consumer's build</a>.</td></tr>
+          <tr><th scope="row"><code>.kotlin_module</code></th><td>Renamed to <code>&lt;module&gt;-&lt;file&gt;</code>, inside and outside <code>classes.jar</code>, so these never collide.</td></tr>
+        </tbody>
+        <tbody>
+          <tr class="group-row"><th colspan="2" scope="rowgroup">Kept at the same path<span>Identical bytes keep one copy. Different bytes fail the build.</span></th></tr>
+          <tr><th scope="row">Other <code>res/</code> folders</th><td><code>layout</code>, <code>drawable</code>, <code>raw</code>, <code>xml</code>, <code>navigation</code> and the rest. A clash across paths, such as <code>res/drawable/a.png</code> and <code>res/drawable/a.xml</code>, is not detected here.</td></tr>
+          <tr><th scope="row"><code>assets/</code></th><td>Kept as they are.</td></tr>
+          <tr><th scope="row"><code>jni/</code></th><td>Kept per ABI. A clash reports that two modules ship a native library with the same name.</td></tr>
+          <tr><th scope="row"><code>libs/*.jar</code></th><td>Copied as opaque files. Classes inside these jars are not rewritten.</td></tr>
+          <tr><th scope="row"><code>aidl/</code></th><td>Kept as they are.</td></tr>
+          <tr><th scope="row"><code>META-INF/</code></th><td>Not merged, at the AAR root or inside <code>classes.jar</code>. Service files are not concatenated, so two different <code>META-INF/services/&lt;interface&gt;</code> files fail the build.</td></tr>
+          <tr><th scope="row">Anything else</th><td>Same rule, for example data-binding folders.</td></tr>
+        </tbody>
+        <tbody>
+          <tr class="group-row"><th colspan="2" scope="rowgroup">Fixed names, one contributor<span>Not merged. The first file is kept and a second, different file fails the build. Renaming is not an option.</span></th></tr>
+          <tr><th scope="row"><code>navigation.json</code></th><td>Only one module in the graph can effectively contribute it.</td></tr>
+          <tr><th scope="row"><code>lint.jar</code></th><td>Only one module can publish custom lint checks through the umbrella, and that includes the umbrella's own file.</td></tr>
+          <tr><th scope="row"><code>annotations.zip</code></th><td>AGP generates this file, so two modules that each produce one block the merge.</td></tr>
+          <tr><th scope="row"><code>baseline-prof.txt</code></th><td>Plain text, but not merged. Baseline profiles from two modules cannot be combined.</td></tr>
+          <tr><th scope="row"><code>prefab/</code></th><td>Files are kept per path, and a differing <code>prefab/prefab.json</code> fails the build. Assume one prefab module per umbrella. This case is untested.</td></tr>
+        </tbody>
+        <tbody>
+          <tr class="group-row"><th colspan="2" scope="rowgroup">Dropped with no warning</th></tr>
+          <tr><th scope="row"><code>aar-metadata.properties</code></th><td>Dropped from every dependency module. Only the umbrella's copy ships, so <code>minCompileSdk</code>, <code>minAndroidGradlePluginVersion</code> and <code>coreLibraryDesugaringEnabled</code> set by a merged module are lost. Set them on the umbrella module.</td></tr>
+          <tr><th scope="row">Entries ending in <code>classes.jar</code></th><td>Any entry other than the root <code>classes.jar</code>, such as <code>libs/foo-classes.jar</code>. The filter is a suffix match.</td></tr>
+          <tr><th scope="row"><code>MANIFEST.MF</code></th><td>Stripped from JAR modules only. One inside an AAR's <code>classes.jar</code> is not filtered.</td></tr>
+          <tr><th scope="row">Other task outputs</th><td>Any module output that is neither <code>.aar</code> nor <code>.jar</code>.</td></tr>
+        </tbody>
+        <tbody>
+          <tr class="group-row"><th colspan="2" scope="rowgroup">Never in the AAR</th></tr>
+          <tr><th scope="row">External dependencies</th><td>They stay external. The AAR carries no dependency list, so consumers only get them through a POM from the companion plugin.</td></tr>
+          <tr><th scope="row">Modules reached only through <code>compileOnly</code></th><td>Not merged. The build logs a warning listing them. Use <code>api</code> or <code>implementation</code> if they must ship.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><code>R</code> references</h3>
+    <p>In dependency modules, references to any merged module's <code>R</code> class are rewritten with ASM. <code>com/dep/R</code> and <code>com/dep/R$string</code> become <code>&lt;umbrella namespace&gt;/R</code> and <code>&lt;umbrella namespace&gt;/R$string</code>. Only namespaces read from merged AARs are rewritten, so <code>android.R</code>, AndroidX, Material and other third-party <code>R</code> classes stay intact. No class is renamed or moved.</p>
+  </section>
+
+  <section id="publishing" class="col" aria-labelledby="publishing-title">
+    <h2 id="publishing-title">Publishing</h2>
+    <p>The companion plugin, <code>io.github.tiper.umbrellaaar.pom</code>, writes the POM that the AAR alone cannot carry. It does nothing unless the main plugin is applied, and it can go before or after <code>maven-publish</code>.</p>
+    <figure class="snippet">
+      <figcaption><span class="file">build.gradle.kts</span></figcaption>
+      <div class="scroll" tabindex="0" role="group" aria-label="Build file with the POM plugin and a Maven repository">
+<pre><code>plugins {
+    id(<span class="tok-string">"org.jetbrains.kotlin.multiplatform"</span>)
+    id(<span class="tok-string">"com.android.kotlin.multiplatform.library"</span>)
+    id(<span class="tok-string">"io.github.tiper.umbrellaaar"</span>) version <span class="tok-string">"<span class="plugin-version">3.0.0</span>"</span>
+    id(<span class="tok-string">"io.github.tiper.umbrellaaar.pom"</span>) version <span class="tok-string">"<span class="plugin-version">3.0.0</span>"</span>
+    id(<span class="tok-string">"maven-publish"</span>)
+}
+
+group = <span class="tok-string">"com.example"</span>
+version = <span class="tok-string">"1.0.0"</span>
+
+<span class="tok-comment">// kotlin { } and dependencies { } stay as in the quick start</span>
+
+publishing {
+    repositories {
+        maven {
+            name = <span class="tok-string">"MyRepo"</span>
+            url = uri(<span class="tok-string">"https://maven.example.com/releases"</span>)
+            credentials {
+                username = findProperty(<span class="tok-string">"maven.username"</span>) as String?
+                password = findProperty(<span class="tok-string">"maven.password"</span>) as String?
+            }
+        }
+    }
+}
+</code></pre>
+      </div>
+    </figure>
+    <p>Set <code>group</code> and <code>version</code> in the module. The publications inherit them, and without them your version is <code>unspecified</code>.</p>
+    <p>With <code>maven-publish</code> applied, the plugin registers one publication per variant: <code>androidReleaseUmbrellaAar</code> and <code>androidDebugUmbrellaAar</code>. Each carries the merged AAR and the merged sources jar under classifier <code>sources</code>. Publish one with its own task:</p>
+    <figure class="snippet">
+      <figcaption><span class="file">terminal</span></figcaption>
+      <div class="scroll" tabindex="0" role="group" aria-label="Command that publishes the release umbrella to a repository">
+<pre><code>./gradlew :your-library:publishAndroidReleaseUmbrellaAarPublicationToMyRepoRepository
+</code></pre>
+      </div>
+    </figure>
+
+    <div class="callout" role="note" aria-labelledby="collision-title">
+      <p class="callout-tag">Before you publish</p>
+      <h3 id="collision-title">Publish the umbrella with its own task, or give it its own coordinates</h3>
+      <p>Umbrella publications set no coordinates of their own, so they default to <code>project.group:project.name:project.version</code>. In a Kotlin Multiplatform project the <code>kotlinMultiplatform</code> publication already has those coordinates, and the release and debug umbrella publications share them with each other.</p>
+      <p><code>publish</code> and <code>publishToMavenLocal</code> write all of them to the same location, and the last one wins. The umbrella <code>.aar</code> survives, but another publication's <code>.pom</code> and <code>.module</code> replace the flattened dependency list. The build still succeeds, so the corruption is silent. Your consumers then fail on internal coordinates such as <code>Could not find &lt;RootProject&gt;.&lt;path&gt;:&lt;module&gt;:unspecified</code>.</p>
+      <p>The plugin logs a warning naming the publications that collide. It does not change the coordinates or fail the build. Use one of these two fixes.</p>
+
+      <h4>Publish only the umbrella</h4>
+      <p>Run the targeted task, and leave out the <code>publish</code> and <code>publishToMavenLocal</code> lifecycle tasks while coordinates collide.</p>
+      <figure class="snippet">
+        <figcaption><span class="file">terminal</span></figcaption>
+        <div class="scroll" tabindex="0" role="group" aria-label="Command that publishes only the release umbrella to Maven Local">
+<pre><code>./gradlew :your-library:publishAndroidReleaseUmbrellaAarPublicationToMavenLocal
+</code></pre>
+        </div>
+      </figure>
+
+      <h4>Give the publications distinct coordinates</h4>
+      <p>Rename both variants. If you rename only release, debug stays on the project coordinates and still collides.</p>
+      <figure class="snippet">
+        <figcaption><span class="file">build.gradle.kts</span></figcaption>
+        <div class="scroll" tabindex="0" role="group" aria-label="Distinct artifact ids for both umbrella publications">
+<pre><code>publishing {
+    publications.named&lt;MavenPublication&gt;(<span class="tok-string">"androidReleaseUmbrellaAar"</span>) {
+        artifactId = <span class="tok-string">"your-library-umbrella"</span>
+    }
+    publications.named&lt;MavenPublication&gt;(<span class="tok-string">"androidDebugUmbrellaAar"</span>) {
+        artifactId = <span class="tok-string">"your-library-umbrella-debug"</span>
+    }
+}
+</code></pre>
+        </div>
+      </figure>
+    </div>
+
+    <h3>What the POM lists</h3>
+    <ul>
+      <li>External dependencies declared in the <code>api</code>, <code>implementation</code> and <code>runtimeOnly</code> scopes of the umbrella module and every merged module.</li>
+      <li>Direct dependencies only, resolved with Android attributes, each with scope <code>compile</code>.</li>
+      <li>Local project dependencies are never written. <code>compileOnly</code> dependencies are left out.</li>
+      <li><code>org.jetbrains.compose.*</code> and <code>org.jetbrains.androidx.*</code> coordinates become their <code>androidx</code> equivalent when one is resolved, and stay unchanged when none exists.</li>
+      <li>Each library reaches the POM once. If modules declare different versions, the last declaration visited is the one published, even if it is the lower version, and no warning is logged. Declare the same explicit version in every module, for example from a shared version catalog.</li>
+      <li>Dependency constraints are not read, on any module. A constraint that raises a version leaves the lower declared version in the POM. A dependency declared with no version, relying on a constraint, cannot be resolved here and is left out of the POM.</li>
+      <li>A dependency Gradle cannot resolve is left out of the POM, with no warning, so read <code>external-dependencies.txt</code> before you publish. Declared coordinates are used, with a warning, only if the resolution step itself throws.</li>
+    </ul>
+    <p>To see the list before you publish, run <code>collectReleaseExternalDependencies</code>. It writes <code>build/reports/umbrellaaar/release/external-dependencies.txt</code>, sorted, one <code>group:name:version:scope</code> per line. <code>generatePomFileForAndroidReleaseUmbrellaAarPublication</code> writes the POM itself to <code>build/publications/androidReleaseUmbrellaAar/pom-default.xml</code>. The Kotlin plugin adds <code>kotlin-stdlib</code> late, so a full publish can list it when these tasks run on their own do not.</p>
+
+    <h3 id="merged-sources">Merged sources</h3>
+    <p>The merged sources jar holds only <code>.java</code> and <code>.kt</code> entries. A file in two dependencies keeps the first copy with a warning. A file that is also in the umbrella's sources fails the task.</p>
+    <p>The jar is built from a sources jar in each module, produced by a task such as <code>sourceReleaseJar</code>, <code>androidSourcesJar</code> or <code>sourcesJar</code>. A plain <code>com.android.library</code> module has one only with <code>android { publishing { singleVariant("release") { withSourcesJar() } } }</code>, so add that to each one. A plain JVM module needs <code>java { withSourcesJar() }</code>. On a <code>com.android.library</code> umbrella, add <code>singleVariant("debug") { withSourcesJar() }</code> as well if you publish debug, which <code>publish</code> does. Without a sources jar, the sources task fails with <code>Cannot query the value of this provider because it has no value available</code>, which also stops the publication. <code>bundle&lt;Variant&gt;UmbrellaAar</code> is not affected.</p>
+  </section>
+
+  <section id="compatibility" class="col" aria-labelledby="compatibility-title">
+    <h2 id="compatibility-title">Compatibility</h2>
+    <p><strong>If you are on AGP 8, stay on the 2.x line.</strong> The 3.x line needs AGP 9. Which line you need depends on your AGP version, not on which Android plugin you apply.</p>
+
+    <div class="scroll table-scroll" tabindex="0" role="group" aria-labelledby="lines-caption">
+      <table class="table-wide">
+        <caption id="lines-caption">Plugin lines and the minimum toolchain for each</caption>
+        <thead>
+          <tr>
+            <th scope="col">Plugin line</th>
+            <th scope="col">AGP</th>
+            <th scope="col">Gradle</th>
+            <th scope="col">Kotlin</th>
+            <th scope="col">Java</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">3.x</th><td>9.0.0+</td><td>9.1+</td><td>2.2.10+</td><td>17+</td></tr>
+          <tr><th scope="row">2.x, use 2.5.0</th><td>8.13.0+</td><td>8.13+</td><td>1.9.23+</td><td>17+</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="scroll table-scroll" tabindex="0" role="group" aria-labelledby="matrix-caption">
+      <table class="table-wide">
+        <caption id="matrix-caption">The 3.x line in detail</caption>
+        <thead>
+          <tr>
+            <th scope="col"><span class="visually-hidden">Tool or feature</span></th>
+            <th scope="col">Minimum</th>
+            <th scope="col">In this repository</th>
+            <th scope="col">Reported downstream</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">Gradle</th><td>9.1</td><td>9.1.0</td><td>9.5.1</td></tr>
+          <tr><th scope="row">AGP</th><td>9.0.0</td><td>9.0.0</td><td>9.3.1</td></tr>
+          <tr><th scope="row">Kotlin Gradle plugin</th><td>2.2.10</td><td>2.2.10</td><td>2.4.10</td></tr>
+          <tr><th scope="row">Java</th><td>17</td><td>17</td><td>21</td></tr>
+          <tr><th scope="row">Configuration cache</th><td>Supported</td><td>Store and reuse work, including POM generation</td><td>Reported working</td></tr>
+          <tr><th scope="row">Project isolation</th><td colspan="3">Not supported</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>The minimums come from the toolchain, not from a check in the plugin. AGP 9.0.0 refuses Gradle below 9.1.0. It also has a runtime dependency on Kotlin Gradle plugin 2.2.10, which raises lower versions on a shared classpath.</p>
+    <p>The downstream column is the maintainer's report: a 160-project Kotlin Multiplatform build with AGP 9.3.1, Gradle 9.5.1 and Kotlin 2.4.10, merging 95 modules into one SDK AAR. That build is not in this repository.</p>
+
+    <div class="scroll table-scroll" tabindex="0" role="group" aria-labelledby="umbrella-caption">
+      <table class="table-wide">
+        <caption id="umbrella-caption">What each Android plugin gives you on the umbrella module</caption>
+        <thead>
+          <tr>
+            <th scope="col">Applied to</th>
+            <th scope="col">Variants</th>
+            <th scope="col">Merge pipeline</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row"><code>com.android.kotlin.multiplatform.library</code></th><td><code>release</code> and <code>debug</code>, from the same <code>androidMain</code> output</td><td>One shared <code>androidMain</code> pipeline</td></tr>
+          <tr><th scope="row"><code>com.android.library</code></th><td>One per build type present when the plugin is applied, normally <code>debug</code> and <code>release</code></td><td>One per build type</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Under AGP 9, <code>org.jetbrains.kotlin.multiplatform</code> with <code>com.android.library</code> and <code>androidTarget()</code> is exercised in this repository only by <code>sample-legacy</code>, which sets <code>android.builtInKotlin=false</code> and <code>android.newDsl=false</code>.</p>
+
+    <h3>Moving from 2.x</h3>
+    <p>3.x no longer merges modules reachable only through <code>compileOnly</code>. 2.x did. 3.x lists them in a build warning, so the change is visible. Internal task names under the Kotlin Multiplatform plugin also changed. Public task and publication names did not.</p>
+  </section>
+
+  <section id="before-you-adopt" class="col" aria-labelledby="before-you-adopt-title">
+    <h2 id="before-you-adopt-title">Before you adopt it</h2>
+    <p>Merging modules adds risk to your release. These are the limits to weigh first.</p>
+    <ul class="limits" role="list">
+      <li><strong>Project isolation is not supported.</strong> The plugin reads sibling projects' configurations and forces their evaluation, which project isolation does not allow.</li>
+      <li><strong>Prefix your resource names per module.</strong> If two merged modules declare the same <code>res/values</code> resource for the same qualifier, the merge logs a warning and the bundle succeeds. Your consumer's build then fails by default with <code>Duplicate resources</code>, even if the two values are identical. A clash between the umbrella module and a dependency gets no warning at all. The plugin never compiles or links the merged resources, so these conflicts only surface in a consumer build.</li>
+      <li><strong>Test the merged AAR, especially with reflection or R8.</strong> <code>R</code> rewriting only covers class references in dependency modules. It does not touch the umbrella module's own classes, classes inside <code>libs/*.jar</code>, string lookups such as <code>Class.forName</code>, or the text of ProGuard rules, so a keep rule naming <code>com.example.feature.R</code> no longer matches anything. Keep code that uses an exported module's resources inside that module. References from the umbrella module to that module's <code>R</code> are not rewritten. Build a consumer against the merged AAR before you ship it.</li>
+      <li><strong>Only local Android library and JVM modules can be merged.</strong> A module with no archive task fails the build, and the error names the project and the tasks it tried. If you export only JVM modules, the merged manifest loses its <code>package</code> attribute. The effect on consumers has not been verified.</li>
+      <li><strong>The module types mix in one direction.</strong> A Kotlin Multiplatform umbrella can merge plain <code>com.android.library</code> modules. A <code>com.android.library</code> umbrella cannot merge <code>com.android.kotlin.multiplatform.library</code> modules: the build fails with <code>cannot find an archive task</code>, or, if the module has a <code>jvm()</code> target, silently takes <code>jvmJar</code> and leaves Android code and resources out.</li>
+      <li><strong>No product flavors, and no build types declared late.</strong> Product flavors are not supported. On <code>com.android.library</code>, a build type declared in your <code>android</code> block gets no umbrella tasks or publication, because the plugin reads build types before that block runs.</li>
+      <li><strong>Debug on a Kotlin Multiplatform umbrella is not a separate build.</strong> Release and debug share one <code>androidMain</code> pipeline, and exported <code>com.android.library</code> modules contribute their release AAR to both.</li>
+      <li><strong><code>exclude</code> on <code>export</code> is global.</strong> <code>exclude(group = ..., module = ...)</code> on any <code>export</code> line applies to the whole umbrella. It removes matching local modules from the merge and matching external dependencies from the POM. A module reached only through an excluded module is still merged.</li>
+    </ul>
+  </section>
+
+  <section id="fused-library" class="col" aria-labelledby="fused-library-title">
+    <h2 id="fused-library-title">Compared with fused-library</h2>
+    <p>AGP also has a <a href="https://developer.android.com/build/publish-library/fused-library">fused library plugin</a> for publishing several libraries as one.</p>
+    <div class="scroll table-scroll" tabindex="0" role="group" aria-labelledby="fused-caption">
+      <table class="table-compact">
+        <caption id="fused-caption">Design differences between fused-library and UmbrellaAAR</caption>
+        <thead>
+          <tr>
+            <th scope="col"><span class="visually-hidden">Design choice</span></th>
+            <th scope="col">Fused library</th>
+            <th scope="col">UmbrellaAAR</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">Choosing what goes in</th><td>You list each library with <code>include</code>.</td><td>You declare exports, and the plugin walks the graph from them.</td></tr>
+          <tr><th scope="row">Code in the module</th><td>A fused library has no sources of its own.</td><td>An umbrella module can have its own code. Its AAR is the base of the merge.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="col">
+    <nav aria-label="Project links">
+      <ul>
+        <li><a href="https://github.com/tiper/UmbrellaAAR">GitHub</a></li>
+        <li><a href="https://github.com/tiper/UmbrellaAAR/releases">Releases</a></li>
+        <li><a href="https://github.com/tiper/UmbrellaAAR/issues">Issues</a></li>
+      </ul>
+    </nav>
+    <p>Licensed under <a href="https://github.com/tiper/UmbrellaAAR/blob/main/LICENSE">Apache-2.0</a>. Copyright 2024 Tiago Pereira.</p>
+    <p>Android is a trademark of Google LLC.</p>
+  </div>
+</footer>
+</body>
+</html>
