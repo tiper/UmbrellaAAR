@@ -2,8 +2,6 @@ package io.github.tiper.umbrellaaar.extensions
 
 import com.android.build.api.attributes.BuildTypeAttr
 import com.android.build.api.attributes.BuildTypeAttr.Companion.ATTRIBUTE
-import io.github.tiper.umbrellaaar.UMBRELLA_AAR_CONFIG
-import io.github.tiper.umbrellaaar.UMBRELLA_AAR_PLUGIN
 import io.github.tiper.umbrellaaar.pom.configureKotlinPlatformAttribute
 import org.gradle.api.GradleException
 import org.gradle.api.Project
@@ -25,7 +23,6 @@ import org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE
 import org.gradle.api.attributes.java.TargetJvmEnvironment
 import org.gradle.api.attributes.java.TargetJvmEnvironment.ANDROID
 import org.gradle.api.attributes.java.TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE
-import org.gradle.kotlin.dsl.withType
 
 /**
  * Result of walking the local project graph reachable from the umbrella configuration.
@@ -114,47 +111,12 @@ internal fun Project.resolveProjectGraph(config: Configuration, buildType: Strin
 }
 
 /**
- * Fails on anything an umbrella among [modules] exports that this one would leave behind: an export
- * is no dependency of the module declaring it, so only that module's own classes come along. What
- * is excluded here is out on purpose. It takes the other umbrella's declarations to tell, and not
- * its graph, which would add a resolution for each one.
- */
-internal fun Project.checkNestedUmbrellas(modules: Set<Project>, rules: List<ExcludeRule>) {
-    val lost = modules.filterNot { it.isExcluded(rules) }
-        .associateWith { inner -> inner.umbrellaExports().filterNot { it == this || it in modules || it.isExcluded(rules) } }
-        .filterValues { it.isNotEmpty() }
-    if (lost.isEmpty()) return
-    throw GradleException(
-        "[UmbrellaAar] $path merges ${lost.keys.joinToString { it.path }}, whose exports do not come along with it:\n" +
-            lost.flatMap { (inner, exports) -> exports.map { "  - ${it.path} (exported by ${inner.path})\n" } }.joinToString("") +
-            "  Export them from $path too, or exclude them there to leave them out.",
-    )
-}
-
-/**
- * What [this] merges by exporting it, should it be an umbrella. A framework export can be a module
- * with nothing to merge, see [FRAMEWORK_EXPORT].
- */
-internal fun Project.umbrellaExports(): List<Project> {
-    if (!plugins.hasPlugin(UMBRELLA_AAR_PLUGIN)) return emptyList()
-    val export = configurations.getByName(UMBRELLA_AAR_CONFIG)
-    val rules = export.allExcludeRules()
-    return export.dependencies.filterIsInstance<ProjectDependency>().filterNot { it.isPlatform }.mapNotNull { dependency ->
-        findProject(dependency.path)?.also { it.ensureEvaluated() }?.takeUnless {
-            it.isExcluded(rules) || (dependency.reason == FRAMEWORK_EXPORT && !it.hasRuntimeVariant())
-        }
-    }
-}
-
-private fun Project.hasRuntimeVariant() = configurations.any { it.isCanBeConsumed && it.name.endsWith(RUNTIME_ELEMENTS, ignoreCase = true) }
-
-/**
  * The graph is walked lazily, so it may be evaluated at different points depending on the task
  * graph and on whether the configuration cache is warm. Reading `configurations` of a project that
  * has not been evaluated yet silently yields an incomplete graph — and the content of a published
  * artifact must never depend on the task graph.
  */
-private fun Project.ensureEvaluated() {
+internal fun Project.ensureEvaluated() {
     if (state.executed) return
     runCatching { rootProject.evaluationDependsOn(path) }.onFailure {
         throw GradleException(

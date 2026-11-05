@@ -214,6 +214,101 @@ class UmbrellaAar : Plugin<Project> {
         }
     }
 
+    /** All this build has to say about [graph] for [buildType], of which it keeps the modules in [kept]. */
+    private fun Project.reportGraph(graph: ProjectGraph, kept: Set<Project>, resolution: UmbrellaResolution?, rules: List<ExcludeRule>, buildType: String) {
+        graph.selfInclusionVia?.let { via ->
+            warnOnce(
+                "[UmbrellaAar] Project '$path' appeared in its own umbrella graph (reached via '$via') and was dropped.\n" +
+                    "  A module merged into the umbrella depends on the umbrella module itself. Remove that dependency, or stop exporting the module that has it.",
+                key = "selfInclusion",
+            )
+        }
+
+        resolution?.hostProjectDependencies
+            ?.filter { dependency -> graph.modules.none { it.path == dependency } }
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { unexported ->
+                warnOnce(
+                    buildString {
+                        appendLine("[UmbrellaAar] $path depends on local module(s) that are not exported:")
+                        unexported.forEach { appendLine("  $it") }
+                        append(
+                            "  They are neither merged into the AAR nor declared as dependencies in its POM. " +
+                                "Add them with export(project(\"…\")) if they must ship with the umbrella.",
+                        )
+                    },
+                )
+            }
+
+        resolution?.unresolved?.takeIf { it.isNotEmpty() }?.let { unresolved ->
+            warnOnce(
+                buildString {
+                    appendLine("[UmbrellaAar] ${unresolved.size} framework export(s) of $path could not be resolved for its umbrella:")
+                    unresolved.forEach { (module, why) -> appendLine("  $module: $why") }
+                    append(
+                        "  They are neither merged into the AAR nor declared as dependencies in its POM. " +
+                            "That is expected of a framework export with no Android or JVM target.",
+                    )
+                },
+            )
+        }
+
+        // Behaviour change vs 2.x, called out explicitly so it can never be a silent difference
+        // in the published artifact.
+        graph.compileOnlyOnly.filterKeys { rootProject.findProject(it)?.isExcluded(rules) != true }.takeIf { it.isNotEmpty() }?.let { skipped ->
+            warnOnce(
+                buildString {
+                    appendLine("[UmbrellaAar] ${skipped.size} module(s) are reachable only through `compileOnly` and were NOT merged into the umbrella AAR of $path:")
+                    skipped.entries.sortedBy { it.key }.forEach { (module, via) -> appendLine("  $module (via $via)") }
+                    append(
+                        "  `compileOnly` means \"provided by the consumer\". If these modules must ship inside the AAR, " +
+                            "declare them with `api`/`implementation` instead. If they stay out on purpose, say so with " +
+                            "exclude(...) on `export`, which ends this warning.",
+                    )
+                },
+            )
+        }
+
+        (graph.modules - kept).takeIf { it.isNotEmpty() }?.let { excluded ->
+            // The merged modules still call into these, so the consumer needs them from somewhere.
+            warnOnce(
+                buildString {
+                    appendLine("[UmbrellaAar] ${excluded.size} local module(s) in the umbrella graph of $path are excluded:")
+                    excluded.sortedBy { it.path }.forEach { appendLine("  ${it.path} (via ${graph.via[it.path]})") }
+                    append(
+                        "  They are neither merged into the AAR nor declared as dependencies in its POM. " +
+                            "If the merged modules use them at runtime, publish them separately and have consumers depend on them.",
+                    )
+                },
+                key = "excluded ${excluded.map { it.path }.sorted()}",
+            )
+        }
+        if (kept.isEmpty()) {
+            warnOnce(
+                "[UmbrellaAar] $path merges no modules, so its AAR holds its own code and nothing else.\n" +
+                    "  Add a module to it with export(project(\":feature\")) in its dependencies block.",
+            )
+        }
+        // An AAR carries the jars of an Android module, while a JVM module's jar has no room for
+        // them, and a POM has no way of naming a file.
+        kept.filterNot { it.hasAndroidPlugin() }
+            .flatMap { module -> module.fileDependencies(graph.variantOf[module.path], buildType).map { "${module.path}: $it" } }
+            .takeIf { it.isNotEmpty() }
+            ?.let { files ->
+                warnOnce(
+                    buildString {
+                        appendLine("[UmbrellaAar] Files that JVM modules depend on ship in neither the AAR nor the POM of $path:")
+                        files.forEach { appendLine("  $it") }
+                        append(
+                            "  Consumers will not have them, as with a stock publication of these modules. " +
+                                "Publish each one to a repository and depend on that, or move it to an Android library module, whose AAR carries it.",
+                        )
+                    },
+                )
+            }
+        idleRules[buildType] = (umbrellaRules(rules, buildType) - rulesInUse(rules, graph, resolution, buildType)).associateWith { idleLine(it, graph, resolution) }
+    }
+
     override fun apply(target: Project) = with(target) {
         val config = configurations.maybeCreate(UMBRELLA_AAR_CONFIG).apply {
             isCanBeResolved = true
@@ -305,99 +400,8 @@ class UmbrellaAar : Plugin<Project> {
             val rules = config.allExcludeRules()
             val resolution = if (useLegacyGraph()) null else resolveUmbrella(config, buildType)
             val graph = resolution?.graph ?: resolveProjectGraph(config, buildType)
-
-            graph.selfInclusionVia?.let { via ->
-                warnOnce(
-                    "[UmbrellaAar] Project '$path' appeared in its own umbrella graph (reached via '$via') and was dropped.\n" +
-                        "  A module merged into the umbrella depends on the umbrella module itself. Remove that dependency, or stop exporting the module that has it.",
-                    key = "selfInclusion",
-                )
-            }
-
-            resolution?.hostProjectDependencies
-                ?.filter { dependency -> graph.modules.none { it.path == dependency } }
-                ?.takeIf { it.isNotEmpty() }
-                ?.let { unexported ->
-                    warnOnce(
-                        buildString {
-                            appendLine("[UmbrellaAar] $path depends on local module(s) that are not exported:")
-                            unexported.forEach { appendLine("  $it") }
-                            append(
-                                "  They are neither merged into the AAR nor declared as dependencies in its POM. " +
-                                    "Add them with export(project(\"…\")) if they must ship with the umbrella.",
-                            )
-                        },
-                    )
-                }
-
-            resolution?.unresolved?.takeIf { it.isNotEmpty() }?.let { unresolved ->
-                warnOnce(
-                    buildString {
-                        appendLine("[UmbrellaAar] ${unresolved.size} framework export(s) of $path could not be resolved for its umbrella:")
-                        unresolved.forEach { (module, why) -> appendLine("  $module: $why") }
-                        append(
-                            "  They are neither merged into the AAR nor declared as dependencies in its POM. " +
-                                "That is expected of a framework export with no Android or JVM target.",
-                        )
-                    },
-                )
-            }
-
-            // Behaviour change vs 2.x, called out explicitly so it can never be a silent difference
-            // in the published artifact.
-            graph.compileOnlyOnly.filterKeys { rootProject.findProject(it)?.isExcluded(rules) != true }.takeIf { it.isNotEmpty() }?.let { skipped ->
-                warnOnce(
-                    buildString {
-                        appendLine("[UmbrellaAar] ${skipped.size} module(s) are reachable only through `compileOnly` and were NOT merged into the umbrella AAR of $path:")
-                        skipped.entries.sortedBy { it.key }.forEach { (module, via) -> appendLine("  $module (via $via)") }
-                        append(
-                            "  `compileOnly` means \"provided by the consumer\". If these modules must ship inside the AAR, " +
-                                "declare them with `api`/`implementation` instead. If they stay out on purpose, say so with " +
-                                "exclude(...) on `export`, which ends this warning.",
-                        )
-                    },
-                )
-            }
-
             val kept = graph.modules.filterNot { it.isExcluded(rules) }.toSet()
-            (graph.modules - kept).takeIf { it.isNotEmpty() }?.let { excluded ->
-                // The merged modules still call into these, so the consumer needs them from somewhere.
-                warnOnce(
-                    buildString {
-                        appendLine("[UmbrellaAar] ${excluded.size} local module(s) in the umbrella graph of $path are excluded:")
-                        excluded.sortedBy { it.path }.forEach { appendLine("  ${it.path} (via ${graph.via[it.path]})") }
-                        append(
-                            "  They are neither merged into the AAR nor declared as dependencies in its POM. " +
-                                "If the merged modules use them at runtime, publish them separately and have consumers depend on them.",
-                        )
-                    },
-                    key = "excluded ${excluded.map { it.path }.sorted()}",
-                )
-            }
-            if (kept.isEmpty()) {
-                warnOnce(
-                    "[UmbrellaAar] $path merges no modules, so its AAR holds its own code and nothing else.\n" +
-                        "  Add a module to it with export(project(\":feature\")) in its dependencies block.",
-                )
-            }
-            // An AAR carries the jars of an Android module, while a JVM module's jar has no room for
-            // them, and a POM has no way of naming a file.
-            kept.filterNot { it.hasAndroidPlugin() }
-                .flatMap { module -> module.fileDependencies(graph.variantOf[module.path], buildType).map { "${module.path}: $it" } }
-                .takeIf { it.isNotEmpty() }
-                ?.let { files ->
-                    warnOnce(
-                        buildString {
-                            appendLine("[UmbrellaAar] Files that JVM modules depend on ship in neither the AAR nor the POM of $path:")
-                            files.forEach { appendLine("  $it") }
-                            append(
-                                "  Consumers will not have them, as with a stock publication of these modules. " +
-                                    "Publish each one to a repository and depend on that, or move it to an Android library module, whose AAR carries it.",
-                            )
-                        },
-                    )
-                }
-            idleRules[buildType] = (umbrellaRules(rules, buildType) - rulesInUse(rules, graph, resolution, buildType)).associateWith { idleLine(it, graph, resolution) }
+            reportGraph(graph, kept, resolution, rules, buildType)
             logger.info("[UmbrellaAar] $path/$buildType merges ${kept.size} modules: ${kept.joinToString { it.path }}")
             graph.copy(modules = kept)
         }
