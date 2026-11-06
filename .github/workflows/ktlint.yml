@@ -38,4 +38,4 @@ jobs:
             ${{ runner.os }}-kotlin-native-ndk-
 
       - name: Run ktlint Check
-        run: ./gradlew :build-logic:plugins:ktlintCheck ktlintCheck
+        run: ./gradlew :build-logic:plugins:ktlintCheck :plugin:ktlintCheck ktlintCheck

@@ -1385,11 +1385,9 @@ class MergeDependenciesTest {
         }
     }.toByteArray()
 
-    private fun metadata(vararg entries: Pair<String, String>) =
-        (listOf("aarFormatVersion" to "1.0", "aarMetadataVersion" to "1.0") + entries).joinToString("\n") { (k, v) -> "$k=$v" }
+    private fun metadata(vararg entries: Pair<String, String>) = (listOf("aarFormatVersion" to "1.0", "aarMetadataVersion" to "1.0") + entries).joinToString("\n") { (k, v) -> "$k=$v" }
 
-    private fun annotations(item: String) =
-        """<root><item name="$item"><annotation name="androidx.annotation.IntDef"/></item></root>"""
+    private fun annotations(item: String) = """<root><item name="$item"><annotation name="androidx.annotation.IntDef"/></item></root>"""
 
     /** A class `name` whose single method reads a static int field of [owner]. */
     private fun classReadingField(name: String, owner: String): ByteArray {
@@ -1409,12 +1407,11 @@ class MergeDependenciesTest {
     private fun fieldOwners(bytecode: ByteArray): Set<String> = buildSet {
         org.objectweb.asm.ClassReader(bytecode).accept(
             object : org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
-                override fun visitMethod(access: Int, name: String?, descriptor: String?, signature: String?, exceptions: Array<out String>?) =
-                    object : org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
-                        override fun visitFieldInsn(opcode: Int, owner: String, name: String?, descriptor: String?) {
-                            add(owner)
-                        }
+                override fun visitMethod(access: Int, name: String?, descriptor: String?, signature: String?, exceptions: Array<out String>?) = object : org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                    override fun visitFieldInsn(opcode: Int, owner: String, name: String?, descriptor: String?) {
+                        add(owner)
                     }
+                }
             },
             0,
         )
@@ -1457,4 +1454,3 @@ class MergeDependenciesTest {
         const val AAR_METADATA = "META-INF/com/android/build/gradle/aar-metadata.properties"
     }
 }
-

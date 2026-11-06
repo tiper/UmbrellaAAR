@@ -3,10 +3,6 @@ package io.github.tiper.umbrellaaar
 import com.android.build.api.dsl.LibraryExtension
 import io.github.tiper.umbrellaaar.extensions.UmbrellaResolution
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
-import io.github.tiper.umbrellaaar.extensions.matches
-import io.github.tiper.umbrellaaar.extensions.resolveUmbrella
-import io.github.tiper.umbrellaaar.extensions.useLegacyGraph
-import io.github.tiper.umbrellaaar.extensions.warnIfUnversioned
 import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.checkCoordinateClashes
 import io.github.tiper.umbrellaaar.extensions.createAndroidResolutionConfig
@@ -15,8 +11,12 @@ import io.github.tiper.umbrellaaar.extensions.disabledBuildTypes
 import io.github.tiper.umbrellaaar.extensions.exclude
 import io.github.tiper.umbrellaaar.extensions.hasAndroidLibraryPlugin
 import io.github.tiper.umbrellaaar.extensions.isExcluded
+import io.github.tiper.umbrellaaar.extensions.matches
 import io.github.tiper.umbrellaaar.extensions.resolveProjectGraph
+import io.github.tiper.umbrellaaar.extensions.resolveUmbrella
 import io.github.tiper.umbrellaaar.extensions.rulesInUse
+import io.github.tiper.umbrellaaar.extensions.useLegacyGraph
+import io.github.tiper.umbrellaaar.extensions.warnIfUnversioned
 import io.github.tiper.umbrellaaar.extensions.warnOnce
 import io.github.tiper.umbrellaaar.pom.Collector
 import io.github.tiper.umbrellaaar.pom.Collector.Dependency

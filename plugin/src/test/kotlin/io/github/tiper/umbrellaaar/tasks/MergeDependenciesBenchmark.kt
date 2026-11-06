@@ -40,8 +40,14 @@ class MergeDependenciesBenchmark {
         val modules = 95
         val classesPerModule = 31
 
-        val mainDir = File(root, "bench-main-$label").apply { deleteRecursively(); mkdirs() }
-        val depsDir = File(root, "bench-deps-$label").apply { deleteRecursively(); mkdirs() }
+        val mainDir = File(root, "bench-main-$label").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        val depsDir = File(root, "bench-deps-$label").apply {
+            deleteRecursively()
+            mkdirs()
+        }
         val outDir = File(root, "bench-out-$label")
 
         write(mainDir, "AndroidManifest.xml", manifest("com.example.umbrella", index = -1))
@@ -114,6 +120,3 @@ class MergeDependenciesBenchmark {
         var counter = 0
     }
 }
-
-
-

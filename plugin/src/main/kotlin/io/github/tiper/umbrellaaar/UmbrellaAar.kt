@@ -501,4 +501,3 @@ class UmbrellaAar : Plugin<Project> {
         val VARIANTS = listOf("release", "debug")
     }
 }
-

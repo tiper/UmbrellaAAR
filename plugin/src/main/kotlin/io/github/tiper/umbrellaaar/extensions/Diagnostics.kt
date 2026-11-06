@@ -150,6 +150,7 @@ internal fun Project.rulesInUse(rules: List<ExcludeRule>, graph: ProjectGraph, r
     val owners = listOf(path) + kept.map { it.path }
     val externals = when (resolution) {
         null -> declaredExternals(kept, buildType).map { it.group to it.name }
+
         else -> owners.flatMap { resolution.externalsOf[it].orEmpty() }.plus(resolution.pinned).map { it.group to it.name } +
             owners.flatMap { resolution.constraintsOf[it].orEmpty() }.map { it.group to it.name } + resolution.notResolved
     }
@@ -163,8 +164,7 @@ internal fun Project.rulesInUse(rules: List<ExcludeRule>, graph: ProjectGraph, r
  * like `configurations.configureEach`, so it is the build's and may be there for any other module.
  * Gradle applies it there, and whether it did anything no longer shows in the graph.
  */
-internal fun Project.umbrellaRules(rules: List<ExcludeRule>, buildType: String): Set<ExcludeRule> =
-    rules.toSet() - configurations.getByName(classpathName(buildType)).excludeRules
+internal fun Project.umbrellaRules(rules: List<ExcludeRule>, buildType: String): Set<ExcludeRule> = rules.toSet() - configurations.getByName(classpathName(buildType)).excludeRules
 
 /**
  * `project path -> the scope that declares it`, for the local modules that [runtimeSides] compile

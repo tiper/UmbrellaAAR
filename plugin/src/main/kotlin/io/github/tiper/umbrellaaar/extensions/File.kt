@@ -132,4 +132,3 @@ internal fun File.zip(to: File) {
 private fun File.isInsideOf(canonicalRoot: File): Boolean = canonicalFile.let {
     it == canonicalRoot || it.path.startsWith(canonicalRoot.path + File.separator)
 }
-

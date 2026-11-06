@@ -116,8 +116,7 @@ internal fun Project.registerUmbrellaClasspath(export: Configuration, buildType:
 }
 
 /** The declarable configurations feeding the umbrella module's own runtime classpath. */
-private fun Project.hostDeclarations(buildType: String): List<Configuration> =
-    hostClasspath(buildType)?.hierarchy.orEmpty().filter { it.isCanBeDeclared }
+private fun Project.hostDeclarations(buildType: String): List<Configuration> = hostClasspath(buildType)?.hierarchy.orEmpty().filter { it.isCanBeDeclared }
 
 /**
  * What the umbrella module declares on anything but a local module. These leave the configurations
@@ -225,6 +224,7 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
             }
             when {
                 module == this -> if (selfInclusionVia == null) selfInclusionVia = labels.getValue(current.id)
+
                 module != null -> {
                     (current.id as? ProjectComponentIdentifier)?.takeIf { current != root }?.let { dependents.getOrPut(module.path) { mutableListOf() } += it.projectPath }
                     if (modules.add(module)) {
@@ -242,6 +242,7 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
                         }
                     }
                 }
+
                 // External modules, and projects of included builds, which are published as such.
                 else -> externalEdges.getOrPut(current.id) { mutableListOf() } += edge
             }
@@ -340,7 +341,7 @@ private fun Project.projectPathOf(component: ResolvedComponentResult) = (compone
  */
 internal fun ResolutionResult.pinnedBy(owners: List<ResolvedComponentResult>): List<ResolvedComponentResult> {
     val pinned = allComponents.filterTo(linkedSetOf()) { component ->
-        component.selectionReason.isSelectedByRule || component.selectionReason.isForced && component.dependents.none { it.isConstraint }
+        component.selectionReason.isSelectedByRule || (component.selectionReason.isForced && component.dependents.none { it.isConstraint })
     }
     val seen = owners.toMutableSet()
     val queue = ArrayDeque(owners)

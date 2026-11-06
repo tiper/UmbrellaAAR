@@ -157,14 +157,9 @@ class ProjectExtensionsTest {
         variantOf = listOfNotNull(variant).associateBy { project.path },
     )
 
-    private fun org.gradle.api.Project.outputFile(relativePath: String, lastModified: Long) =
-        layout.buildDirectory.file(relativePath).get().asFile.apply {
-            parentFile.mkdirs()
-            writeText(relativePath)
-            assertTrue(setLastModified(lastModified), "Could not set timestamp for $absolutePath")
-        }
+    private fun org.gradle.api.Project.outputFile(relativePath: String, lastModified: Long) = layout.buildDirectory.file(relativePath).get().asFile.apply {
+        parentFile.mkdirs()
+        writeText(relativePath)
+        assertTrue(setLastModified(lastModified), "Could not set timestamp for $absolutePath")
+    }
 }
-
-
-
-

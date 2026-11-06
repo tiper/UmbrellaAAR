@@ -92,10 +92,13 @@ internal fun buildClassesJar(
             val services = serviceFiles[entryName]
             when {
                 services != null && services.size > 1 -> zos.write(services.mergeServiceFiles())
+
                 relocate && owner == MAIN && entryName.endsWith(".class") ->
                     zos.write(file.readBytes().transformClass(umbrellaNamespace, mergedNamespaces, module, onRField))
+
                 relocate && entryName.startsWith(TARGETED_RULES) ->
                     zos.write(relocateRules(file.readText()).encodeToByteArray())
+
                 else -> file.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
             }
             zos.closeEntry()

@@ -180,4 +180,3 @@ private fun Project.isKotlinProject(): Boolean = KOTLIN_PLUGINS.any(plugins::has
 private val KOTLIN_PLUGINS = listOf("org.jetbrains.kotlin.multiplatform", "org.jetbrains.kotlin.android", "org.jetbrains.kotlin.jvm")
 
 private const val LOG_TAG = "[UmbrellaAar]"
-

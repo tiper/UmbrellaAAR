@@ -7,6 +7,7 @@ plugins {
     id("com.gradle.plugin-publish") version "2.0.0"
     id("signing")
     alias(libs.plugins.vanniktech.maven.publish)
+    alias(libs.plugins.ktlint)
 }
 
 group = "io.github.tiper"
@@ -135,7 +136,7 @@ signing {
     // that is the only graph whenReady would ever see here.
     setRequired(
         Callable {
-            gradle.taskGraph.allTasks.any { it.name == "publishPlugins" || it is PublishToMavenRepository && it.repository.name != "PluginUnderTest" }
+            gradle.taskGraph.allTasks.any { it.name == "publishPlugins" || (it is PublishToMavenRepository && it.repository.name != "PluginUnderTest") }
         },
     )
     useInMemoryPgpKeys(
@@ -171,4 +172,8 @@ mavenPublishing {
             developerConnection = "scm:git:ssh://github.com/tiper/UmbrellaAAR.git"
         }
     }
+}
+
+ktlint {
+    version = libs.versions.ktlint.asProvider()
 }

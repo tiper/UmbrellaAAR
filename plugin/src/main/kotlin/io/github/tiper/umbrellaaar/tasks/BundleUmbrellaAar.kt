@@ -1,6 +1,7 @@
 package io.github.tiper.umbrellaaar.tasks
 
 import io.github.tiper.umbrellaaar.extensions.zip
+import java.util.Locale.ROOT
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -12,7 +13,6 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.RELATIVE
 import org.gradle.api.tasks.TaskAction
-import java.util.Locale.ROOT
 
 @CacheableTask
 abstract class BundleUmbrellaAar : DefaultTask() {

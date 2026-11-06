@@ -1,24 +1,24 @@
 package io.github.tiper.umbrellaaar.extensions
 
-import org.gradle.api.GradleException
-import org.objectweb.asm.ClassReader
-import org.objectweb.asm.ClassWriter
-import org.objectweb.asm.Opcodes.ACC_PUBLIC
-import org.objectweb.asm.Opcodes.ACC_SUPER
-import org.objectweb.asm.Opcodes.IRETURN
-import org.objectweb.asm.Opcodes.GETSTATIC
-import org.objectweb.asm.Opcodes.V1_8
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.gradle.api.GradleException
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.Opcodes.ACC_PUBLIC
+import org.objectweb.asm.Opcodes.ACC_SUPER
+import org.objectweb.asm.Opcodes.GETSTATIC
+import org.objectweb.asm.Opcodes.IRETURN
+import org.objectweb.asm.Opcodes.V1_8
 
 class ByteArrayExtensionsTest {
 
     /** Namespaces of the modules being merged, as read from each dependency AAR's manifest. */
-    private val MERGED_NAMESPACES = setOf("com/dep", "com/main")
+    private val mergedNamespaces = setOf("com/dep", "com/main")
 
     private val module = ":feature"
 
@@ -79,21 +79,21 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass returns same bytecode when no R class reference`() {
         val originalBytes = byteArrayOf(1, 2, 3, 4, 5)
-        val transformed = originalBytes.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = originalBytes.transformClass("com/main", mergedNamespaces, module)
         assertEquals(originalBytes.size, transformed.size)
     }
 
     @Test
     fun `transformClass handles empty bytecode`() {
         val emptyBytes = ByteArray(0)
-        val transformed = emptyBytes.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = emptyBytes.transformClass("com/main", mergedNamespaces, module)
 
         assertEquals(0, transformed.size)
     }
 
     // ── What a class reads from an R ───────────────────────────────────────
 
-    private fun ByteArray.rFields() = buildMap { transformClass("com/main", MERGED_NAMESPACES, module) { field, reader -> put(field, reader) } }
+    private fun ByteArray.rFields() = buildMap { transformClass("com/main", mergedNamespaces, module) { field, reader -> put(field, reader) } }
 
     @Test
     fun `transformClass reports a field read from a merged R, and the class reading it`() {
@@ -140,9 +140,12 @@ class ByteArrayExtensionsTest {
 
     @Test
     fun `transformClass names the class it is too old to read, and its module`() {
-        val tooNew = classReferencingField("com/dep/R\$string", "title", "I").also { it[6] = 0; it[7] = 200.toByte() }
+        val tooNew = classReferencingField("com/dep/R\$string", "title", "I").also {
+            it[6] = 0
+            it[7] = 200.toByte()
+        }
 
-        val failure = assertFailsWith<GradleException> { tooNew.transformClass("com/main", MERGED_NAMESPACES, module) }
+        val failure = assertFailsWith<GradleException> { tooNew.transformClass("com/main", mergedNamespaces, module) }
 
         assertContains(failure.message!!, "com.test.TestClass of module ':feature' has class file version 200 (Java 156)")
     }
@@ -150,7 +153,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass remaps inner R class to main namespace`() {
         val bytecode = classReferencingField("com/dep/R\$drawable", "icon", "I")
-        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = bytecode.transformClass("com/main", mergedNamespaces, module)
         val refs = extractFieldOwners(transformed)
         assertTrue("com/main/R\$drawable" in refs, "Inner R class should be remapped to main namespace")
         assertFalse("com/dep/R\$drawable" in refs, "Original R class reference should be gone")
@@ -159,14 +162,14 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass leaves no trace of the relocated R in the constant pool`() {
         val bytecode = classReferencingField("com/dep/R\$drawable", "icon", "I")
-        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = bytecode.transformClass("com/main", mergedNamespaces, module)
         assertFalse("com/dep/R" in transformed.decodeToString(), "The old R must not survive as a dead constant-pool entry")
     }
 
     @Test
     fun `transformClass remaps bare R class to main namespace`() {
         val bytecode = classWithTypeReference("com/dep/R")
-        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = bytecode.transformClass("com/main", mergedNamespaces, module)
         val superName = extractSuperName(transformed)
         assertEquals("com/main/R", superName, "Bare R class should be remapped to main namespace")
     }
@@ -174,7 +177,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap main namespace R class`() {
         val bytecode = classReferencingField("com/main/R\$drawable", "icon", "I")
-        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = bytecode.transformClass("com/main", mergedNamespaces, module)
         val refs = extractFieldOwners(transformed)
         assertTrue("com/main/R\$drawable" in refs, "Main namespace R should remain unchanged")
     }
@@ -182,7 +185,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap bare R in main namespace`() {
         val bytecode = classWithTypeReference("com/main/R")
-        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = bytecode.transformClass("com/main", mergedNamespaces, module)
         val superName = extractSuperName(transformed)
         assertEquals("com/main/R", superName, "Main namespace bare R should remain unchanged")
     }
@@ -190,7 +193,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap android framework R`() {
         val bytecode = classReferencingField("android/R\$layout", "activity_main", "I")
-        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = bytecode.transformClass("com/main", mergedNamespaces, module)
         val refs = extractFieldOwners(transformed)
         assertTrue("android/R\$layout" in refs, "Android framework R should remain unchanged")
     }
@@ -198,7 +201,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap androidx R`() {
         val bytecode = classReferencingField("androidx/core/R\$attr", "colorPrimary", "I")
-        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = bytecode.transformClass("com/main", mergedNamespaces, module)
         val refs = extractFieldOwners(transformed)
         assertTrue("androidx/core/R\$attr" in refs, "AndroidX R should remain unchanged")
     }
@@ -206,7 +209,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap material R`() {
         val bytecode = classReferencingField("com/google/android/material/R\$style", "theme", "I")
-        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = bytecode.transformClass("com/main", mergedNamespaces, module)
         val refs = extractFieldOwners(transformed)
         assertTrue("com/google/android/material/R\$style" in refs, "Material R should remain unchanged")
     }
@@ -214,7 +217,7 @@ class ByteArrayExtensionsTest {
     @Test
     fun `transformClass does not remap non-R classes`() {
         val bytecode = classWithTypeReference("com/dep/Router")
-        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = bytecode.transformClass("com/main", mergedNamespaces, module)
         val superName = extractSuperName(transformed)
         assertEquals("com/dep/Router", superName, "Non-R class should remain unchanged")
     }
@@ -224,7 +227,7 @@ class ByteArrayExtensionsTest {
         // A third-party library bundled inside the umbrella ships its own R. Rewriting it would
         // point at a class that does not declare those fields -> NoSuchFieldError at runtime.
         val bytecode = classReferencingField("com/vendor/sdk/R\$string", "label", "I")
-        val transformed = bytecode.transformClass("com/main", MERGED_NAMESPACES, module)
+        val transformed = bytecode.transformClass("com/main", mergedNamespaces, module)
         val refs = extractFieldOwners(transformed)
         assertTrue("com/vendor/sdk/R\$string" in refs, "Third-party R must not be relocated")
         assertFalse("com/main/R\$string" in refs)
@@ -266,15 +269,22 @@ class ByteArrayExtensionsTest {
     private fun extractFieldOwners(bytecode: ByteArray): Set<String> {
         val owners = mutableSetOf<String>()
         val reader = ClassReader(bytecode)
-        reader.accept(object : org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
-            override fun visitMethod(
-                access: Int, name: String?, descriptor: String?, signature: String?, exceptions: Array<out String>?,
-            ) = object : org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
-                override fun visitFieldInsn(opcode: Int, owner: String, name: String?, descriptor: String?) {
-                    if (opcode == GETSTATIC) owners.add(owner)
+        reader.accept(
+            object : org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String?,
+                    descriptor: String?,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ) = object : org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                    override fun visitFieldInsn(opcode: Int, owner: String, name: String?, descriptor: String?) {
+                        if (opcode == GETSTATIC) owners.add(owner)
+                    }
                 }
-            }
-        }, 0)
+            },
+            0,
+        )
         return owners
     }
 

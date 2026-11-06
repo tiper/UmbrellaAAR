@@ -415,7 +415,9 @@ abstract class MergeDependencies : DefaultTask() {
                 val existing = entries[name]
                 entries[name] = when {
                     existing == null -> owner to bytes
+
                     existing.second.contentEquals(bytes) -> existing
+
                     else -> existing.first to (
                         existing.second.decodeToString().mergeXmlChildren(bytes.decodeToString())?.encodeToByteArray()
                             ?: throw conflict("$ANNOTATIONS_ZIP!/$name", existing.first, owner, "  Two modules declare different typedef annotations for the same package.")
@@ -504,8 +506,7 @@ abstract class MergeDependencies : DefaultTask() {
         )
     }
 
-    private fun conflict(relativePath: String, firstContributor: String, secondContributor: String, hint: String) =
-        cannotMerge(relativePath, "it is contributed by two modules with different content", firstContributor, secondContributor, hint)
+    private fun conflict(relativePath: String, firstContributor: String, secondContributor: String, hint: String) = cannotMerge(relativePath, "it is contributed by two modules with different content", firstContributor, secondContributor, hint)
 
     private fun cannotMerge(relativePath: String, reason: String, firstContributor: String, secondContributor: String, hint: String) = GradleException(
         buildString {

@@ -75,4 +75,3 @@ class AndroidxArtifactMapTest {
         assertEquals("androidx.compose.ui", map.getValue("ui-android").group)
     }
 }
-

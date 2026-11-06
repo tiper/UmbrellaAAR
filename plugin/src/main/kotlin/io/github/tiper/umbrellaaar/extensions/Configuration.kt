@@ -116,9 +116,11 @@ internal fun Project.resolveProjectGraph(config: Configuration, buildType: Strin
             .forEach { configuration ->
                 when (configuration.name) {
                     in allowed -> configuration.projectDependencies().forEach { enqueue(current.path, configuration.name, it) }
+
                     in compileOnly -> configuration.projectDependencies().forEach {
                         compileOnlyOnly.putIfAbsent(it.path, "${current.path} -> ${configuration.name}")
                     }
+
                     else -> Unit
                 }
             }
@@ -217,10 +219,8 @@ internal val ResolvedDependencyResult.isPlatform: Boolean
 
 internal fun Configuration.allExcludeRules(): List<ExcludeRule> = (excludeRules + dependencies.filterIsInstance<ProjectDependency>().flatMap { it.excludeRules }).toList()
 
-
 internal fun ExcludeRule.matches(group: String?, module: String?): Boolean = (groupOrEmpty to moduleOrEmpty).matches(group, module)
 
 internal fun Project.isExcluded(rules: List<ExcludeRule>): Boolean = rules.any { it.matches(group = group.toString(), module = name) }
 
 internal fun Dependency.isExcluded(rules: List<ExcludeRule>): Boolean = rules.any { it.matches(group, name) }
-

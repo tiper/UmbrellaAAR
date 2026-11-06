@@ -67,7 +67,10 @@ private fun ByteArray.classReader(module: String) = try {
     if (e.message?.startsWith("Unsupported class file") != true) throw e
     val version = ((this[6].toInt() and 0xFF) shl 8) or (this[7].toInt() and 0xFF)
     // ASM can tell the name once the version is one it knows, if the rest of the class is too.
-    val readable = copyOf().also { it[6] = 0; it[7] = V1_8.toByte() }
+    val readable = copyOf().also {
+        it[6] = 0
+        it[7] = V1_8.toByte()
+    }
     val name = runCatching { ClassReader(readable).className.replace('/', '.') }.getOrDefault("A class")
     val asm = ClassReader::class.java.protectionDomain.codeSource?.location?.path?.substringAfterLast('/')
     throw GradleException(

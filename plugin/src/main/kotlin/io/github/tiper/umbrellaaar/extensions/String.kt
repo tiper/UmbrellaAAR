@@ -7,7 +7,6 @@ internal fun String.capitalize() = replaceFirstChar { it.uppercaseChar() }
 
 internal fun String.cleanPlatformSuffixes() = listOf("-android", "-jvm", "-java8").fold(this) { acc, suffix -> acc.removeSuffix(suffix) }
 
-
 internal fun Pair<String, String>.matches(group: String?, module: String?): Boolean = when {
     first.isNotEmpty() && second.isNotEmpty() -> first == group && second == module
     first.isNotEmpty() -> first == group
@@ -103,4 +102,3 @@ private val documentBuilder = ThreadLocal.withInitial {
         isExpandEntityReferences = false
     }.newDocumentBuilder()
 }
-

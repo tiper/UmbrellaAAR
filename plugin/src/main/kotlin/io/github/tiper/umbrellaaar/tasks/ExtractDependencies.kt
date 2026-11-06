@@ -274,4 +274,3 @@ internal fun Map<File, String>.folderNames(): Map<File, String> {
 
 /** Not a leading dot, which a consumer's resource merge takes for a hidden file and skips in silence. */
 private fun String.moduleFolderName(): String = replace(Regex("[^A-Za-z0-9._-]"), "_").trim('_', '.').ifEmpty { "module" }
-
