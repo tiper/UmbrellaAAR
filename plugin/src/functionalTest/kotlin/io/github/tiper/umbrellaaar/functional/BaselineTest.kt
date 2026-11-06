@@ -104,6 +104,19 @@ class BaselineTest {
         assertTrue(sourcesJar.isFile, "Expected $sourcesJar")
     }
 
+    @Test
+    fun `JVM modules with a module descriptor merge, as in stock`() = fixture {
+        fun Fixture.described(name: String) = javaLibrary(name) {
+            file("src/main/java/module-info.java", "module $namespace { exports $namespace; }\n")
+            file("src/main/resources/META-INF/versions/9/module-info.class", "$name\n")
+        }
+        val umbrella = androidUmbrella { export(described("first"), described("second")) }
+
+        parity(umbrella).assertMatchesStock()
+
+        assertTrue(umbrella.published().aar.classes.none { "module-info" in it })
+    }
+
     private companion object {
         /** A file of a module to where it ends up in an APK. */
         val OTHER_ENTRIES = mapOf(

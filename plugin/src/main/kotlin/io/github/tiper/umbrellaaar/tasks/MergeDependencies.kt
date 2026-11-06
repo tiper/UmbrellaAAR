@@ -16,6 +16,7 @@ import io.github.tiper.umbrellaaar.extensions.mergeXmlChildren
 import io.github.tiper.umbrellaaar.extensions.normalizePath
 import io.github.tiper.umbrellaaar.extensions.packageName
 import io.github.tiper.umbrellaaar.extensions.parseAarMetadata
+import io.github.tiper.umbrellaaar.extensions.relocateRInRules
 import io.github.tiper.umbrellaaar.extensions.stripPackageAttribute
 import io.github.tiper.umbrellaaar.extensions.toAarMetadataText
 import io.github.tiper.umbrellaaar.extensions.transformClass
@@ -146,6 +147,10 @@ abstract class MergeDependencies : DefaultTask() {
                     if (relativePath.startsWith("res/")) modulesWithResources += owner
 
                     when {
+                        // Says what one JVM module exports, and one jar is many. Two would clash, and
+                        // a consumer runs an AAR's classes from the class path, where it is not read.
+                        relativePath.isModuleDescriptor() -> Unit
+
                         // Class-path entries are never copied into the merged tree: they are streamed
                         // straight from the extracted module folder into `classes.jar` below. Copying
                         // ~3 000 class files only to walk and re-zip them was the single biggest cost
@@ -232,6 +237,7 @@ abstract class MergeDependencies : DefaultTask() {
         }
         val umbrellaNamespace = (mainNamespace.orNull ?: packageOverride).replace('.', '/')
         buildClassesJar(out, classEntries, umbrellaNamespace, mergedNamespaces)
+        File(out, PROGUARD_TXT).takeIf { it.isFile }?.let { it.writeText(it.readText().relocateRInRules(umbrellaNamespace, mergedNamespaces)) }
         logger.lifecycle("Merged dependencies into main AAR (processed $filesProcessed files)")
     }
 
@@ -419,6 +425,10 @@ abstract class MergeDependencies : DefaultTask() {
             if (existing != null) onDuplicate(owner, "classes/$entryName", file, existing.second, existing.first)
         }
 
+        // A consumer that finds targeted rules in an AAR's classes reads no other rules of that AAR.
+        val rules = File(out, PROGUARD_TXT)
+        if (rules.isFile && entries.keys.any { it.startsWith(TARGETED_RULES) }) entries[TARGETED_RULES + MERGED_RULES] = MAIN to rules
+
         val relocate = umbrellaNamespace.isNotEmpty() && mergedNamespaces.isNotEmpty()
         val jar = File(out, "classes.jar").apply { if (exists()) delete() }
         ZipOutputStream(BufferedOutputStream(FileOutputStream(jar), IO_BUFFER_SIZE)).use { zos ->
@@ -430,6 +440,8 @@ abstract class MergeDependencies : DefaultTask() {
                     services != null && services.size > 1 -> zos.write(services.mergeServiceFiles())
                     relocate && owner == MAIN && entryName.endsWith(".class") ->
                         zos.write(file.readBytes().transformClass(umbrellaNamespace, mergedNamespaces))
+                    relocate && entryName.startsWith(TARGETED_RULES) ->
+                        zos.write(file.readText().relocateRInRules(umbrellaNamespace, mergedNamespaces).encodeToByteArray())
                     else -> file.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
                 }
                 zos.closeEntry()
@@ -439,6 +451,8 @@ abstract class MergeDependencies : DefaultTask() {
     }
 
     private fun String.isServiceFile() = startsWith(SERVICES_DIR) && length > SERVICES_DIR.length
+
+    private fun String.isModuleDescriptor() = MODULE_DESCRIPTOR.matches(this)
 
     private fun String.isRootProFile() = endsWith(".pro") && '/' !in this
 
@@ -577,12 +591,12 @@ abstract class MergeDependencies : DefaultTask() {
      * Merging them one at a time re-parsed the accumulating result from disk and re-ran the whole
      * merge algorithm for each of N libraries — quadratic in manifest size, and ~23% of the merge
      * step at 95 modules. `addManifestProviders` takes a collection precisely so this can be done
-     * in one pass, which is also how AGP itself merges library manifests.
+     * in one pass, which is also how AGP itself merges library manifests. With no library to merge,
+     * as with only JVM modules, this still restores the package, without which a consumer crashes.
      */
     private fun mergeManifests(into: File, libraries: List<Pair<String, File>>, packageOverride: String) {
-        if (libraries.isEmpty()) return
-
         if (!into.exists()) {
+            if (libraries.isEmpty()) return
             // No main manifest: seed with the first library's, then merge the rest into it.
             libraries.first().second.copyTo(into, overwrite = true)
             return mergeManifests(into, libraries.drop(1), packageOverride)
@@ -694,7 +708,10 @@ abstract class MergeDependencies : DefaultTask() {
         const val ANNOTATIONS_ZIP = "annotations.zip"
         const val LINT_JAR = "lint.jar"
         const val SERVICES_DIR = "META-INF/services/"
+        const val TARGETED_RULES = "META-INF/com.android.tools/"
+        const val MERGED_RULES = "r8/umbrella-merged.pro"
         const val MAX_REPORTED = 20
+        val MODULE_DESCRIPTOR = Regex("""classes/(?:META-INF/versions/\d+/)?module-info\.class""")
         val APPEND = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)
         val CREATE = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)
 

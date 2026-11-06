@@ -216,6 +216,9 @@ internal class Apk(val file: File) {
 
     val classes: Set<String> by lazy { dex.flatMapTo(sortedSetOf()) { it.defined } }
 
+    /** `<class>.<field>` for every field the code defines or reads. */
+    val fields: Set<String> by lazy { dex.flatMapTo(sortedSetOf()) { it.fields } }
+
     /**
      * Classes the code refers to but nothing in the APK defines, limited to [prefix]. Outside the
      * platform and optional dependencies this is a `NoClassDefFoundError` waiting on a device.
@@ -295,6 +298,7 @@ private class Dex(bytes: ByteArray) {
 
     val referenced: Set<String>
     val defined: Set<String>
+    val fields: Set<String>
 
     init {
         val strings = buffer.getInt(STRING_IDS_OFF_FIELD)
@@ -302,11 +306,17 @@ private class Dex(bytes: ByteArray) {
         val types = buffer.getInt(TYPE_IDS_SIZE_FIELD + 4)
         val classCount = buffer.getInt(CLASS_DEFS_SIZE_FIELD)
         val classes = buffer.getInt(CLASS_DEFS_SIZE_FIELD + 4)
+        val fieldCount = buffer.getInt(FIELD_IDS_SIZE_FIELD)
+        val fieldIds = buffer.getInt(FIELD_IDS_SIZE_FIELD + 4)
 
         fun typeName(index: Int): String = string(buffer.getInt(strings + buffer.getInt(types + index * 4) * 4))
 
         referenced = (0 until typeCount).map(::typeName).filter { it.startsWith("L") }.mapTo(mutableSetOf(), ::dotted)
         defined = (0 until classCount).mapTo(mutableSetOf()) { dotted(typeName(buffer.getInt(classes + it * CLASS_DEF_SIZE))) }
+        fields = (0 until fieldCount).mapTo(mutableSetOf()) {
+            val field = fieldIds + it * FIELD_ID_SIZE
+            "${dotted(typeName(buffer.getShort(field).toInt() and 0xFFFF))}.${string(buffer.getInt(strings + buffer.getInt(field + 4) * 4))}"
+        }
     }
 
     /** A `string_data_item`: a uleb128 length, then NUL-terminated MUTF-8. Type names are ASCII in practice. */
@@ -324,7 +334,9 @@ private class Dex(bytes: ByteArray) {
     private companion object {
         const val STRING_IDS_OFF_FIELD = 0x3C
         const val TYPE_IDS_SIZE_FIELD = 0x40
+        const val FIELD_IDS_SIZE_FIELD = 0x50
         const val CLASS_DEFS_SIZE_FIELD = 0x60
+        const val FIELD_ID_SIZE = 8
         const val CLASS_DEF_SIZE = 32
     }
 }

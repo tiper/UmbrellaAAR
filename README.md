@@ -541,9 +541,15 @@ pluginManagement {
   the other. Identical bytes keep one copy, quietly.
 - **Files that cannot be merged fail the build.** These are merged:
   - `R.txt` (by symbol), `public.txt` and `baseline-prof.txt` (by line) are de-duplicated.
-  - `proguard.txt` (and `.pro` files at the AAR root) are concatenated.
+  - `proguard.txt` (and `.pro` files at the AAR root) are concatenated, along with the rule files a
+    JVM module carries in `META-INF/proguard/`. Those stop working inside `classes.jar`, so they move
+    out of it. A JVM module with `META-INF/com.android.tools/` rules loses its legacy ones to them, as
+    in any consumer, and those stay in `classes.jar`, where a copy of the merged rules joins them
+    because a consumer that finds them reads no other rules of the AAR.
   - `res/values*` and `.kotlin_module` files are namespaced per module.
   - `META-INF/services/*` provider files inside `classes.jar` are combined.
+  - `module-info.class` is left out, at the root and under `META-INF/versions/`: one jar is no one JVM
+    module, and an AAR's classes run from the class path, which reads none.
   - `annotations.zip` (typedef annotations) is combined, including two modules sharing a package.
   - `aar-metadata.properties` keeps the strictest requirement of every module: the highest
     `minCompileSdk` and minimum AGP version, and core library desugaring if any module needs it.
@@ -564,7 +570,10 @@ pluginManagement {
 - **`R` reference rewriting only touches merged modules.** Namespaces are read from each dependency
   AAR's `AndroidManifest.xml`; references to them — from the merged modules *and* from the umbrella
   module's own classes — are rewritten to the umbrella's `R`. A third-party AAR bundled inside one of
-  your modules keeps its own `R`. The bytecode pre-scan that decides whether ASM runs at all is
+  your modules keeps its own `R`. Keep rules go the same way: `com.acme.feature.R$string` becomes
+  the umbrella's, and a wildcard on the module's package gets the umbrella's `R` listed next to it,
+  so it keeps all of that shared class. A wildcard above the package (`com.acme.**`) is left as it
+  is, and matches the umbrella's `R` only if that lies below it. The bytecode pre-scan that decides whether ASM runs at all is
   best-effort (false positives only cost a no-op rewrite).
 - **Mixed-plugin umbrellas and the `debug` publication.** `com.android.kotlin.multiplatform.library`
   has no build types, so the umbrella's own AAR is the same `androidMain` artifact for both

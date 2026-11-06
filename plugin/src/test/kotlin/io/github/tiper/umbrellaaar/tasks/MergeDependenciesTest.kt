@@ -267,6 +267,33 @@ class MergeDependenciesTest {
     }
 
     @Test
+    fun `module descriptors stay out of classes jar, whichever release they are for`() {
+        mainAar()
+        listOf("a", "b").forEach { name ->
+            module(
+                "module$name",
+                "com.example.$name",
+                "classes/module-info.class" to name,
+                "classes/META-INF/versions/9/module-info.class" to name,
+                "classes/META-INF/versions/9/com/example/$name/A.class" to name,
+            )
+        }
+
+        assertEquals(
+            listOf("META-INF/versions/9/com/example/a/A.class", "META-INF/versions/9/com/example/b/A.class"),
+            jarEntries(File(merge(), "classes.jar")),
+        )
+    }
+
+    @Test
+    fun `a class that only ends in module-info is no descriptor`() {
+        mainAar()
+        module("moduleA", "com.example.a", "classes/nested/module-info.class" to "a")
+
+        assertEquals(listOf("nested/module-info.class"), jarEntries(File(merge(), "classes.jar")))
+    }
+
+    @Test
     fun `kotlin_module files are namespaced per module inside classes jar`() {
         mainAar("classes/META-INF/umbrella.kotlin_module" to "main")
         module("moduleA", "com.example.a", "classes/META-INF/lib.kotlin_module" to "a")
@@ -516,13 +543,13 @@ class MergeDependenciesTest {
             "legacy-proguard.txt" to "-dontwarn root.legacy",
         )
         mainAar("proguard.txt" to "-keep class com.example.umbrella.** { *; }")
-        module("moduleA", "com.example.a", "proguard.txt" to "-keep class com.example.a.** { *; }", *files)
+        module("moduleA", "com.example.a", "proguard.txt" to "-keep class com.example.a.A { *; }", *files)
 
         val out = merge()
 
         files.forEach { (path, content) -> assertEquals(content, File(out, path).readText(), path) }
         assertEquals(
-            listOf("-keep class com.example.a.** { *; }", "-keep class com.example.umbrella.** { *; }"),
+            listOf("-keep class com.example.a.A { *; }", "-keep class com.example.umbrella.** { *; }"),
             File(out, "proguard.txt").readLines().filter { it.isNotBlank() }.sorted(),
         )
     }
@@ -543,6 +570,29 @@ class MergeDependenciesTest {
         paths.forEach { assertEquals(template, File(out, it).readText(), it) }
         val manifest = File(out, "AndroidManifest.xml").readText()
         assertFalse("TEMPLATE_ONLY" in manifest, manifest)
+    }
+
+    @Test
+    fun `targeted rules take the merged ones with them`() {
+        mainAar()
+        module("moduleA", "com.example.a", "proguard.txt" to "-keep class com.example.a.R\$string")
+        module("moduleB", "com.example.b", "classes/META-INF/com.android.tools/r8/b.pro" to "-keep class com.example.b.B")
+
+        val classes = File(merge(), "classes.jar")
+
+        assertEquals("-keep class com.example.b.B", jarEntry(classes, "META-INF/com.android.tools/r8/b.pro").decodeToString())
+        assertEquals("-keep class com.example.umbrella.R\$string\n", jarEntry(classes, "META-INF/com.android.tools/r8/umbrella-merged.pro").decodeToString())
+    }
+
+    @Test
+    fun `no targeted rules leave the merged ones at the root alone`() {
+        mainAar()
+        module("moduleA", "com.example.a", "proguard.txt" to "-keep class com.example.a.R\$string")
+
+        val out = merge()
+
+        assertEquals("-keep class com.example.umbrella.R\$string\n", File(out, "proguard.txt").readText())
+        assertEquals(emptyList(), jarEntries(File(out, "classes.jar")))
     }
 
     @Test

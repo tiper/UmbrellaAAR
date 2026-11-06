@@ -40,7 +40,7 @@ class SilentLossTest {
     @Test
     fun `a java library module with no sources jar publishes, and is consumed`() = fixture {
         val util = javaLibrary("util") { withoutSourcesJar() }
-        val umbrella = kmpUmbrella { export(util, androidLibrary("core")) }
+        val umbrella = kmpUmbrella { export(util) }
 
         gradle(umbrella.publishTask()).run {
             assertLoggedOnce(NO_SOURCES_JAR)

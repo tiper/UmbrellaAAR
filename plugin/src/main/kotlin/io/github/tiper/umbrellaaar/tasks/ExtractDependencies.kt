@@ -157,6 +157,10 @@ abstract class ExtractDependencies : DefaultTask() {
     private companion object {
         /** What the extracted folders were derived from; a different value forces a full extraction. */
         const val STATE_FILE = ".extraction-state"
+        const val TARGETED_RULES = "META-INF/com.android.tools/"
+
+        /** What AGP reads from a jar: any file right in there, whatever its extension. */
+        val JAR_RULE_FILE = Regex("""META-INF/proguard/[^/\\]+""")
     }
 
     internal interface ExtractParameters : WorkParameters {
@@ -196,7 +200,18 @@ abstract class ExtractDependencies : DefaultTask() {
                     file.unzip(
                         to = File(out, "classes"),
                         transformer = { it.transformClass(namespace, merged) },
-                    ) { !it.isDirectory && !it.name.endsWith("MANIFEST.MF") }
+                    ) { entry ->
+                        val isRuleFile = JAR_RULE_FILE.matches(entry.name)
+                        // Only read from a jar of its own, which this one stops being: as a `.pro`
+                        // file at the root it is merged like a module's other rules. A jar with
+                        // targeted rules has those read instead, and they stay in the classes.
+                        if (isRuleFile && entries().asSequence().none { it.name.startsWith(TARGETED_RULES) }) {
+                            getInputStream(entry).use { input ->
+                                File(out, "${entry.name.substringAfterLast('/')}.pro").outputStream().use { input.copyTo(it) }
+                            }
+                        }
+                        !entry.isDirectory && !isRuleFile && !entry.name.endsWith("MANIFEST.MF")
+                    }
                 } catch (e: Exception) {
                     throw GradleException("Failed to extract JAR '${file.name}': ${e.message}", e)
                 }

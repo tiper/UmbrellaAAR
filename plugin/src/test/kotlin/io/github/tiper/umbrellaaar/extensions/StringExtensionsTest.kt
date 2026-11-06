@@ -7,6 +7,71 @@ import kotlin.test.assertTrue
 
 class StringExtensionsTest {
 
+    private fun String.relocated() = relocateRInRules("com/acme/sdk", setOf("com/acme/feature", "com/acme/feature/a", "com/acme/sdk"))
+
+    @Test
+    fun `a merged R in a rule follows the class`() {
+        assertEquals("-keep class com.acme.sdk.R\$string { *; }", "-keep class com.acme.feature.R\$string { *; }".relocated())
+        assertEquals("-keep class com.acme.sdk.R\$* { *; }", "-keep class com.acme.feature.a.R\$* { *; }".relocated())
+        assertEquals("-keep class com.acme.sdk.R", "-keep class com.acme.feature.R".relocated())
+        assertEquals("-keep class 'com.acme.sdk.R\$raw' { *; }", "-keep class 'com.acme.feature.R\$raw' { *; }".relocated())
+        assertEquals("-keep class \"com.acme.sdk.R\" { *; }", "-keep class \"com.acme.feature.R\" { *; }".relocated())
+        assertEquals("-keep class a.B,com.acme.sdk.R\$id { *; }", "-keep class a.B,com.acme.feature.R\$id { *; }".relocated())
+        assertEquals("-dontwarn !com.acme.sdk.R\$*,a.**", "-dontwarn !com.acme.feature.R\$*,a.**".relocated())
+    }
+
+    @Test
+    fun `only an R of a merged module is touched`() {
+        listOf(
+            "-keep class com.acme.feature.Repo",
+            "-keep class com.acme.feature.a.Repo { *; }",
+            "-keep class com.acme.feature.R.Inner",
+            "-keep class com.acme.feature.b.R\$string",
+            "-keep class org.com.acme.feature.R\$string",
+            "-keep class **.R\$string { *; }",
+            "-keep class com.acme.sdk.R\$string",
+        ).forEach { assertEquals(it, it.relocated()) }
+    }
+
+    @Test
+    fun `a wildcard that reaches a merged R also reaches the umbrella's`() {
+        assertEquals(
+            "-keep class com.acme.feature.*,com.acme.sdk.R,com.acme.sdk.R\$* { *; }",
+            "-keep class com.acme.feature.* { *; }".relocated(),
+        )
+        assertEquals(
+            "-keepnames,allowshrinking class a.B,com.acme.feature.**,com.acme.sdk.R,com.acme.sdk.R\$*",
+            "-keepnames,allowshrinking class a.B,com.acme.feature.**".relocated(),
+        )
+        assertEquals("-keep class com.acme.feature.R*,com.acme.sdk.R* { *; }", "-keep class com.acme.feature.R* { *; }".relocated())
+        assertEquals("-keep class com.acme.feature.R?id,com.acme.sdk.R?id { *; }", "-keep class com.acme.feature.R?id { *; }".relocated())
+    }
+
+    @Test
+    fun `a wildcard that decides nothing stays as it is`() {
+        listOf(
+            "-keepattributes com.acme.feature.*",
+            "-dontwarn com.acme.feature.**",
+            "-keep class !com.acme.feature.*,a.** { *; }",
+            "# -keep class com.acme.feature.*",
+            "-keep class com.acme.feature.a* { *; }",
+            "-keep class a.B { com.acme.feature.* field; }",
+            "-keep class * extends com.acme.feature.* { *; }",
+            "-keep class * implements com.acme.feature.** { *; }",
+            "-keepclassmembers class * extends com.acme.feature.** { *; }",
+            "-keep @com.acme.feature.* class * { *; }",
+            "-keep,allowshrinking @com.acme.feature.** class *",
+        ).forEach { assertEquals(it, it.relocated()) }
+    }
+
+    @Test
+    fun `a rule file with no merged namespace comes back as it was`() {
+        val rules = "-keep class com.acme.sdk.R\$string\n"
+
+        assertEquals(rules, rules.relocateRInRules("com/acme/sdk", emptySet()))
+        assertEquals(rules, rules.relocateRInRules("com/acme/sdk", setOf("com/acme/sdk")))
+    }
+
     @Test
     fun `capitalize converts first character to uppercase`() {
         assertEquals("Hello", "hello".capitalize())

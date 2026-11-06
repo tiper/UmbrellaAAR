@@ -54,6 +54,36 @@ private fun org.w3c.dom.Element.resourceKey(): String? {
 }
 
 /**
+ * These keep rules pointed at the umbrella's `R`, as [transformClass] points code at it. A merged
+ * module's `R` is not generated in a consumer, and a rule that matches nothing keeps nothing, without
+ * a word.
+ *
+ * A wildcard reaches an `R` too. `com.acme.feature.*` matches the rest of its package as well, so
+ * the `R` is listed next to it instead. That keeps all of a shared `R`, so more than the rule meant
+ * and never less.
+ */
+internal fun String.relocateRInRules(mainNsInternal: String, mergedNamespaces: Set<String>): String {
+    val umbrella = mainNsInternal.replace('/', '.')
+    val namespaces = (mergedNamespaces.map { it.replace('/', '.') } - umbrella).joinToString("|") { escape(it) }
+    if (umbrella.isEmpty() || namespaces.isEmpty()) return this
+
+    val named = Regex("""(?<![\w.$])(?:$namespaces)\.R(?=\$|[^\w.*?<]|\z)""")
+    val reaching = Regex("""(?<![\w.$!'"@])(?:$namespaces)\.(?:\*\*?|R([*?][^\s,{]*))(?=[\s,{]|\z)""")
+    return replace(KEEP_RULE_CLASSES) { classes ->
+        classes.value.replace(reaching) { match ->
+            val rest = match.groupValues[1]
+            if (rest.isEmpty()) "${match.value},$umbrella.R,$umbrella.R$*" else "${match.value},$umbrella.R$rest"
+        }
+    }.replace(named) { "$umbrella.R" }
+}
+
+/**
+ * A `-keep` option up to what its class extends or its members. `-keepattributes` and the like name
+ * no classes, and an annotation or a supertype takes one name, where a list breaks the rule.
+ */
+private val KEEP_RULE_CLASSES = Regex("""^\s*-keep(?:class(?:es)?(?:with)?member(?:s|names)|names)?\b[^{\n]*?(?=\s+(?:extends|implements)\b|\s*\{|\s*$)""", RegexOption.MULTILINE)
+
+/**
  * Appends to this document's root every direct child of [other]'s root whose [keyAttribute] it does
  * not declare yet, keeping the first declaration of each key.
  *
