@@ -13,8 +13,15 @@ import org.objectweb.asm.commons.Remapper
  * a third-party AAR shipped inside the umbrella, `android/`, `androidx/`, … — keeps its own `R`,
  * because rewriting it would point at a class that does not declare those fields and blow up with
  * `NoSuchFieldError` at runtime, far away from the cause.
+ *
+ * [onRField] gets each `<type>/<name>` read from one of those `R`s, or from the umbrella's own, with
+ * the class that reads it.
  */
-internal fun ByteArray.transformClass(mainNsInternal: String, mergedNamespaces: Set<String>): ByteArray {
+internal fun ByteArray.transformClass(
+    mainNsInternal: String,
+    mergedNamespaces: Set<String>,
+    onRField: (field: String, reader: String) -> Unit = { _, _ -> },
+): ByteArray {
     // Fast path: classes that cannot possibly mention an R class are returned untouched.
     if (mergedNamespaces.isEmpty() || !containsRClassReference()) {
         return this
@@ -32,6 +39,15 @@ internal fun ByteArray.transformClass(mainNsInternal: String, mergedNamespaces: 
             // Already the umbrella's own R, or an R we are not merging: leave it alone.
             if (owner == mainNsInternal || owner !in mergedNamespaces) return internalName
             return mainNsInternal + internalName.substring(owner.length)
+        }
+
+        override fun mapFieldName(owner: String, name: String, descriptor: String): String {
+            val namespace = owner.substringBefore("/R$", "")
+            // A field an R class declares comes through here too, and it is no reader of itself.
+            if (owner != reader.className && (namespace == mainNsInternal || namespace in mergedNamespaces)) {
+                onRField("${owner.substring(namespace.length + 3)}/$name", reader.className.replace('/', '.'))
+            }
+            return name
         }
     }
     reader.accept(ClassRemapper(writer, remapper), 0)

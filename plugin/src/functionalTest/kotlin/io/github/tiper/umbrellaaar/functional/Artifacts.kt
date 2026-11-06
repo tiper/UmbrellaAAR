@@ -3,11 +3,13 @@ package io.github.tiper.umbrellaaar.functional
 import groovy.json.JsonSlurper
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.net.URLClassLoader
 import java.nio.ByteBuffer
 import java.nio.ByteOrder.LITTLE_ENDIAN
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import javax.xml.parsers.DocumentBuilderFactory
+import kotlin.test.assertEquals
 import org.w3c.dom.Element
 
 internal fun zipEntries(file: File): Set<String> = ZipFile(file).use { zip -> zip.entries().asSequence().map { it.name }.toSet() }
@@ -22,6 +24,9 @@ private fun Element.childElements(name: String): List<Element> {
 }
 
 private fun Element.childText(name: String): String? = child(name)?.textContent?.trim()
+
+private val Element.elements: List<Element>
+    get() = (0 until childNodes.length).map(childNodes::item).filterIsInstance<Element>()
 
 private fun parseXml(text: String): Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = false }
     .newDocumentBuilder().parse(ByteArrayInputStream(text.toByteArray())).documentElement
@@ -46,6 +51,22 @@ internal class Aar(val file: File) {
 
     val proguardRules: String by lazy { text("proguard.txt").orEmpty() }
 
+    /**
+     * `type/name` of every symbol the merged `res/` declares, read the way AGP reads a module's and
+     * apart from the plugin, so that [symbols] can be held against it.
+     */
+    val declaredSymbols: Set<String> by lazy {
+        entries.filter { it.startsWith("res/") && !it.endsWith("/") }.flatMapTo(sortedSetOf()) { entry ->
+            val type = entry.substringAfter('/').substringBefore('/').substringBefore('-')
+            if (type == "values") {
+                parseXml(checkNotNull(text(entry))).elements.flatMap(::valueSymbols)
+            } else {
+                val ids = if (entry.endsWith(".xml")) inlineIds(parseXml(checkNotNull(text(entry)))) else emptyList()
+                ids + "$type/${entry.substringAfterLast('/').substringBefore('.')}"
+            }
+        }
+    }
+
     /** The name of every string left in the merged `res/values`, however many files hold them. */
     val declaredStrings: List<String> by lazy {
         entries.filter { it.startsWith("res/values/") }.flatMap { STRING_NAME.findAll(text(it).orEmpty()).map { match -> match.groupValues[1] } }
@@ -64,6 +85,19 @@ internal class Aar(val file: File) {
 
     fun text(entry: String): String? = ZipFile(file).use { it.textOf(entry) }
 
+    /** Every `<attr>` of [name] left in the merged `res/values` that says what the attr is. */
+    fun definitions(name: String): List<String> = entries.filter { it.startsWith("res/values/") }.flatMap { entry ->
+        parseXml(checkNotNull(text(entry))).elements.flatMap { listOf(it) + if (it.tagName == "declare-styleable") it.elements else emptyList() }
+    }.filter { element ->
+        element.tagName == "attr" && element.getAttribute("name") == name && (element.parentNode.nodeName != "declare-styleable" || element.hasAttribute("format") || element.elements.isNotEmpty())
+    }.map { element -> element.getAttribute("format") + element.elements.joinToString("") { "|${it.getAttribute("name")}=${it.getAttribute("value")}" } }
+
+    /** The lines of `R.txt` that make up styleable [name]. */
+    fun styleable(name: String): List<String> = text("R.txt").orEmpty().lines().filter { it.startsWith("int[] styleable $name ") || it.startsWith("int styleable ${name}_") }
+
+    /** `R.txt` and the resources beside it have to tell one story, whatever the merge left out. */
+    fun assertSymbolsAgree() = assertEquals(declaredSymbols, symbols, "R.txt and the merged resources of $file disagree")
+
     /**
      * True when class [name] mentions [text] anywhere in its constant pool. Enough to tell which
      * `actual` was merged, or which `R` a class points at, without an ASM dependency here.
@@ -73,8 +107,41 @@ internal class Aar(val file: File) {
         return text in String(bytes, Charsets.ISO_8859_1)
     }
 
+    private fun valueSymbols(element: Element): List<String> {
+        val name = element.getAttribute("name").fieldName
+        return when (element.tagName) {
+            "eat-comment", "skip", "macro", "public" -> emptyList()
+
+            "attr" -> attrSymbols(element)
+
+            "declare-styleable" -> listOf("styleable/$name") + element.elements.flatMap { attr ->
+                val attrName = attr.getAttribute("name")
+                listOf("styleable/${name}_${attrName.fieldName}") + if (attrName.startsWith("android:")) emptyList() else attrSymbols(attr)
+            }
+
+            "string-array", "integer-array" -> listOf("array/$name")
+
+            "item" -> listOf("${element.getAttribute("type")}/$name")
+
+            else -> listOf("${element.tagName}/$name")
+        }
+    }
+
+    /** An enum is an `id` too. A flag is one in the final table, but never in a module's `R.txt`. */
+    private fun attrSymbols(attr: Element) = listOf("attr/${attr.getAttribute("name").fieldName}") +
+        attr.elements.filter { it.tagName == "enum" }.map { "id/${it.getAttribute("name").fieldName}" }
+
+    private fun inlineIds(element: Element): List<String> {
+        val attributes = element.attributes
+        val own = (0 until attributes.length).map { attributes.item(it).nodeValue }.filter { it.startsWith("@+id/") }.map { "id/${it.removePrefix("@+id/").fieldName}" }
+        return own + element.elements.flatMap(::inlineIds)
+    }
+
+    private val String.fieldName get() = replace(FIELD_SEPARATOR, "_")
+
     private companion object {
         val STRING_NAME = Regex("<string name=\"([^\"]+)\"")
+        val FIELD_SEPARATOR = Regex("[.:-]")
     }
 }
 
@@ -91,6 +158,29 @@ internal class Manifest(val text: String) {
     val removedPermissions: Set<String> = root.childElements("uses-permission").filter { it.getAttribute("tools:node") == "remove" }.mapTo(sortedSetOf()) { it.getAttribute("android:name") }
 
     val grantedPermissions: Set<String> get() = permissions - removedPermissions
+}
+
+/** The `R` classes a consumer generated, which is what every library's code reads at runtime. */
+internal class RClasses(private val jar: File) {
+
+    /** `<class>` to its fields, each with the length of its array, or `null` for a plain `int`. */
+    val fields: Map<String, Map<String, Int?>> by lazy {
+        URLClassLoader(arrayOf(jar.toURI().toURL()), null).use { loader ->
+            zipEntries(jar).filter { it.endsWith(".class") && '$' in it }.associate { entry ->
+                val name = entry.removeSuffix(".class").replace('/', '.')
+                name to loader.loadClass(name).fields.associate { it.name to (it.get(null) as? IntArray)?.size }
+            }
+        }
+    }
+
+    /** Fields of [prefix] the code in [apk] goes for, and no `R` class has: `NoSuchFieldError`s to come. */
+    fun danglingIn(apk: Apk, prefix: String): Set<String> = apk.fields.filter { field ->
+        field.startsWith(prefix) && field.substringBeforeLast('.').matches(R_CLASS) && field.substringAfterLast('.') !in fields[field.substringBeforeLast('.')].orEmpty()
+    }.toSet()
+
+    private companion object {
+        val R_CLASS = Regex(".*\\.R\\$\\w+")
+    }
 }
 
 /** One `<dependency>` of a [Pom]. */

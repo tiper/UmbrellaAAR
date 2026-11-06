@@ -26,32 +26,22 @@ internal fun String.packageName(): String? = parseXml()
     ?.getAttribute("package")
     ?.takeIf { it.isNotBlank() }
 
-/**
- * `"<type>/<name>"` for every resource declared *directly* under `<resources>`.
- *
- * Parsed rather than regex-matched so that nested elements — `<item>` inside `<style>`, `<enum>` and
- * `<flag>` inside `<declare-styleable>` — are not mistaken for resource declarations.
- */
-internal fun String.declaredResourceNames(): List<String> {
-    val root = parseXml() ?: return emptyList()
-    return root.childElements().mapNotNull { it.resourceKey() }
+/** The field of a resource called this in `R`, where its dots are no longer allowed. */
+internal fun String.fieldName() = replace('.', '_').replace(':', '_').replace('-', '_')
+
+/** Every id this `res/` file declares in passing, with `@+id/`. Empty when it is not parseable XML. */
+internal fun String.inlineIds(): Set<String> {
+    val ids = sortedSetOf<String>()
+    fun visit(element: org.w3c.dom.Element) {
+        val attributes = element.attributes
+        (0 until attributes.length).map { attributes.item(it).nodeValue }.filter { it.startsWith(INLINE_ID) }.mapTo(ids) { it.removePrefix(INLINE_ID) }
+        element.childElements().forEach(::visit)
+    }
+    parseXml()?.let(::visit)
+    return ids
 }
 
-/**
- * This `res/values` file without the resources in [keys] (`"<type>/<name>"`, as returned by
- * [declaredResourceNames]). Returns `null` when the file is not parseable XML.
- */
-internal fun String.withoutResources(keys: Set<String>): String? {
-    val root = parseXml() ?: return null
-    root.childElements().filter { it.resourceKey() in keys }.forEach { root.removeChild(it) }
-    return root.ownerDocument.serialize()
-}
-
-private fun org.w3c.dom.Element.resourceKey(): String? {
-    val name = getAttribute("name").takeIf { it.isNotBlank() } ?: return null
-    val type = getAttribute("type").takeIf { it.isNotBlank() } ?: tagName
-    return "$type/$name"
-}
+private const val INLINE_ID = "@+id/"
 
 /**
  * These keep rules pointed at the umbrella's `R`, as [transformClass] points code at it. A merged
@@ -102,15 +92,14 @@ internal fun String.mergeXmlChildren(other: String, keyAttribute: String = "name
     return document.serialize()
 }
 
-private fun org.w3c.dom.Document.serialize(): String = java.io.StringWriter().also { writer ->
+internal fun org.w3c.dom.Document.serialize(): String = java.io.StringWriter().also { writer ->
     transformerFactory.newTransformer().transform(
         javax.xml.transform.dom.DOMSource(this),
         javax.xml.transform.stream.StreamResult(writer),
     )
 }.toString()
 
-private fun org.w3c.dom.Element.childElements(): List<org.w3c.dom.Element> =
-    (0 until childNodes.length).mapNotNull { childNodes.item(it) as? org.w3c.dom.Element }
+internal fun org.w3c.dom.Element.childElements(): List<org.w3c.dom.Element> = (0 until childNodes.length).mapNotNull { childNodes.item(it) as? org.w3c.dom.Element }
 
 private val transformerFactory by lazy {
     javax.xml.transform.TransformerFactory.newInstance().apply {
@@ -120,7 +109,7 @@ private val transformerFactory by lazy {
     }
 }
 
-private fun String.parseXml(): org.w3c.dom.Element? = runCatching {
+internal fun String.parseXml(): org.w3c.dom.Element? = runCatching {
     documentBuilder.get().run {
         reset()
         parse(byteInputStream()).documentElement

@@ -10,7 +10,8 @@ import com.android.manifmerger.MergingReport.Record.Severity.ERROR
 import com.android.utils.ILogger
 import io.github.tiper.umbrellaaar.extensions.AAR_METADATA_PATH
 import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
-import io.github.tiper.umbrellaaar.extensions.declaredResourceNames
+import io.github.tiper.umbrellaaar.extensions.fieldName
+import io.github.tiper.umbrellaaar.extensions.inlineIds
 import io.github.tiper.umbrellaaar.extensions.mergeAarMetadata
 import io.github.tiper.umbrellaaar.extensions.mergeXmlChildren
 import io.github.tiper.umbrellaaar.extensions.normalizePath
@@ -20,7 +21,6 @@ import io.github.tiper.umbrellaaar.extensions.relocateRInRules
 import io.github.tiper.umbrellaaar.extensions.stripPackageAttribute
 import io.github.tiper.umbrellaaar.extensions.toAarMetadataText
 import io.github.tiper.umbrellaaar.extensions.transformClass
-import io.github.tiper.umbrellaaar.extensions.withoutResources
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -82,8 +82,14 @@ abstract class MergeDependencies : DefaultTask() {
     /** [overlayKey] -> the entry kept for it. */
     private val overlays = mutableMapOf<String, String>()
 
+    /** Module folder -> what the files it lost declare with `@+id/` and the files kept do not. */
+    private val overriddenIds = mutableMapOf<String, MutableSet<String>>()
+
+    /** The fields merged classes read from the umbrella's `R`. */
+    private val rFieldReads = mutableListOf<RFieldRead>()
+
     /**
-     * Keys already written to each de-duplicated file (`R.txt`, `public.txt`, `baseline-prof.txt`).
+     * Keys already written to each de-duplicated file (`public.txt`, `baseline-prof.txt`).
      * Kept in memory so each module's lines are checked once, instead of re-reading the growing
      * merged file for every module.
      */
@@ -101,6 +107,8 @@ abstract class MergeDependencies : DefaultTask() {
         contributors.clear()
         resourceNames.clear()
         overlays.clear()
+        overriddenIds.clear()
+        rFieldReads.clear()
         seenKeys.clear()
         modulesWithResources.clear()
         modulesDeclaringPublicResources.clear()
@@ -112,6 +120,9 @@ abstract class MergeDependencies : DefaultTask() {
             mkdirs()
         }
 
+        val values = MergedValues(resourceNames, ::conflict)
+        val symbolTables = mutableListOf<File>()
+
         src.copyRecursively(out, overwrite = true)
         src.walk().filter { it.isFile }.forEach {
             val relativePath = it.relativeTo(src).path.normalizePath()
@@ -119,7 +130,7 @@ abstract class MergeDependencies : DefaultTask() {
             if (relativePath.startsWith("res/")) modulesWithResources += MAIN
             // Recorded first, so the umbrella's own declaration of a resource always wins.
             when {
-                relativePath.startsWith("res/values") -> recordResourceNames(MAIN, relativePath, it)
+                relativePath.startsWith("res/values") -> values.add(MAIN, relativePath, File(out, relativePath))
                 relativePath.isOverlay() -> isOverridden(MAIN, relativePath, it, out)
             }
             if (relativePath == PUBLIC_TXT) modulesDeclaringPublicResources += MAIN
@@ -147,6 +158,12 @@ abstract class MergeDependencies : DefaultTask() {
                     if (relativePath.startsWith("res/")) modulesWithResources += owner
 
                     when {
+                        // For the check below, and nothing an AAR has any use for.
+                        relativePath == R_REFERENCES -> srcFile.forEachLine { line ->
+                            val (field, reader) = line.split('\t')
+                            rFieldReads += RFieldRead(field, reader, owner)
+                        }
+
                         // Says what one JVM module exports, and one jar is many. Two would clash, and
                         // a consumer runs an AAR's classes from the class path, where it is not read.
                         relativePath.isModuleDescriptor() -> Unit
@@ -157,24 +174,16 @@ abstract class MergeDependencies : DefaultTask() {
                         // of this task.
                         relativePath.startsWith("classes/") -> classEntries += classEntry(owner, relativePath, srcFile)
 
-                        // All modules' values files end up in one AAR, i.e. one resource set for the
-                        // consumer, where a resource declared twice is a hard "Duplicate resources"
-                        // error. Only the first declaration is kept.
-                        relativePath.startsWith("res/values") -> {
-                            val alreadyDeclared = recordResourceNames(owner, relativePath, srcFile)
-                            srcFile.copyValues(owner = owner, to = destFile, dropping = alreadyDeclared)
-                        }
+                        // Settled together once every module's is in, see MergedValues.
+                        relativePath.startsWith("res/values") -> values.add(owner, relativePath, srcFile, destFile.ofModule(owner))
 
                         // A consumer layers its modules, and what one ships replaces the same
                         // resource or asset of anything below it. One AAR has no layers.
                         relativePath.isOverlay() && isOverridden(owner, relativePath, srcFile, out) -> Unit
 
-                        relativePath.endsWith(".kotlin_module") -> srcFile.copyValues(owner = owner, to = destFile)
+                        relativePath.endsWith(".kotlin_module") -> srcFile.copyTo(destFile.ofModule(owner), overwrite = true)
 
-                        // R.txt is a symbol table: one symbol per `<java type> <resource type> <name>`.
-                        // The same resource declared by two modules carries a different placeholder
-                        // ID in each, so de-duplicating whole lines left both — a duplicate symbol.
-                        relativePath == R_TXT -> appendedFiles += srcFile.appendLines(to = destFile, keyOf = SYMBOL_KEY)
+                        relativePath == R_TXT -> symbolTables += srcFile
 
                         // public.txt is one `<type> <name>` per line, so whole lines are the key. See
                         // finalisePublicResources for why merging alone is not enough.
@@ -213,7 +222,15 @@ abstract class MergeDependencies : DefaultTask() {
                     }
                     filesProcessed++
                 }
+
+            overriddenIds.remove(owner)?.let { ids ->
+                val name = "res/values/$owner-overridden-ids.xml"
+                File(out, name).apply { parentFile.mkdirs() }.writeText(ids.joinToString("", "<resources>", "</resources>\n") { "<item name=\"$it\" type=\"id\"/>" })
+                values.add(owner, name, File(out, name))
+            }
         }
+
+        val lost = values.merge().let { if (it.isEmpty()) it else it - out.inlineIdSymbols() }
 
         mergeManifests(into = manifest, libraries = libraryManifests, packageOverride = packageOverride)
 
@@ -225,8 +242,13 @@ abstract class MergeDependencies : DefaultTask() {
 
         reportDuplicateResources()
 
+        val symbols = mergeSymbols(into = File(out, R_TXT), modules = symbolTables, lost = lost)
+
         (appendedFiles + touchedProguardFiles).forEach { it.ensureTrailingNewline() }
 
+        File(out, PUBLIC_TXT).takeIf { it.isFile && lost.isNotEmpty() }?.let { file ->
+            file.writeText(file.readLines().filterNot { it.trim().replace(' ', '/') in lost }.joinToString("\n", postfix = "\n"))
+        }
         finalisePublicResources(out)
 
         // The merged modules' R classes are folded into the umbrella's, so references to them from
@@ -238,7 +260,43 @@ abstract class MergeDependencies : DefaultTask() {
         val umbrellaNamespace = (mainNamespace.orNull ?: packageOverride).replace('.', '/')
         buildClassesJar(out, classEntries, umbrellaNamespace, mergedNamespaces)
         File(out, PROGUARD_TXT).takeIf { it.isFile }?.let { it.writeText(it.readText().relocateRInRules(umbrellaNamespace, mergedNamespaces)) }
+        failOnMissingFields(symbols)
         logger.lifecycle("Merged dependencies into main AAR (processed $filesProcessed files)")
+    }
+
+    /**
+     * Folds [modules]' `R.txt` into the umbrella's, without what the merge [lost]. Only that goes: any
+     * other symbol has a resource left, or belongs to a dependency that a transitive `R` lists.
+     */
+    private fun mergeSymbols(into: File, modules: List<File>, lost: Set<String>) = SymbolTable().apply {
+        val tables = listOf(into).filter(File::isFile) + modules
+        tables.forEach(::read)
+        remove(lost)
+        if (tables.isNotEmpty()) write(into)
+    }
+
+    /**
+     * The fields of a merged module's `R` are the umbrella's now, and a consumer generates that class
+     * out of the final `R.txt`. A class reading a field that did not make it in links and installs,
+     * and throws `NoSuchFieldError` where it is reached. So this goes by `R.txt`, which lists what a
+     * transitive `R` gets from outside the merge too, and not by the resources merged.
+     */
+    private fun failOnMissingFields(symbols: SymbolTable) {
+        val missing = rFieldReads.filterNot { it.field in symbols }.sortedBy { it.field }
+        if (missing.isEmpty()) return
+
+        throw GradleException(
+            buildString {
+                appendLine("UmbrellaAar found ${missing.size} R field(s) that merged classes read and the merged R.txt does not have:")
+                missing.take(MAX_REPORTED).forEach { appendLine("  ${it.field} read by ${it.reader} in ${it.owner}") }
+                if (missing.size > MAX_REPORTED) appendLine("  … and ${missing.size - MAX_REPORTED} more")
+                append(
+                    "  A consumer's R would not have them, so those classes would throw NoSuchFieldError at runtime. " +
+                        "Declare each resource in a merged module, or stop reading it. " +
+                        "An id of an <enum> goes with its attr when another module's definition of that attr wins.",
+                )
+            },
+        )
     }
 
     /**
@@ -439,7 +497,7 @@ abstract class MergeDependencies : DefaultTask() {
                 when {
                     services != null && services.size > 1 -> zos.write(services.mergeServiceFiles())
                     relocate && owner == MAIN && entryName.endsWith(".class") ->
-                        zos.write(file.readBytes().transformClass(umbrellaNamespace, mergedNamespaces))
+                        zos.write(file.readBytes().transformClass(umbrellaNamespace, mergedNamespaces) { field, reader -> rFieldReads += RFieldRead(field, reader, MAIN) })
                     relocate && entryName.startsWith(TARGETED_RULES) ->
                         zos.write(file.readText().relocateRInRules(umbrellaNamespace, mergedNamespaces).encodeToByteArray())
                     else -> file.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
@@ -526,17 +584,6 @@ abstract class MergeDependencies : DefaultTask() {
         },
     )
 
-    /** Records [owner]'s resource declarations and returns the ones another module already made. */
-    private fun recordResourceNames(owner: String, relativePath: String, srcFile: File): Set<String> {
-        val folder = relativePath.substringBeforeLast('/')
-        return srcFile.readText().declaredResourceNames().filterTo(mutableSetOf()) { resource ->
-            val owners = resourceNames.getOrPut("$folder/$resource") { mutableListOf() }
-            val declaredElsewhere = owners.any { it != owner }
-            owners += owner
-            declaredElsewhere
-        }
-    }
-
     /**
      * Whether a module ahead of [owner] already shipped this resource or asset, which then stays,
      * as values do. The same bytes are one file shipped twice, and not worth a word.
@@ -552,9 +599,21 @@ abstract class MergeDependencies : DefaultTask() {
             logger.info("[UmbrellaAar] Duplicate but identical '$relativePath' from '$owner' — keeping one copy.")
         } else {
             resourceNames.getValue(key) += owner
+            // A consumer links every module's compiled files, so their ids stay where a file goes.
+            val ids = if (relativePath.mayDeclareIds()) srcFile.inlineIds() - File(out, kept).inlineIds() else emptySet()
+            if (ids.isNotEmpty()) overriddenIds.getOrPut(owner) { sortedSetOf() } += ids
         }
         return true
     }
+
+    private fun String.mayDeclareIds() = startsWith("res/") && !startsWith("res/values") && !startsWith("res/raw")
+
+    private fun File.inlineIds() = if (extension == "xml") readText().inlineIds() else emptySet()
+
+    /** What the files of this merged AAR declare with `@+id/`, each as `id/<field>`. */
+    private fun File.inlineIdSymbols() = walk()
+        .filter { it.isFile && it.relativeTo(this).path.normalizePath().mayDeclareIds() }
+        .flatMapTo(mutableSetOf()) { file -> file.inlineIds().map { "id/${it.fieldName()}" } }
 
     private fun reportDuplicateResources() {
         val duplicates = resourceNames.filterValues { it.size > 1 }
@@ -656,17 +715,12 @@ abstract class MergeDependencies : DefaultTask() {
         }
     }
 
-    /** Copies a per-module file under a module-prefixed name, leaving out the resources in [dropping]. */
-    private fun File.copyValues(owner: String, to: File, dropping: Set<String> = emptySet()) {
-        val target = File(to.parentFile, "$owner-${to.nameWithoutExtension}.${to.extension}").also { it.parentFile.mkdirs() }
-        val filtered = if (dropping.isEmpty()) null else readText().withoutResources(dropping)
-        if (filtered == null) copyTo(target, overwrite = true) else target.writeText(filtered)
-    }
+    /** Where a file every module may ship goes, under a module-prefixed name. */
+    private fun File.ofModule(owner: String) = File(parentFile, "$owner-$name").also { it.parentFile.mkdirs() }
 
     /**
-     * Streams [this] into [to] line by line. `R.txt` reaches megabytes on large graphs, so the file
-     * is never held in memory. When [keyOf] is given, a line whose key was already written to [to]
-     * is skipped; `null` appends everything.
+     * Streams [this] into [to] line by line. When [keyOf] is given, a line whose key was already
+     * written to [to] is skipped; `null` appends everything.
      */
     private fun File.appendLines(to: File, keyOf: ((String) -> String)?): File {
         val seen = keyOf?.let { key ->
@@ -698,6 +752,9 @@ abstract class MergeDependencies : DefaultTask() {
         }
     }
 
+    /** Class [reader] of module [owner] reads [field], as `<type>/<name>`, from the umbrella's `R`. */
+    private data class RFieldRead(val field: String, val reader: String, val owner: String)
+
     private companion object {
         const val MAIN = "<main module>"
         const val ANDROID_MANIFEST = "AndroidManifest.xml"
@@ -715,10 +772,6 @@ abstract class MergeDependencies : DefaultTask() {
         val APPEND = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)
         val CREATE = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)
 
-        val WHITESPACE = Regex("\\s+")
-
-        /** `int string app_name 0x7f0e0001` -> `int string app_name`; `int[] styleable Foo { … }` -> `int[] styleable Foo`. */
-        val SYMBOL_KEY: (String) -> String = { line -> line.trim().split(WHITESPACE, limit = 4).take(3).joinToString(" ") }
         val WHOLE_LINE: (String) -> String = String::trim
     }
 }

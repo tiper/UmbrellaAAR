@@ -76,6 +76,7 @@ internal class Consumer(
 
     private fun snapshot(variant: String) = ConsumerBuild(
         apk = Apk(checkNotNull(dir.resolve("app/build/outputs/apk/$variant").listFiles { file -> file.extension == "apk" }?.singleOrNull()) { "$variant has no single APK in $dir" }),
+        rClasses = RClasses(dir.resolve("app/build/intermediates/compile_and_runtime_r_class_jar/$variant/process${variant.capitalized}Resources/R.jar")),
         runtimeClasspath = dir.resolve("app/build/resolved/$variant.txt").readLines().toSet(),
         runtimeArtifacts = dir.resolve("app/build/resolved/$variant-artifacts.txt").readLines().toSet(),
     )
@@ -200,4 +201,4 @@ internal class ConsumerBuilds(val build: Build, private val variants: Map<String
  * One variant of a consumer: what it packaged and what it resolved to run, as coordinates and as
  * `<coordinates> <file>` of each artifact, which is where a classifier shows.
  */
-internal class ConsumerBuild(val apk: Apk, val runtimeClasspath: Set<String>, val runtimeArtifacts: Set<String>)
+internal class ConsumerBuild(val apk: Apk, val rClasses: RClasses, val runtimeClasspath: Set<String>, val runtimeArtifacts: Set<String>)

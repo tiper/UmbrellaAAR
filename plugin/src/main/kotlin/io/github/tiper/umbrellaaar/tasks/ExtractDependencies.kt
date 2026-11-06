@@ -33,6 +33,9 @@ import org.gradle.workers.WorkAction
 import org.gradle.workers.WorkParameters
 import org.gradle.workers.WorkerExecutor
 
+/** The `R` fields a module's classes read, one `<type>/<field>\t<class>` per line. */
+internal const val R_REFERENCES = ".r-references"
+
 @CacheableTask
 abstract class ExtractDependencies : DefaultTask() {
 
@@ -176,6 +179,9 @@ abstract class ExtractDependencies : DefaultTask() {
             val out = parameters.target.get().asFile.apply { mkdirs() }
             val namespace = parameters.mainNamespace.get()
             val merged = parameters.mergedNamespaces.get()
+            // The rewrite walks every field read anyway, so a later pass over the classes would only cost.
+            val rFields = java.util.TreeMap<String, String>()
+            val transform = { bytes: ByteArray -> bytes.transformClass(namespace, merged) { field, reader -> rFields.putIfAbsent(field, reader) } }
 
             when (file.extension) {
                 "aar" -> try {
@@ -183,7 +189,7 @@ abstract class ExtractDependencies : DefaultTask() {
                         if (entry.name == "classes.jar") {
                             // Streamed straight out of the AAR: no temporary copy on disk.
                             getInputStream(entry).use { input ->
-                                input.unzipStream(File(out, "classes")) { it.transformClass(namespace, merged) }
+                                input.unzipStream(File(out, "classes"), transform)
                             }
                             return@unzip false
                         }
@@ -199,7 +205,7 @@ abstract class ExtractDependencies : DefaultTask() {
                     // Skip MANIFEST.MF — it conflicts with the main manifest.
                     file.unzip(
                         to = File(out, "classes"),
-                        transformer = { it.transformClass(namespace, merged) },
+                        transformer = transform,
                     ) { entry ->
                         val isRuleFile = JAR_RULE_FILE.matches(entry.name)
                         // Only read from a jar of its own, which this one stops being: as a `.pro`
@@ -218,6 +224,8 @@ abstract class ExtractDependencies : DefaultTask() {
 
                 else -> Unit
             }
+
+            if (rFields.isNotEmpty()) File(out, R_REFERENCES).writeText(rFields.entries.joinToString("") { (field, reader) -> "$field\t$reader\n" })
         }
     }
 }

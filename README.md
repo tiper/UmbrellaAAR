@@ -527,18 +527,29 @@ pluginManagement {
   version, but if you need byte-reproducible POMs, generate them in a dedicated invocation
   (`./gradlew :sdk:publish…`) rather than as part of a larger build.
 - **`R.txt` is merged, not regenerated.** Symbols are de-duplicated by type and name — the same
-  resource in two modules carries a different placeholder ID in each, and the first is kept. IDs are
-  not re-numbered: AAPT2 in the consumer assigns the final IDs.
+  resource in two modules carries a different placeholder ID in each, and the first is kept. A
+  styleable two modules share lists the children of both, and the id of an `<enum>` that lost its
+  attr leaves with it. IDs are not re-numbered: AAPT2 in the consumer assigns the final IDs.
+- **What merged classes read from `R` has to be there.** A class that reads a field of a merged
+  module's `R` or of the umbrella's, which the merged `R.txt` does not have, fails the merge, naming
+  the field, the class and the module. In a consumer that class would throw `NoSuchFieldError`.
 - **Duplicate resources and assets** across merged modules keep their first declaration — the
   umbrella module's own, otherwise the first module in merge order — and are reported in a warning.
   Modules merge the way a consumer of them ranks them, dependents before what they depend on, then
   in the order they are reached from `export(...)`. Folder names play no part.
   Every merged module's resources end up in one AAR, where AGP rejects a resource declared twice
-  with "Duplicate resources", so the later declarations are left out. The same name in different
-  qualifier folders (`values` vs `values-pt`) is not a duplicate. Other `res/` folders go by folder
-  and name without extension, so `res/drawable/a.xml` and `res/drawable/a.png` are one resource, and
-  `assets/**` by path: the first stays, the same way a consumer of those modules overrides one with
-  the other. Identical bytes keep one copy, quietly.
+  with "Duplicate resources", so the later declarations are left out. A resource goes by its real
+  type: `<string-array>`, `<integer-array>` and `<array>` are one `array`, and `<item type="color">`
+  is a `<color>`. The same name in different qualifier folders (`values` vs `values-pt`) is not a
+  duplicate. Styleables of one name become their union, and a child both define is the one further
+  down the merge order, as in a consumer. An `<attr>` is one attr however many styleables define it,
+  so definitions a consumer takes for one are left as one, and the others refer to it. Definitions
+  it rejects with "Duplicate value for resource" fail the merge instead, naming both modules, and so
+  does an `<item type="attr">`, which is one with a top-level `<attr>`, where a styleable names it. Other
+  `res/` folders go by folder and name without extension, so `res/drawable/a.xml` and
+  `res/drawable/a.png` are one resource, and `assets/**` by path: the first stays, the same way a
+  consumer of those modules overrides one with the other, and the ids of the file that goes stay
+  too. Identical bytes keep one copy, quietly.
 - **Files that cannot be merged fail the build.** These are merged:
   - `R.txt` (by symbol), `public.txt` and `baseline-prof.txt` (by line) are de-duplicated.
   - `proguard.txt` (and `.pro` files at the AAR root) are concatenated, along with the rule files a

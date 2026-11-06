@@ -86,6 +86,51 @@ class ByteArrayExtensionsTest {
         assertEquals(0, transformed.size)
     }
 
+    // ── What a class reads from an R ───────────────────────────────────────
+
+    private fun ByteArray.rFields() = buildMap { transformClass("com/main", MERGED_NAMESPACES) { field, reader -> put(field, reader) } }
+
+    @Test
+    fun `transformClass reports a field read from a merged R, and the class reading it`() {
+        val bytecode = classReferencingField("com/dep/R\$drawable", "icon", "I")
+        assertEquals(mapOf("drawable/icon" to "com.test.TestClass"), bytecode.rFields())
+    }
+
+    @Test
+    fun `transformClass reports a styleable array the same`() {
+        val bytecode = classReferencingField("com/dep/R\$styleable", "Shared", "[I")
+        assertEquals(setOf("styleable/Shared"), bytecode.rFields().keys)
+    }
+
+    @Test
+    fun `transformClass reports a field read from the umbrella's own R`() {
+        val bytecode = classReferencingField("com/main/R\$string", "own", "I")
+        val reads = buildSet { bytecode.transformClass("com/main", setOf("com/dep")) { field, _ -> add(field) } }
+        assertEquals(setOf("string/own"), reads)
+    }
+
+    @Test
+    fun `transformClass does not report a field of an R that stays where it is`() {
+        val bytecode = classReferencingField("com/thirdparty/R\$string", "theirs", "I")
+        assertEquals(emptyMap(), bytecode.rFields())
+    }
+
+    @Test
+    fun `transformClass does not report a field of the R class itself, which holds no resource`() {
+        val bytecode = classReferencingField("com/dep/R", "notAResource", "I")
+        assertEquals(emptyMap(), bytecode.rFields())
+    }
+
+    @Test
+    fun `transformClass does not take an R class for a reader of itself`() {
+        val writer = ClassWriter(0)
+        writer.visit(V1_8, ACC_PUBLIC or ACC_SUPER, "com/dep/R\$string", null, "java/lang/Object", null)
+        writer.visitField(ACC_PUBLIC, "declared", "I", null, null).visitEnd()
+        writer.visitEnd()
+
+        assertEquals(emptyMap(), writer.toByteArray().rFields())
+    }
+
     // ── ASM-based R class remapping tests ──────────────────────────────────
 
     @Test

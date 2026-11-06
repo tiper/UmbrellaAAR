@@ -11,19 +11,23 @@ import kotlin.test.fail
  */
 internal fun Fixture.parity(umbrella: Umbrella, configure: Consumer.() -> Unit = {}): Parity {
     umbrella.publish()
-    gradle(*modules.values.flatMap { it.stockPublishTasks }.toTypedArray(), "-Pstock")
-
-    val stock = Consumer(
-        dir = dir.resolve("stock-consumer"),
-        repository = stockRepo,
-        dependencies = umbrella.exports.map(Module::coordinates) + umbrella.coordinates,
-    )
+    val stock = stockConsumer(umbrella)
     val merged = consumerOf(umbrella, "umbrella-consumer")
     listOf(stock, merged).forEach { consumer ->
         consumer.usesEverythingIn(umbrella)
         consumer.configure()
     }
     return Parity(merged.assemble(), stock.assemble())
+}
+
+/** Publishes every module of the fixture as an ordinary library, and a consumer of [umbrella]'s. */
+internal fun Fixture.stockConsumer(umbrella: Umbrella): Consumer {
+    gradle(*modules.values.flatMap { it.stockPublishTasks }.toTypedArray(), "-Pstock")
+    return Consumer(
+        dir = dir.resolve("stock-consumer"),
+        repository = stockRepo,
+        dependencies = umbrella.exports.map(Module::coordinates) + umbrella.coordinates,
+    )
 }
 
 /** What differs between a consumer of the umbrella and a consumer of stock libraries. */
@@ -57,7 +61,19 @@ internal class Parity(val umbrella: ConsumerBuilds, val stock: ConsumerBuilds) {
             .forEach { add("$variant resource $it is ${umbrella.apk.resources[it]} in the umbrella and ${stock.apk.resources[it]} in stock") }
         umbrella.apk.danglingReferences(GROUP).forEach { add("$variant umbrella APK refers to missing class $it") }
         stock.apk.danglingReferences(GROUP).forEach { add("$variant stock APK refers to missing class $it") }
+        umbrella.rClasses.danglingIn(umbrella.apk, GROUP).forEach { add("$variant umbrella APK refers to missing field $it") }
+        stock.rClasses.danglingIn(stock.apk, GROUP).forEach { add("$variant stock APK refers to missing field $it") }
+
+        val ours = umbrella.rFields()
+        val theirs = stock.rFields()
+        diff("R field", ours.keys, theirs.keys)
+        (ours.keys intersect theirs.keys).filter { ours[it] != theirs[it] }.forEach { add("$variant R field $it has length ${ours[it]} in the umbrella and ${theirs[it]} in stock") }
     }
+
+    /** `R$type.field` to its length. Stock gives each module its `R`, and the umbrella one for them all. */
+    private fun ConsumerBuild.rFields() = rClasses.fields.filterKeys { it.startsWith(GROUP) }.flatMap { (owner, fields) ->
+        fields.map { (field, length) -> "${owner.substringAfterLast('.')}.$field" to length }
+    }.toMap()
 
     private fun Set<String>.withoutR() = filterNot { it.matches(R_CLASS) }.toSet()
 

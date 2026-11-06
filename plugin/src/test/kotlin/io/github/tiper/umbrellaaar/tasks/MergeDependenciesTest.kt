@@ -1,6 +1,7 @@
 package io.github.tiper.umbrellaaar.tasks
 
-import io.github.tiper.umbrellaaar.extensions.declaredResourceNames
+import io.github.tiper.umbrellaaar.extensions.childElements
+import io.github.tiper.umbrellaaar.extensions.parseXml
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -414,13 +415,428 @@ class MergeDependenciesTest {
         )
     }
 
+    // ── A values resource is told apart by its real type ─────────────────────────────────────
+
+    @Test
+    fun `every spelling of a resource is one resource`() {
+        val spellings = listOf(
+            """<string-array name="%s"><item>a</item></string-array>""" to """<integer-array name="%s"><item>1</item></integer-array>""",
+            """<array name="%s"><item>a</item></array>""" to """<string-array name="%s"><item>b</item></string-array>""",
+            """<integer-array name="%s"><item>1</item></integer-array>""" to """<array name="%s"><item>2</item></array>""",
+            """<string name="%s">a</string>""" to """<item name="%s" type="string">b</item>""",
+            """<bool name="%s">true</bool>""" to """<item name="%s" type="bool">false</item>""",
+            """<color name="%s">#ff0000</color>""" to """<item name="%s" type="color">#00ff00</item>""",
+            """<dimen name="%s">1dp</dimen>""" to """<item name="%s" type="dimen">2dp</item>""",
+            """<integer name="%s">1</integer>""" to """<item name="%s" type="integer">2</item>""",
+            """<fraction name="%s">1%%</fraction>""" to """<item name="%s" type="fraction">2%%</item>""",
+            """<id name="%s"/>""" to """<item name="%s" type="id"/>""",
+            """<drawable name="%s">#ff0000</drawable>""" to """<item name="%s" type="drawable">#00ff00</item>""",
+            """<style name="%s"/>""" to """<item name="%s" type="style">@style/Other</item>""",
+            """<plurals name="%s"><item quantity="other">a</item></plurals>""" to """<item name="%s" type="plurals">@string/other</item>""",
+        )
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(spellings.mapIndexed { index, (first, _) -> first.format("r$index") }.joinToString("")))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(spellings.mapIndexed { index, (_, second) -> second.format("r$index") }.joinToString("")))
+
+        merge()
+
+        assertEquals(spellings.size, valuesOf("moduleA").declaredResourceNames().size)
+        assertEquals(emptyList(), valuesOf("moduleB").declaredResourceNames())
+    }
+
+    @Test
+    fun `one name in two types is two resources`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources("""<string name="c">a</string><array name="d"><item>a</item></array>"""))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources("""<item name="c" type="color">#ff0000</item><string name="d">a</string>"""))
+
+        merge()
+
+        assertEquals(listOf("color/c", "string/d"), valuesOf("moduleB").declaredResourceNames())
+    }
+
+    @Test
+    fun `a public declaration is not the resource it names`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources("""<string name="c">a</string>"""))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources("""<public name="c" type="string"/><public name="c" type="color"/>"""))
+        module("moduleC", "com.example.c", "res/values/values.xml" to resources("""<public name="c" type="string"/>"""))
+
+        merge()
+
+        assertEquals(2, valuesOf("moduleB").declaredResourceNames().size)
+        assertEquals(emptyList(), valuesOf("moduleC").declaredResourceNames())
+    }
+
+    @Test
+    fun `a values file nothing changed is copied as it is`() {
+        mainAar()
+        val xml = "<resources>\n  <!-- kept -->\n  <string name=\"a\">a</string>\n</resources>\n"
+        module("moduleA", "com.example.a", "res/values/values.xml" to xml)
+
+        merge()
+
+        assertEquals(xml, valuesOf("moduleA"))
+    }
+
+    // ── An attr is one attr, however many styleables define it ───────────────────────────────
+
+    @Test
+    fun `a nested attr defined twice is left defined once`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Header", attr("title", "string"))))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(styleable("Footer", attr("title", "string"))))
+
+        merge()
+
+        assertTrue(attr("title", "string") in valuesOf("moduleA").withoutSpaces(), valuesOf("moduleA"))
+        assertTrue(attr("title") in valuesOf("moduleB").withoutSpaces(), valuesOf("moduleB"))
+    }
+
+    @Test
+    fun `of nested definitions that fit, the one in the last styleable by name stays, as aapt2 reads it last`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Alpha", attr("title", "reference|string"))))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(styleable("Zeta", attr("title", "string"))))
+
+        merge()
+
+        assertTrue(attr("title") in valuesOf("moduleA").withoutSpaces(), valuesOf("moduleA"))
+        assertTrue(attr("title", "string") in valuesOf("moduleB").withoutSpaces(), valuesOf("moduleB"))
+    }
+
+    @Test
+    fun `the umbrella's own file is settled where it is`() {
+        mainAar("res/values/values.xml" to resources(styleable("Alpha", attr("title", "string"))))
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Zeta", attr("title", "string"))))
+
+        val out = merge()
+
+        assertTrue(attr("title") in File(out, "res/values/values.xml").readText().withoutSpaces())
+        assertTrue(attr("title", "string") in valuesOf("moduleA").withoutSpaces(), valuesOf("moduleA"))
+    }
+
+    @Test
+    fun `a top-level attr keeps its definition over a nested one, wherever it is`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Header", attr("ahead", "string"), attr("behind", "string")) + attr("top", "string")))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(attr("behind", "string") + styleable("Footer", attr("top", "string"))))
+
+        merge()
+
+        val first = valuesOf("moduleA").withoutSpaces()
+        val second = valuesOf("moduleB").withoutSpaces()
+        assertTrue(attr("behind") in first && attr("ahead", "string") in first && attr("top", "string") in first, first)
+        assertTrue(attr("behind", "string") in second && attr("top") in second, second)
+    }
+
+    @Test
+    fun `only the first of two top-level attrs stays, even if they differ`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(attr("mode", "string")))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(attr("mode", children = ONE)))
+
+        merge()
+
+        assertEquals(listOf("attr/mode"), valuesOf("moduleA").declaredResourceNames())
+        assertEquals(emptyList(), valuesOf("moduleB").declaredResourceNames())
+    }
+
+    @Test
+    fun `the enum of a definition goes with it`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Header", attr("mode", children = ONE))))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(styleable("Footer", attr("mode", children = ONE))))
+
+        merge()
+
+        assertTrue("enum" in valuesOf("moduleA"), valuesOf("moduleA"))
+        assertFalse("enum" in valuesOf("moduleB"), valuesOf("moduleB"))
+        assertTrue(attr("mode") in valuesOf("moduleB").withoutSpaces(), valuesOf("moduleB"))
+    }
+
+    @Test
+    fun `definitions that do not fit fail the merge, naming both modules and what to do`() {
+        mainAar()
+        listOf(
+            styleable("A", attr("x", "string")) to styleable("B", attr("x", "color")),
+            styleable("A", attr("x", "string|color")) to styleable("B", attr("x", "string")),
+            styleable("A", attr("x", "string")) to styleable("B", attr("x", "reference")),
+            styleable("A", attr("x", children = ONE)) to styleable("B", attr("x", children = TWO)),
+            styleable("A", attr("x", children = ONE)) to styleable("B", attr("x", "string")),
+            styleable("A", attr("x", children = """<flag name="one" value="1"/>""")) to styleable("B", attr("x", children = ONE)),
+            attr("x") to styleable("B", attr("x", "string")),
+            attr("x", "string") to styleable("B", attr("x", "color")),
+            attr("x", "string") to styleable("B", attr("x", children = ONE)),
+        ).forEach { (first, second) ->
+            module("moduleA", "com.example.a", "res/values/values.xml" to resources(first))
+            module("moduleB", "com.example.b", "res/values/values.xml" to resources(second))
+
+            val failure = assertFailsWith<GradleException>(first) { merge() }
+
+            val message = failure.message.orEmpty()
+            assertTrue("res/values/attr/x" in message && "moduleA" in message && "moduleB" in message, message)
+            assertTrue("Declare it once" in message, message)
+        }
+    }
+
+    @Test
+    fun `a top-level attr that lost never meets a nested one`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(attr("x", "color")))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(attr("x", "string")))
+        module("moduleC", "com.example.c", "res/values/values.xml" to resources(styleable("C", attr("x", "color"))))
+
+        merge()
+
+        assertEquals(emptyList(), valuesOf("moduleB").declaredResourceNames())
+    }
+
+    @Test
+    fun `an attr is settled folder by folder`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("A", attr("x", "string"))))
+        module("moduleB", "com.example.b", "res/values-land/values.xml" to resources(styleable("B", attr("x", "color"))))
+
+        val out = merge()
+
+        assertTrue("color" in File(out, "res/values-land/moduleB-values.xml").readText())
+    }
+
+    @Test
+    fun `a framework attr defines nothing`() {
+        mainAar()
+        val styleable = styleable("A", attr("android:text"))
+        val other = styleable("B", """<attr name="android:text" format="string"/>""")
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(other))
+
+        merge()
+
+        assertEquals(resources(other), valuesOf("moduleB"))
+    }
+
+    // ── A styleable shared by name is the union of them ──────────────────────────────────────
+
+    @Test
+    fun `styleables of one name unite, in the resources and in R txt alike`() {
+        mainAar()
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to resources(styleable("Shared", attr("android:text"), attr("p", "string"))),
+            "R.txt" to "int attr p 0x0\nint[] styleable Shared { 0x101014f, 0x0 }\nint styleable Shared_android_text 0\nint styleable Shared_p 1\n",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to resources(styleable("Shared", attr("android:gravity"), attr("android:text"), attr("q", "color"))),
+            "R.txt" to "int attr q 0x0\nint[] styleable Shared { 0x10100af, 0x101014f, 0x0 }\nint styleable Shared_android_gravity 0\nint styleable Shared_android_text 1\nint styleable Shared_q 2\n",
+        )
+
+        val out = merge()
+
+        val first = valuesOf("moduleA").withoutSpaces()
+        listOf(attr("android:text"), attr("android:gravity"), attr("p", "string"), attr("q", "color")).forEach { assertEquals(1, first.split(it).size - 1, "$it in $first") }
+        assertEquals(emptyList(), valuesOf("moduleB").declaredResourceNames())
+        assertEquals(
+            listOf(
+                "int attr p 0x0",
+                "int[] styleable Shared { 0x10100af, 0x101014f, 0x0, 0x0 }",
+                "int styleable Shared_android_gravity 0",
+                "int styleable Shared_android_text 1",
+                "int styleable Shared_p 2",
+                "int styleable Shared_q 3",
+                "int attr q 0x0",
+            ),
+            File(out, "R.txt").readLines(),
+        )
+    }
+
+    @Test
+    fun `a child two styleables of one name define is the last module's`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Shared", attr("p", "string"), attr("r", "string"))))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(styleable("Shared", attr("p", "color"))))
+        module("moduleC", "com.example.c", "res/values/values.xml" to resources(styleable("Shared", attr("r"))))
+
+        merge()
+
+        val merged = valuesOf("moduleA").withoutSpaces()
+        assertTrue(attr("p", "color") in merged && attr("r") in merged, merged)
+        assertFalse("string" in merged, merged)
+    }
+
+    @Test
+    fun `styleables are united before attrs are settled`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Shared", attr("x", "string"))))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(styleable("Shared", attr("x", "color"))))
+        module("moduleC", "com.example.c", "res/values/values.xml" to resources(styleable("Other", attr("x", "color"))))
+
+        merge()
+
+        assertTrue(attr("x", "color") in valuesOf("moduleA").withoutSpaces() || attr("x", "color") in valuesOf("moduleC").withoutSpaces())
+        assertFalse("string" in valuesOf("moduleA"), valuesOf("moduleA"))
+    }
+
+    @Test
+    fun `a styleable both modules declare alike is written to R txt as it was`() {
+        mainAar()
+        val block = "int[] styleable Shared { 0x0, 0x7f040001 }\nint styleable Shared_a 0\nint styleable Shared_b 1"
+        module("moduleA", "com.example.a", "R.txt" to "$block\nint string a 0x0\n")
+        module("moduleB", "com.example.b", "R.txt" to "int[] styleable Shared { 0x0, 0x7f040009 }\nint styleable Shared_a 0\nint styleable Shared_b 1\n")
+
+        assertEquals("$block\nint string a 0x0\n", File(merge(), "R.txt").readText())
+    }
+
+    @Test
+    fun `a line that only looks like the child of a styleable stays a symbol of its own`() {
+        mainAar()
+        module("moduleA", "com.example.a", "R.txt" to "int string a 0x0\nint styleable Stray_a 0\nint[] styleable Next { 0x0 }\nint styleable Next_b 0\n")
+
+        assertEquals(
+            listOf("int string a 0x0", "int styleable Stray_a 0", "int[] styleable Next { 0x0 }", "int styleable Next_b 0"),
+            File(merge(), "R.txt").readLines(),
+        )
+    }
+
+    // ── R.txt says what the resources say ────────────────────────────────────────────────────
+
+    @Test
+    fun `an enum id whose definition lost leaves R txt and public txt`() {
+        mainAar()
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to resources(attr("mode", "string")),
+            "R.txt" to "int attr mode 0x0\n",
+            "public.txt" to "attr mode\n",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to resources(attr("mode", children = ONE)),
+            "R.txt" to "int attr mode 0x0\nint id one 0x0\n",
+            "public.txt" to "attr mode\nid one\n",
+        )
+
+        val out = merge()
+
+        assertEquals(listOf("int attr mode 0x0"), File(out, "R.txt").readLines())
+        assertEquals(listOf("attr mode"), File(out, "public.txt").readLines().filter { it.isNotBlank() })
+    }
+
+    @Test
+    fun `an enum id something else still declares stays in R txt`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(attr("a", "string") + attr("b", "string") + attr("c", "string")), "R.txt" to "int attr a 0x0\nint attr b 0x0\nint attr c 0x0\n")
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to resources(attr("a", children = """<enum name="in_values" value="1"/>""") + attr("b", children = """<enum name="in_layout" value="1"/>""") + attr("c", children = """<enum name="in_land" value="1"/>""") + """<item name="in_values" type="id"/>"""),
+            "res/values-land/values.xml" to resources(attr("c", children = """<enum name="in_land" value="1"/>""")),
+            "res/layout/panel.xml" to """<View xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/in_layout"/>""",
+            "R.txt" to "int attr a 0x0\nint attr b 0x0\nint attr c 0x0\nint id in_values 0x0\nint id in_layout 0x0\nint id in_land 0x0\nint layout panel 0x0\n",
+        )
+
+        val symbols = File(merge(), "R.txt").readLines()
+
+        assertTrue(listOf("int id in_values 0x0", "int id in_layout 0x0", "int id in_land 0x0").all { it in symbols }, "$symbols")
+    }
+
+    @Test
+    fun `the ids of an overridden file stay, as they do in a consumer`() {
+        mainAar()
+        val layout = { ids: String -> """<View xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/$ids"/>""" }
+        module("moduleA", "com.example.a", "res/layout/shared.xml" to layout("kept"), "res/raw/data.xml" to layout("in_raw"), "R.txt" to "int id kept 0x0\nint layout shared 0x0\n")
+        module("moduleB", "com.example.b", "res/layout/shared.xml" to layout("only_b"), "res/raw/data.xml" to layout("in_raw_too"), "R.txt" to "int id only_b 0x0\nint layout shared 0x0\n")
+        module("moduleC", "com.example.c", "res/layout/shared.xml" to layout("kept"), "R.txt" to "int id kept 0x0\nint layout shared 0x0\n")
+
+        val out = merge()
+
+        assertEquals(listOf("kept"), File(out, "res/layout/shared.xml").readText().let { Regex("@\\+id/(\\w+)").findAll(it).map { match -> match.groupValues[1] }.toList() })
+        assertEquals(listOf("id/only_b"), File(out, "res/values/moduleB-overridden-ids.xml").readText().declaredResourceNames())
+        assertEquals(listOf("moduleB-overridden-ids.xml"), File(out, "res/values").list()!!.toList())
+        assertTrue("int id only_b 0x0" in File(out, "R.txt").readLines())
+    }
+
+    // ── What classes read from the umbrella's R has to be there ──────────────────────────────
+
+    @Test
+    fun `a field a module's class reads and nothing declares fails the merge`() {
+        mainAar()
+        module("moduleA", "com.example.a", "R.txt" to "int string real 0x0\n", R_REFERENCES to "string/real\tcom.example.a.A\nstring/ghost\tcom.example.a.A\$Inner\n")
+
+        val failure = assertFailsWith<GradleException> { merge() }
+
+        val message = failure.message.orEmpty()
+        assertTrue("string/ghost read by com.example.a.A\$Inner in moduleA" in message, message)
+        assertFalse("string/real" in message, message)
+        assertTrue("NoSuchFieldError" in message, message)
+        assertTrue("Declare" in message, message)
+    }
+
+    @Test
+    fun `a field another module declares passes, styleables included`() {
+        mainAar("R.txt" to "int string own 0x0\n")
+        module(
+            "moduleA",
+            "com.example.a",
+            R_REFERENCES to "string/own\tcom.example.a.A\nstring/b\tcom.example.a.A\nstyleable/Shared\tcom.example.a.A\nstyleable/Shared_android_text\tcom.example.a.A\nattr/p\tcom.example.a.A\n",
+        )
+        module("moduleB", "com.example.b", "R.txt" to "int string b 0x0\nint attr p 0x0\nint[] styleable Shared { 0x101014f }\nint styleable Shared_android_text 0\n")
+
+        val out = merge()
+
+        assertFalse(File(out, R_REFERENCES).exists(), "What classes read is for this check alone, and has no place in an AAR")
+    }
+
+    @Test
+    fun `a dropped resource is caught, whichever way it was lost`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(attr("mode", "string")), "R.txt" to "int attr mode 0x0\n")
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to resources(attr("mode", children = ONE)),
+            "R.txt" to "int attr mode 0x0\nint id one 0x0\n",
+            R_REFERENCES to "id/one\tcom.example.b.B\n",
+        )
+
+        val message = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("id/one read by com.example.b.B in moduleB" in message, message)
+    }
+
+    @Test
+    fun `a field the umbrella's own class reads is held to the same check`() {
+        mainAar()
+        writeBytes(mainDir, "classes/com/example/umbrella/Facade.class", classReadingField("com/example/umbrella/Facade", "com/example/a/R\$string"))
+        module("moduleA", "com.example.a", "R.txt" to "int string other 0x0\n")
+
+        val message = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("string/label read by com.example.umbrella.Facade in <main module>" in message, message)
+    }
+
+    @Test
+    fun `a long list of missing fields is cut short`() {
+        mainAar()
+        module("moduleA", "com.example.a", "R.txt" to "int string real 0x0\n", R_REFERENCES to (1..25).joinToString("") { "string/ghost$it\tcom.example.a.A\n" })
+
+        val message = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("and 5 more" in message, message)
+    }
+
     // ── The umbrella's own classes follow the merged R ───────────────────────────────────────
 
     @Test
     fun `umbrella classes referencing a merged module R are relocated to the umbrella R`() {
         mainAar()
         writeBytes(mainDir, "classes/com/example/umbrella/Facade.class", classReadingField("com/example/umbrella/Facade", "com/example/a/R\$string"))
-        module("moduleA", "com.example.a", "classes/com/example/a/A.class" to "a")
+        module("moduleA", "com.example.a", "classes/com/example/a/A.class" to "a", "R.txt" to "int string label 0x0\n")
 
         val owners = fieldOwners(jarEntry(File(merge(), "classes.jar"), "com/example/umbrella/Facade.class"))
 
@@ -705,6 +1121,23 @@ class MergeDependenciesTest {
         </manifest>
     """.trimIndent()
 
+    private fun resources(xml: String) = "<resources>$xml</resources>"
+
+    private fun styleable(name: String, vararg children: String) = "<declare-styleable name=\"$name\">${children.joinToString("")}</declare-styleable>"
+
+    private fun attr(name: String, format: String? = null, children: String = ""): String {
+        val type = format?.let { " format=\"$it\"" }.orEmpty()
+        return if (children.isEmpty()) "<attr$type name=\"$name\"/>" else "<attr$type name=\"$name\">$children</attr>"
+    }
+
+    /** The XML serializer puts attributes in its own order, and [attr] writes them in that one. */
+    private fun String.withoutSpaces() = replace(Regex(">\\s+<"), "><")
+
+    private fun valuesOf(module: String) = File(outDir, "res/values/$module-values.xml").readText()
+
+    /** `<type>/<name>` of every element right under `<resources>`. */
+    private fun String.declaredResourceNames() = parseXml()?.childElements().orEmpty().map { "${it.getAttribute("type").ifBlank { it.tagName }}/${it.getAttribute("name")}" }
+
     private fun values(vararg entries: Pair<String, String>) = buildString {
         appendLine("<resources>")
         entries.forEach { (name, value) -> appendLine("""    <string name="$name">$value</string>""") }
@@ -713,6 +1146,8 @@ class MergeDependenciesTest {
 
     private companion object {
         var counter = 0
+        const val ONE = "<enum name=\"one\" value=\"1\"/>"
+        const val TWO = "<enum name=\"two\" value=\"2\"/>"
         const val AAR_METADATA = "META-INF/com/android/build/gradle/aar-metadata.properties"
     }
 }

@@ -51,6 +51,9 @@ internal class Fixture(val dir: File) {
 
     internal val modules = linkedMapOf<String, Module>()
 
+    /** Lines added to the project's `gradle.properties`, for a build setting of the whole project. */
+    val gradleProperties = mutableListOf<String>()
+
     private val includedBuilds = mutableListOf<String>()
 
     fun androidLibrary(name: String, parent: Module? = null, configure: AndroidLibrary.() -> Unit = {}) = add(AndroidLibrary(this, name, parent), configure)
@@ -128,6 +131,7 @@ internal class Fixture(val dir: File) {
     private fun write() {
         projectDir.mkdirs()
         projectDir.writeCommonFiles()
+        projectDir.resolve("gradle.properties").appendText(gradleProperties.joinToString("") { "$it\n" })
         projectDir.resolve("settings.gradle.kts").writeText(
             """
             |$FIXTURE_PLUGIN_MANAGEMENT
