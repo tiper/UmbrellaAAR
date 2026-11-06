@@ -136,6 +136,45 @@ class ResourceOverlayTest {
         assertEquals("from middle", parity.umbrella.debug.apk.text("assets/shared.txt"))
     }
 
+    @Test
+    fun `assets in folders that differ by case ship as in stock, or fail where the disk cannot hold both`() = fixture {
+        val first = androidLibrary("first") { file("src/main/assets/Foo/a.txt", "a") }
+        val second = androidLibrary("second") { file("src/main/assets/foo/b.txt", "b") }
+        val umbrella = androidUmbrella { export(first, second) }
+
+        if (dir.resolve("case-probe").mkdirs() && dir.resolve("CASE-PROBE").exists()) {
+            gradleFails(umbrella.bundleTask()).run {
+                assertLogged("'assets/Foo' and 'assets/foo' differ by case alone, and this disk has one path for both")
+                assertLogged("First contributor : first")
+                assertLogged("Second contributor: second")
+                assertLogged("Rename one in its module, or build on a case-sensitive disk")
+            }
+        } else {
+            val parity = parity(umbrella)
+
+            parity.assertMatchesStock()
+            assertTrue(parity.umbrella.debug.apk.otherEntries.containsAll(setOf("assets/Foo/a.txt", "assets/foo/b.txt")), "${parity.umbrella.debug.apk.otherEntries}")
+        }
+    }
+
+    @Test
+    fun `a file of one module at a folder of another fails as in stock, naming both`() = fixture {
+        val first = androidLibrary("first") { file("src/main/assets/foo", "a file") }
+        val second = androidLibrary("second") { file("src/main/assets/foo/bar.txt", "in a folder") }
+        val umbrella = androidUmbrella { export(first, second) }
+
+        gradleFails(umbrella.bundleTask()).run {
+            assertLogged("UmbrellaAar cannot merge 'assets/foo/bar.txt': 'assets/foo' is a file in one module and a folder in the other")
+            assertLogged("First contributor : first")
+            assertLogged("Second contributor: second")
+            assertLogged("Rename the file or the folder in one of the modules")
+        }
+        stockConsumer(umbrella).run {
+            usesEverythingIn(umbrella)
+            assembleFails().assertLogged("FileAlreadyExistsException")
+        }
+    }
+
     private companion object {
         /** A 1x1 PNG. AGP crunches PNGs in release, so it has to be a real one. */
         val ONE_PIXEL_PNG: ByteArray = java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")

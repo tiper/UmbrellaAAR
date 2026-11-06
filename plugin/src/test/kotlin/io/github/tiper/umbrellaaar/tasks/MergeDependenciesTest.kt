@@ -212,6 +212,174 @@ class MergeDependenciesTest {
         }
     }
 
+    private val diskIgnoresCase by lazy { File(root, "case-probe").mkdirs() && File(root, "CASE-PROBE").exists() }
+
+    /** Both [paths] stay where the disk can hold them. Where it cannot they fail the merge, by [variants]. */
+    private fun assertHeldApart(variants: Pair<String, String>, paths: List<String>, first: String = "moduleA") {
+        if (diskIgnoresCase) {
+            val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+            assertTrue("'${variants.first}' and '${variants.second}' differ by case alone" in error, error)
+            assertTrue("First contributor : $first" in error, error)
+            assertTrue("Second contributor: moduleB" in error, error)
+            assertTrue("Rename one in its module, or build on a case-sensitive disk" in error, error)
+        } else {
+            val out = merge()
+            paths.forEach { assertTrue(File(out, it).isFile, it) }
+        }
+    }
+
+    @Test
+    fun `assets in folders that differ by case fail where the disk cannot hold both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/Foo/a.txt" to "a")
+        module("moduleB", "com.example.b", "assets/foo/b.txt" to "b")
+
+        assertHeldApart("assets/Foo" to "assets/foo", listOf("assets/Foo/a.txt", "assets/foo/b.txt"))
+    }
+
+    @Test
+    fun `the same bytes under names that differ by case are two paths all the same`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/Note.txt" to "same")
+        module("moduleB", "com.example.b", "assets/note.txt" to "same")
+
+        assertHeldApart("assets/Note.txt" to "assets/note.txt", listOf("assets/Note.txt", "assets/note.txt"))
+    }
+
+    @Test
+    fun `assets that differ by case from the umbrella's own name it`() {
+        mainAar("assets/Foo/a.txt" to "a")
+        module("moduleB", "com.example.b", "assets/foo/b.txt" to "b")
+
+        assertHeldApart("assets/Foo" to "assets/foo", listOf("assets/Foo/a.txt", "assets/foo/b.txt"), first = MAIN)
+    }
+
+    @Test
+    fun `resources in folders that differ by case fail where the disk cannot hold both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/drawable-HDPI/a.xml" to "<a/>")
+        module("moduleB", "com.example.b", "res/drawable-hdpi/b.xml" to "<b/>")
+
+        assertHeldApart("res/drawable-HDPI" to "res/drawable-hdpi", listOf("res/drawable-HDPI/a.xml", "res/drawable-hdpi/b.xml"))
+    }
+
+    @Test
+    fun `values in folders that differ by case fail where the disk cannot hold both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values-PT/a.xml" to values("a" to "a"))
+        module("moduleB", "com.example.b", "res/values-pt/b.xml" to values("b" to "b"))
+
+        assertHeldApart("res/values-PT" to "res/values-pt", listOf("res/values-PT/moduleA-a.xml", "res/values-pt/moduleB-b.xml"))
+    }
+
+    @Test
+    fun `jars in folders that differ by case fail where the disk cannot hold both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "libs/Foo/a.jar" to "a")
+        module("moduleB", "com.example.b", "libs/foo/b.jar" to "b")
+
+        assertHeldApart("libs/Foo" to "libs/foo", listOf("libs/Foo/a.jar", "libs/foo/b.jar"))
+    }
+
+    @Test
+    fun `a values file takes no path from another, as it goes under its module's name`() {
+        mainAar("res/values/Strings.xml" to values("a" to "a"))
+        module("moduleB", "com.example.b", "res/values/strings.xml" to values("b" to "b"))
+
+        val out = merge()
+
+        assertTrue(File(out, "res/values/moduleB-strings.xml").isFile)
+    }
+
+    @Test
+    fun `what the first module overrides takes no path at all`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/drawable/a.png" to "a")
+        module("moduleB", "com.example.b", "res/drawable/a.PNG" to "b")
+
+        val out = merge()
+
+        assertEquals("a", File(out, "res/drawable/a.png").readText())
+    }
+
+    private fun assertFileAndFolder(path: String, at: String, first: String = "moduleA") {
+        val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+        assertTrue("UmbrellaAar cannot merge '$path': '$at' is a file in one module and a folder in the other" in error, error)
+        assertTrue("First contributor : $first" in error, error)
+        assertTrue("Second contributor: moduleB" in error, error)
+        assertTrue("Rename the file or the folder in one of the modules" in error, error)
+    }
+
+    @Test
+    fun `a folder where a module before has a file names both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/foo" to "a file")
+        module("moduleB", "com.example.b", "assets/foo/bar.txt" to "in a folder")
+
+        assertFileAndFolder("assets/foo/bar.txt", at = "assets/foo")
+    }
+
+    @Test
+    fun `a file where a module before has a folder names both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/foo/bar.txt" to "in a folder")
+        module("moduleB", "com.example.b", "assets/foo" to "a file")
+
+        assertFileAndFolder("assets/foo", at = "assets/foo")
+    }
+
+    @Test
+    fun `a file any number of folders up is found`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/foo" to "a file")
+        module("moduleB", "com.example.b", "assets/foo/a/b/bar.txt" to "in a folder")
+
+        assertFileAndFolder("assets/foo/a/b/bar.txt", at = "assets/foo")
+    }
+
+    @Test
+    fun `a file over what a module before has further down names that module`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/foo/a/bar.txt" to "in a folder")
+        module("moduleB", "com.example.b", "assets/foo/a" to "a file")
+
+        assertFileAndFolder("assets/foo/a", at = "assets/foo/a")
+    }
+
+    @Test
+    fun `a folder where the umbrella has a file names it`() {
+        mainAar("assets/foo" to "a file")
+        module("moduleB", "com.example.b", "assets/foo/bar.txt" to "in a folder")
+
+        assertFileAndFolder("assets/foo/bar.txt", at = "assets/foo", first = MAIN)
+    }
+
+    @Test
+    fun `a file where the umbrella has a folder names it`() {
+        mainAar("assets/foo/bar.txt" to "in a folder")
+        module("moduleB", "com.example.b", "assets/foo" to "a file")
+
+        assertFileAndFolder("assets/foo", at = "assets/foo", first = MAIN)
+    }
+
+    @Test
+    fun `a file and a folder clash away from assets as well`() {
+        mainAar()
+        module("moduleA", "com.example.a", "jni/arm64-v8a" to "a file")
+        module("moduleB", "com.example.b", "jni/arm64-v8a/liba.so" to "in a folder")
+
+        assertFileAndFolder("jni/arm64-v8a/liba.so", at = "jni/arm64-v8a")
+    }
+
+    @Test
+    fun `a file and a folder that differ by case go by the case`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/FOO" to "a file")
+        module("moduleB", "com.example.b", "assets/foo/bar.txt" to "in a folder")
+
+        assertHeldApart("assets/FOO" to "assets/foo", listOf("assets/FOO", "assets/foo/bar.txt"))
+    }
+
     @Test
     fun `byte-identical duplicate files are tolerated`() {
         mainAar()

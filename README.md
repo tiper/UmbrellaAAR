@@ -573,6 +573,12 @@ pluginManagement {
   case one copy is kept. Rename the file in one of the modules, or move it under a
   module-specific sub-folder. AGP generates `navigation.json` and `prefab/**`, so those two cannot be
   renamed, and two modules with deep links or prefab cannot be merged.
+
+  Two modules' paths that differ by case alone, like `assets/Foo/` and `assets/foo/`, are an error
+  naming both on a disk that cannot hold both, as most on macOS and Windows cannot: the merged AAR
+  would ship them at one path, to every consumer. Rename one, or build on a case-sensitive disk.
+  A file of one module where another has a folder, like `assets/foo` and `assets/foo/bar.txt`, is an
+  error naming both on any disk, and a stock consumer of the two fails as well. Rename one.
 - **`public.txt` is only published when every module declares one.** In an AAR, `public.txt` is the
   whitelist of public resources: if it is present, everything *not* listed becomes private. A module
   that ships no `public.txt` is saying "all my resources are public". So if only some of the merged

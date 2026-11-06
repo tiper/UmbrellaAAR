@@ -392,6 +392,11 @@ kotlin {
           <tr><th scope="row">Anything else</th><td>Same rule, for example data-binding folders.</td></tr>
         </tbody>
         <tbody>
+          <tr class="group-row"><th colspan="2" scope="rowgroup">Paths a disk cannot hold<span>These fail the build, identical bytes or not, naming both modules. Rename one.</span></th></tr>
+          <tr><th scope="row">Paths that differ by case</th><td>On a disk that cannot hold both, as most on macOS and Windows cannot, because the merged AAR would ship two modules' <code>assets/Foo/</code> and <code>assets/foo/</code> at one path to every consumer. A case-sensitive disk keeps both.</td></tr>
+          <tr><th scope="row">A file and a folder at one path</th><td>One module's <code>assets/foo</code> and another's <code>assets/foo/bar.txt</code>, on any disk. A stock consumer of the two fails as well.</td></tr>
+        </tbody>
+        <tbody>
           <tr class="group-row"><th colspan="2" scope="rowgroup">Fixed names, one contributor<span>Not merged. The first file is kept and a second, different file fails the build. Renaming is not an option.</span></th></tr>
           <tr><th scope="row"><code>navigation.json</code></th><td>Only one module in the graph can effectively contribute it.</td></tr>
           <tr><th scope="row"><code>lint.jar</code></th><td>Only one module can publish custom lint checks through the umbrella, and that includes the umbrella's own file.</td></tr>

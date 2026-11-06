@@ -1,8 +1,12 @@
 package io.github.tiper.umbrellaaar.tasks
 
 import io.github.tiper.umbrellaaar.extensions.AAR_METADATA_PATH
+import io.github.tiper.umbrellaaar.extensions.CASE_VARIANT_ADVICE
 import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
 import io.github.tiper.umbrellaaar.extensions.RClassContent
+import io.github.tiper.umbrellaaar.extensions.andFolders
+import io.github.tiper.umbrellaaar.extensions.caseVariant
+import io.github.tiper.umbrellaaar.extensions.caseVariantsOf
 import io.github.tiper.umbrellaaar.extensions.mergeAarMetadata
 import io.github.tiper.umbrellaaar.extensions.mergeXmlChildren
 import io.github.tiper.umbrellaaar.extensions.normalizePath
@@ -70,6 +74,9 @@ abstract class MergeDependencies : DefaultTask() {
     /** `entry path -> module folder that contributed it`, so duplicates can name *both* sides. */
     private val contributors = mutableMapOf<String, String>()
 
+    /** What the merged AAR holds so far, for [claimPath]. */
+    private val paths = mutableMapOf<String, String>()
+
     /** `res/values*` folder + resource name, or a key of [MergedOverlays] -> module folders that shipped it. */
     private val resourceNames = mutableMapOf<String, MutableList<String>>()
 
@@ -93,6 +100,7 @@ abstract class MergeDependencies : DefaultTask() {
     @TaskAction
     fun execute() {
         contributors.clear()
+        paths.clear()
         resourceNames.clear()
         rFieldReads.clear()
         seenKeys.clear()
@@ -114,6 +122,7 @@ abstract class MergeDependencies : DefaultTask() {
         src.walk().filter { it.isFile }.forEach {
             val relativePath = it.relativeTo(src).path.normalizePath()
             contributors[relativePath] = MAIN
+            claimPath(MAIN, relativePath, out)
             if (relativePath.startsWith("res/")) modulesWithResources += MAIN
             // Recorded first, so the umbrella's own declaration of a resource always wins.
             when {
@@ -161,8 +170,13 @@ abstract class MergeDependencies : DefaultTask() {
                         // of this task.
                         relativePath.startsWith("classes/") -> classEntries += classEntry(owner, relativePath, srcFile)
 
-                        // Settled together once every module's is in, see MergedValues.
-                        relativePath.startsWith("res/values") -> values.add(owner, relativePath, srcFile, destFile.ofModule(owner))
+                        // Settled together once every module's is in, see MergedValues. Only the
+                        // folder is a path of theirs, as the file goes under its module's name.
+                        relativePath.startsWith("res/values") -> {
+                            claimPath(owner, relativePath.substringBeforeLast('/'), out)
+                            contributors.putIfAbsent(relativePath, owner)
+                            values.add(owner, relativePath, srcFile, destFile.ofModule(owner))
+                        }
 
                         // A consumer layers its modules, and what one ships replaces the same
                         // resource or asset of anything below it. One AAR has no layers.
@@ -199,12 +213,16 @@ abstract class MergeDependencies : DefaultTask() {
 
                         relativePath == LINT_JAR && destFile.exists() -> keepFirstLintJar(owner, srcFile, destFile)
 
-                        destFile.exists() -> onDuplicate(owner, relativePath, srcFile, destFile)
-
                         else -> {
-                            destFile.parentFile?.mkdirs()
-                            srcFile.copyTo(destFile, overwrite = true)
-                            contributors[relativePath] = owner
+                            claimPath(owner, relativePath, out)
+                            failOnFileAndFolder(owner, relativePath, out)
+                            if (destFile.exists()) {
+                                onDuplicate(owner, relativePath, srcFile, destFile)
+                            } else {
+                                destFile.parentFile?.mkdirs()
+                                srcFile.copyTo(destFile, overwrite = true)
+                                contributors[relativePath] = owner
+                            }
                         }
                     }
                     filesProcessed++
@@ -454,7 +472,7 @@ abstract class MergeDependencies : DefaultTask() {
         relativePath: String,
         srcFile: File,
         destFile: File,
-        firstContributor: String = contributors[relativePath] ?: contributors.entries.find { it.key.equals(relativePath, ignoreCase = true) }?.value ?: "unknown",
+        firstContributor: String = contributors[relativePath] ?: "unknown",
     ) {
         if (srcFile.sameBytesAs(destFile)) {
             logger.info("[UmbrellaAar] Duplicate but identical '$relativePath' from '$owner' — keeping one copy.")
@@ -486,14 +504,51 @@ abstract class MergeDependencies : DefaultTask() {
         )
     }
 
-    private fun conflict(relativePath: String, firstContributor: String, secondContributor: String, hint: String) = GradleException(
+    private fun conflict(relativePath: String, firstContributor: String, secondContributor: String, hint: String) =
+        cannotMerge(relativePath, "it is contributed by two modules with different content", firstContributor, secondContributor, hint)
+
+    private fun cannotMerge(relativePath: String, reason: String, firstContributor: String, secondContributor: String, hint: String) = GradleException(
         buildString {
-            appendLine("UmbrellaAar cannot merge '$relativePath': it is contributed by two modules with different content.")
+            appendLine("UmbrellaAar cannot merge '$relativePath': $reason.")
             appendLine("  First contributor : $firstContributor")
             appendLine("  Second contributor: $secondContributor")
             append(hint)
         },
     )
+
+    /**
+     * Takes [relativePath] of the merged AAR for [owner]. On a disk that ignores case, a path that
+     * differs by case alone from one already here ends up at that one, and the AAR takes that to
+     * every consumer, whatever their disk. A library published on its own keeps the path it has.
+     */
+    private fun claimPath(owner: String, relativePath: String, out: File) {
+        val (first, variant) = paths.caseVariant(relativePath, out) ?: return
+        throw cannotMerge(
+            relativePath,
+            caseVariantsOf(first, variant),
+            firstContributorOf(first),
+            owner,
+            "  The merged AAR would ship them at one path, for every consumer. $CASE_VARIANT_ADVICE",
+        )
+    }
+
+    /**
+     * A path is a file or a folder, on any disk, so [relativePath] of [owner] cannot go where the
+     * other already is. Left to the copy, that ends in an error naming no module.
+     */
+    private fun failOnFileAndFolder(owner: String, relativePath: String, out: File) {
+        val taken = relativePath.andFolders().firstOrNull { path -> File(out, path).run { if (path == relativePath) isDirectory else isFile } } ?: return
+        throw cannotMerge(
+            relativePath,
+            "'$taken' is a file in one module and a folder in the other",
+            firstContributorOf(taken),
+            owner,
+            "  Rename the file or the folder in one of the modules, or exclude(...) one of them from export and publish it on its own.",
+        )
+    }
+
+    /** The module that brought [path], or the first thing in it where that is a folder. */
+    private fun firstContributorOf(path: String) = contributors.entries.find { (entry) -> entry == path || entry.startsWith("$path/") }?.value ?: "unknown"
 
     private fun reportDuplicateResources() {
         val duplicates = resourceNames.filterValues { it.size > 1 }

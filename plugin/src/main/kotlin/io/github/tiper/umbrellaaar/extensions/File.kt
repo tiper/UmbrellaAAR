@@ -75,19 +75,26 @@ internal fun InputStream.unzipStream(
     }
 }
 
+internal const val CASE_VARIANT_ADVICE = "Rename one in its module, or build on a case-sensitive disk."
+
+internal fun caseVariantsOf(first: String, second: String) = "'$first' and '$second' differ by case alone, and this disk has one path for both"
+
+private fun MutableMap<String, String>.claim(entry: String, to: File) {
+    caseVariant(entry, to)?.let { (first, second) -> throw IllegalArgumentException("${caseVariantsOf(first, second)}. $CASE_VARIANT_ADVICE") }
+}
+
 /**
  * On a disk that ignores case the second of two entries overwrites the first, without a word, and
  * the second of two folders moves its files into the first. What is on the disk under [to] says
- * whether those are one.
+ * whether those are one. Takes [entry] and its folders, and returns what it has by case alone, if
+ * anything, as the path taken first and its variant.
  */
-private fun MutableMap<String, String>.claim(entry: String, to: File) {
-    generateSequence(entry) { it.substringBeforeLast('/', "").ifEmpty { null } }.forEach { path ->
-        val first = putIfAbsent(path.lowercase(), path)
-        require(first == null || first == path || !File(to, path).isSameFileAs(File(to, first))) {
-            "'$first' and '$path' differ by case alone, and this disk has one path for both. Rename one in its module, or build on a case-sensitive disk."
-        }
-    }
+internal fun MutableMap<String, String>.caseVariant(entry: String, to: File): Pair<String, String>? = entry.andFolders().firstNotNullOfOrNull { path ->
+    putIfAbsent(path.lowercase(), path)?.takeIf { it != path && File(to, path).isSameFileAs(File(to, it)) }?.let { it to path }
 }
+
+/** This relative path, then the folders it is in, from the nearest out. */
+internal fun String.andFolders() = generateSequence(this) { it.substringBeforeLast('/', "").ifEmpty { null } }
 
 internal fun File.sameBytesAs(other: File) = length() == other.length() && readBytes().contentEquals(other.readBytes())
 
