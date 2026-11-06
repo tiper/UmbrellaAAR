@@ -327,6 +327,9 @@ internal open class KmpLibrary(fixture: Fixture, name: String) : AndroidModule(f
 
     protected open val extraPlugins get() = emptyList<String>()
 
+    /** Rearranges the `plugins` block, whose order is the one the README shows otherwise. */
+    var pluginOrder: (List<String>) -> List<String> = { it }
+
     private var jvm = false
     private var ios = false
     private val expectClasses = mutableListOf<String>()
@@ -352,7 +355,7 @@ internal open class KmpLibrary(fixture: Fixture, name: String) : AndroidModule(f
     override fun platform(notation: String, enforced: Boolean) = "project.dependencies.${super.platform(notation, enforced)}"
 
     override fun scriptBlocks() = listOf(
-        pluginsBlock(listOf("id(\"org.jetbrains.kotlin.multiplatform\")", "id(\"com.android.kotlin.multiplatform.library\")") + extraPlugins + "`maven-publish`"),
+        pluginsBlock(pluginOrder(listOf("id(\"org.jetbrains.kotlin.multiplatform\")", "id(\"com.android.kotlin.multiplatform.library\")") + extraPlugins + "`maven-publish`")),
         coordinatesBlock(),
         """
         |kotlin {

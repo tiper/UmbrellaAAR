@@ -164,15 +164,13 @@ When developing a multi-module Kotlin Multiplatform project with an Android libr
 
 ### Applying the Plugin
 
-The plugin is available on **Maven Central** and **Gradle Plugin Portal**. No additional repository configuration is needed—simply add it to your module-level `build.gradle.kts`, after the Kotlin and Android plugins:
+The plugin is available on **Maven Central** and **Gradle Plugin Portal**. No additional repository configuration is needed—simply add it to your module-level `build.gradle.kts`, next to the Kotlin and Android plugins, in any order:
 
 ```kotlin
 plugins {
     id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"
 }
 ```
-
-> Keep the Kotlin Multiplatform plugin first and this plugin after it and the Android plugin. On a `com.android.kotlin.multiplatform.library` module, other orders can fail with an `Extension of type '…' does not exist` error.
 
 #### UmbrellaAarPom Plugin (Optional)
 

@@ -373,11 +373,13 @@ class UmbrellaAar : Plugin<Project> {
 
         // AGP9: com.android.kotlin.multiplatform.library — a single "androidMain" variant, no build
         // types. `release` and `debug` publications are kept for source compatibility but are thin
-        // aliases over one shared extract/merge pipeline.
+        // aliases over one shared extract/merge pipeline. Its DSL hangs off the Kotlin extension, so it
+        // is there once both plugins are, and that one goes by name: Compose and Dokka bring extensions
+        // that are ExtensionAware as well.
         plugins.withId("com.android.kotlin.multiplatform.library") {
-            registerUmbrellaClasspath(config, VARIANTS.first())
-            extensions.configure<ExtensionAware> {
-                extensions.configure<KotlinMultiplatformAndroidLibraryExtension> {
+            plugins.withId("org.jetbrains.kotlin.multiplatform") {
+                registerUmbrellaClasspath(config, VARIANTS.first())
+                (extensions.getByName("kotlin") as ExtensionAware).extensions.configure<KotlinMultiplatformAndroidLibraryExtension> {
                     setup(
                         variants = VARIANTS,
                         key = KMP_PIPELINE_KEY,

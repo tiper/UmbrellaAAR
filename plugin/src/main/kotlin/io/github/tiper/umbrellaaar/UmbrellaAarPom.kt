@@ -369,10 +369,13 @@ abstract class UmbrellaAarPom @Inject constructor(
             }
 
             // AGP9: com.android.kotlin.multiplatform.library — a single "android" variant, so the
-            // `release` and `debug` publications share one resolution.
+            // `release` and `debug` publications share one resolution. UmbrellaAar registers the tasks
+            // these belong to once the Kotlin plugin is there as well.
             plugins.withId("com.android.kotlin.multiplatform.library") {
-                val shared = dependenciesProvider(config, VARIANTS.first()) { createKmpResolutionConfig() }
-                VARIANTS.forEach { setup(variant = it, publishedProvider = shared) }
+                plugins.withId("org.jetbrains.kotlin.multiplatform") {
+                    val shared = dependenciesProvider(config, VARIANTS.first()) { createKmpResolutionConfig() }
+                    VARIANTS.forEach { setup(variant = it, publishedProvider = shared) }
+                }
             }
 
             plugins.withType<MavenPublishPlugin> {
