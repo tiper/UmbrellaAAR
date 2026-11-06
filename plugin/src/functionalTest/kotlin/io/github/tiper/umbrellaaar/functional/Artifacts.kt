@@ -85,6 +85,13 @@ internal class Aar(val file: File) {
 
     fun text(entry: String): String? = ZipFile(file).use { it.textOf(entry) }
 
+    /** What [entry] of `classes.jar` holds, which is where a JVM module's resources end up. */
+    fun classesText(entry: String): String? = ZipFile(file).use { zip ->
+        ZipInputStream(zip.getInputStream(checkNotNull(zip.getEntry("classes.jar")) { "$file has no classes.jar" })).use { jar ->
+            generateSequence { jar.nextEntry }.firstOrNull { it.name == entry }?.let { jar.readBytes().decodeToString() }
+        }
+    }
+
     /** Every `<attr>` of [name] left in the merged `res/values` that says what the attr is. */
     fun definitions(name: String): List<String> = entries.filter { it.startsWith("res/values/") }.flatMap { entry ->
         parseXml(checkNotNull(text(entry))).elements.flatMap { listOf(it) + if (it.tagName == "declare-styleable") it.elements else emptyList() }

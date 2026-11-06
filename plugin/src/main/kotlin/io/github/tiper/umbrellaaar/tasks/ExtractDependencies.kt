@@ -12,6 +12,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.FileCollection
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.MapProperty
@@ -21,9 +22,12 @@ import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity.NONE
 import org.gradle.api.tasks.TaskAction
 import org.gradle.work.Incremental
 import org.gradle.work.InputChanges
@@ -47,6 +51,17 @@ abstract class ExtractDependencies : DefaultTask() {
     @get:Incremental
     @get:Classpath
     abstract val dependencies: ConfigurableFileCollection
+
+    /**
+     * [dependencies] byte for byte. A classpath goes by what running it would see, so a build's
+     * `normalization` can hide a file from it, and this packs what it finds and runs none of it.
+     * Gradle takes two incremental properties of one collection for a mistake, hence the filter.
+     */
+    @get:Incremental
+    @get:InputFiles
+    @get:PathSensitive(NONE)
+    internal val shippedBytes: FileCollection
+        get() = dependencies.filter { true }
 
     /**
      * `"<project path>\t<edge that pulled it in>"` for every merged module.

@@ -104,6 +104,22 @@ class IncrementalExtractionTest {
         assertEquals("two", umbrella.bundle().text("assets/shared.txt"))
     }
 
+    /** Ignoring a file is a rule for running a classpath, and this packs what it finds. */
+    @Test
+    fun `a file the runtime classpath ignores ships as it is now`() = fixture {
+        val stamp = "src/main/resources/build-info.properties"
+        val stamped = javaLibrary("stamped") { file(stamp, "stamp=one\n") }
+        val umbrella = androidUmbrella {
+            export(stamped)
+            buildScript("normalization { runtimeClasspath { ignore(\"build-info.properties\") } }")
+        }
+        umbrella.bundle("release", "--no-configuration-cache")
+
+        stamped.file(stamp, "stamp=two\n")
+
+        assertEquals("stamp=two\n", umbrella.bundle("release", "--no-configuration-cache").classesText("build-info.properties"))
+    }
+
     /** Their rules are merged in module order, which is what gives away whose bytes are whose. */
     @Test
     fun `two modules trading project paths trade their place in the merge`() = fixture {
