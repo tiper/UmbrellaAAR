@@ -11,13 +11,13 @@ The sample always builds against the plugin source in this repository. The root 
 ## Testing the `UmbrellaAAR`
 
 1. **Publish the `UmbrellaAAR` to Maven Local**:
-   To test the `UmbrellaAAR`, you need to publish it to your local Maven repository. Run the following command:
+   To test the `UmbrellaAAR`, you need to publish it to your local Maven repository. `sample/app` depends on the published coordinates because a `project(":sample:export")` dependency would get the umbrella module as an ordinary library, not the merged AAR. Run the following command:
 
    ```bash
    ./gradlew :sample:export:publishAndroidReleaseUmbrellaAarPublicationToMavenLocal
    ```
 
-   This publishes only the umbrella. `publishToMavenLocal` fails here before it publishes anything, because the module's other publications share the umbrella's coordinates. See [Configuration & Tasks](../README.md#configuration--tasks) in the main README.
+   This publishes only the umbrella. Don't use `publishToMavenLocal` here: the module's other publications share the umbrella's coordinates, so that run fails before anything is published, naming the publications. See [Configuration & Tasks](../README.md#configuration--tasks) in the main README.
 
 2. **Sync the Project**:
    After publishing the `UmbrellaAAR`, sync your Gradle project to use the locally published artifact.
