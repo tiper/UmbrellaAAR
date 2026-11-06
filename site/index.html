@@ -262,7 +262,7 @@ dependencies {
     </figure>
 
     <div class="col">
-      <p>You apply the plugin to one Android library module, the umbrella module, and name other modules with <code>export</code>. From there the plugin follows <code>api</code>, <code>implementation</code> and <code>runtimeOnly</code> project dependencies through the source sets that reach the Android main compilation, so you only name the entry points.</p>
+      <p>You apply the plugin to one Android library module, the umbrella module, and name other modules with <code>export</code>. From there Gradle's own dependency resolution decides. Each module brings the <code>api</code>, <code>implementation</code> and <code>runtimeOnly</code> dependencies of the variant Gradle selects for Android, or of its <code>jvm()</code> variant if it has no Android target, so you only name the entry points.</p>
       <p>It takes each module's archive, rewrites references to merged <code>R</code> classes so they point at your umbrella namespace, and merges everything into the umbrella module's own AAR.</p>
       <p>External libraries are never unpacked. Add the companion POM plugin and they are listed in the published POM, so your consumers resolve them as usual.</p>
     </div>
@@ -297,7 +297,7 @@ kotlin {
         </figure>
         <p>AGP requires <code>namespace</code> and <code>compileSdk</code> here and stops with an error without them. <code>androidLibrary</code> is the older, deprecated name for the <code>android</code> block. The repository's samples still use it, and both work.</p>
         <p>The plugin resolves from the <a href="https://plugins.gradle.org/plugin/io.github.tiper.umbrellaaar">Gradle Plugin Portal</a> and <a href="https://central.sonatype.com/search?q=g%3Aio.github.tiper">Maven Central</a>, so it needs no extra repository if your <code>pluginManagement</code> block already has <code>gradlePluginPortal()</code> or <code>mavenCentral()</code>. The Kotlin and Android ids above carry no version. Declare the Kotlin and Android plugins in your root build with <code>apply false</code>, or replace these lines with your version catalog aliases.</p>
-        <p>Tasks are registered only when <code>com.android.library</code> or <code>com.android.kotlin.multiplatform.library</code> is applied to the module. On <code>com.android.application</code> you get the <code>export</code> configuration and no tasks.</p>
+        <p>Tasks are registered only when <code>com.android.library</code> or <code>com.android.kotlin.multiplatform.library</code> is applied to the module. On <code>com.android.application</code> you get the <code>export</code> configuration, no tasks, and a warning saying so.</p>
       </li>
       <li>
         <h3>Declare what goes in</h3>
@@ -312,6 +312,8 @@ kotlin {
           </div>
         </figure>
         <p>This goes at the top level of the build file. <code>export</code> takes local projects and platforms. An external coordinate on <code>export</code> fails the build, because it would not be merged. So do <code>files(...)</code> and a project asked for a capability, a configuration or attributes, or with <code>isTransitive = false</code>.</p>
+        <p><code>export</code> says what to merge and nothing more. It puts no module on the umbrella module's compile classpath. If the umbrella has code of its own that calls an exported module, declare that module with <code>api(...)</code> or <code>implementation(...)</code> as well.</p>
+        <p>If the same module builds Apple frameworks, it can merge every local module those frameworks export, with <code>umbrellaAar { includeFrameworkExports = true }</code>. <code>export(...)</code> keeps working next to it. A framework export with no Android or JVM target stays out of the AAR, with a build warning naming it. With <code>umbrellaaar.legacyGraph=true</code> it fails the build instead.</p>
       </li>
       <li>
         <h3>Run the task</h3>
@@ -333,7 +335,7 @@ kotlin {
 </code></pre>
           </div>
         </figure>
-        <p>The file name is the project name plus the lowercase variant. For sources, run <code>androidReleaseUmbrellaAarSourcesJar</code>, which writes <code>your-library-release-sources.jar</code> next to the AAR. The bundle task does not build it for you.</p>
+        <p>The file name is the project name plus the variant. For sources, run <code>androidReleaseUmbrellaAarSourcesJar</code>, which writes <code>your-library-release-sources.jar</code> next to the AAR. The bundle task does not build it for you.</p>
       </li>
     </ol>
 
@@ -344,13 +346,14 @@ kotlin {
       <div class="scroll" tabindex="0" role="group" aria-label="Example of the merged modules report">
 <pre class="report"><code><span class="tok-comment"># Modules merged into the umbrella AAR by :your-library:extractAndroidMainDependencies</span>
 <span class="tok-comment"># &lt;project path&gt;	&lt;first edge that reached it&gt;</span>
-:core	:feature-b -&gt; commonMainApi
+:core	:feature-b -&gt; androidRuntimeElements
 :feature-a	:your-library -&gt; export
 :feature-b	:your-library -&gt; export
 </code></pre>
       </div>
     </figure>
     <p>Each line is a merged project and the first edge that reached it, tab separated. On a <code>com.android.library</code> umbrella the folder is the build type, such as <code>release</code>, instead of <code>androidMain</code>. Read it after you change dependencies, and diff it between builds to catch a module you did not mean to ship.</p>
+    <p>A warning prints on the build that did the work. What the plugin reports while the task graph forms, such as a missing sources jar or an exclude that left nothing out, prints when the configuration cache entry is stored and not when it is reused. What the merge reports, such as duplicate resources, prints when <code>merge&lt;Pipeline&gt;UmbrellaAarDependencies</code> runs and not when it is up to date or comes from the build cache. So a log with no warnings does not mean nothing was left out. Run with <code>--no-configuration-cache --rerun-tasks</code> to see them all again.</p>
   </section>
 
   <section id="whats-in-the-aar" class="col" aria-labelledby="whats-in-the-aar-title">
@@ -366,11 +369,14 @@ kotlin {
         </thead>
         <tbody>
           <tr class="group-row"><th colspan="2" scope="rowgroup">Merged into one file</th></tr>
-          <tr><th scope="row"><code>classes.jar</code></th><td>One jar from the umbrella's classes and every dependency's entries, including plain JVM modules. A duplicate entry follows the rule above, including a clash with the umbrella module. The comparison runs after <code>R</code> rewriting.</td></tr>
+          <tr><th scope="row"><code>classes.jar</code></th><td>One jar from the umbrella's classes and every dependency's entries, including plain JVM modules. A duplicate entry follows the rule above, including a clash with the umbrella module.</td></tr>
           <tr><th scope="row"><code>AndroidManifest.xml</code></th><td>Merged with ManifestMerger2 in a single pass. A merge error fails the build with <code>Manifest merge failed:</code>.</td></tr>
           <tr><th scope="row"><code>R.txt</code></th><td>Merged by resource type and name, and the first of a symbol stays. A styleable two modules share lists the children of both, and the id of an <code>&lt;enum&gt;</code> that lost its attr leaves with it. IDs are not renumbered. A field a merged class reads and this file lacks fails the build, naming the field, the class and the module.</td></tr>
           <tr><th scope="row"><code>public.txt</code></th><td>Merged only if every module contributing resources ships one. Otherwise it is dropped with a warning naming both groups, and all merged resources stay public.</td></tr>
-          <tr><th scope="row"><code>proguard.txt</code>, <code>.pro</code> files</th><td>Concatenated into one root <code>proguard.txt</code>, umbrella rules first, with the files a JVM module carries in <code>META-INF/proguard/</code>. Rules are not de-duplicated. A rule naming a merged module's <code>R</code> is pointed at the umbrella's, and a wildcard that reaches one, however it is spelled, gets the umbrella's <code>R</code> listed next to it. A rule on every field of such a class would keep what the other modules declare, so what it reached, read from that module's <code>R.txt</code>, goes in a rule of its own.</td></tr>
+          <tr><th scope="row"><code>proguard.txt</code>, <code>.pro</code> files</th><td>Concatenated into one root <code>proguard.txt</code>, umbrella rules first, with the files a JVM module carries in <code>META-INF/proguard/</code>. A JVM module with <code>META-INF/com.android.tools/</code> rules loses those legacy files to them, as in any consumer. Rules are not de-duplicated. A rule naming a merged module's <code>R</code> is pointed at the umbrella's, and a wildcard that reaches one, however it is spelled, gets the umbrella's <code>R</code> listed next to it. A rule on every field of such a class would keep what the other modules declare, so what it reached, read from that module's <code>R.txt</code>, goes in a rule of its own.</td></tr>
+          <tr><th scope="row"><code>annotations.zip</code></th><td>Merged. The typedef annotations of every module are kept, and two modules sharing a package have their items combined. An item both declare keeps the first. A file that cannot be read as XML fails the build, naming both modules.</td></tr>
+          <tr><th scope="row"><code>baseline-prof.txt</code></th><td>Combined line by line. A line two modules share ships once.</td></tr>
+          <tr><th scope="row"><code>aar-metadata.properties</code></th><td>Keeps the strictest requirement of every module: the highest <code>minCompileSdk</code> with that module's minor, the highest minimum AGP version, and core library desugaring if any module needs it. A key with no rule of its own, such as <code>forceCompileSdkPreview</code>, keeps the first value, with a warning naming what was dropped.</td></tr>
         </tbody>
         <tbody>
           <tr class="group-row"><th colspan="2" scope="rowgroup">Kept side by side, renamed per module</th></tr>
@@ -380,7 +386,7 @@ kotlin {
         </tbody>
         <tbody>
           <tr class="group-row"><th colspan="2" scope="rowgroup">Overridden, as in a consumer<span>The umbrella's own file stays, otherwise the first module's in merge order, and a warning names the rest. Identical bytes stay quiet.</span></th></tr>
-          <tr><th scope="row">Other <code>res/</code> folders</th><td><code>layout</code>, <code>drawable</code>, <code>raw</code>, <code>xml</code>, <code>navigation</code> and the rest. A resource is a folder and a name, so <code>res/drawable/a.png</code> and <code>res/drawable/a.xml</code> are one resource.</td></tr>
+          <tr><th scope="row">Other <code>res/</code> folders</th><td><code>layout</code>, <code>drawable</code>, <code>raw</code>, <code>xml</code>, <code>navigation</code> and the rest. A resource is a folder and a name, so <code>res/drawable/a.png</code> and <code>res/drawable/a.xml</code> are one resource. The ids a lost file declares with <code>@+id/</code> stay, as they do in a consumer, in <code>res/values/&lt;module&gt;-overridden-ids.xml</code>.</td></tr>
           <tr><th scope="row"><code>assets/</code></th><td>By path.</td></tr>
         </tbody>
         <tbody>
@@ -388,8 +394,12 @@ kotlin {
           <tr><th scope="row"><code>jni/</code></th><td>Kept per ABI. A clash reports that two modules ship a native library with the same name.</td></tr>
           <tr><th scope="row"><code>libs/*.jar</code></th><td>Copied as opaque files. Classes inside these jars are not rewritten.</td></tr>
           <tr><th scope="row"><code>aidl/</code></th><td>Kept as they are.</td></tr>
-          <tr><th scope="row"><code>META-INF/</code></th><td>Not merged, at the AAR root or inside <code>classes.jar</code>, apart from <code>META-INF/services/&lt;interface&gt;</code> files, whose providers are combined, and the rule files above.</td></tr>
+          <tr><th scope="row"><code>META-INF/</code></th><td>Not merged, at the AAR root or inside <code>classes.jar</code>, with three exceptions: <code>aar-metadata.properties</code>, merged as above, <code>META-INF/services/&lt;interface&gt;</code> files inside <code>classes.jar</code>, whose providers are combined, and the rule files above. A consumer that finds rules in <code>META-INF/com.android.tools/</code> reads no other rules of the AAR, so a copy of <code>proguard.txt</code> joins them.</td></tr>
           <tr><th scope="row">Anything else</th><td>Same rule, for example data-binding folders.</td></tr>
+        </tbody>
+        <tbody>
+          <tr class="group-row"><th colspan="2" scope="rowgroup">One kept, with a warning</th></tr>
+          <tr><th scope="row"><code>lint.jar</code></th><td>An AAR carries one. The umbrella's own stays, otherwise the first module's in merge order, and a warning names the modules whose lint checks do not ship. Identical bytes stay quiet.</td></tr>
         </tbody>
         <tbody>
           <tr class="group-row"><th colspan="2" scope="rowgroup">Paths a disk cannot hold<span>These fail the build, identical bytes or not, naming both modules. Rename one.</span></th></tr>
@@ -399,15 +409,10 @@ kotlin {
         <tbody>
           <tr class="group-row"><th colspan="2" scope="rowgroup">Fixed names, one contributor<span>Not merged. The first file is kept and a second, different file fails the build. Renaming is not an option.</span></th></tr>
           <tr><th scope="row"><code>navigation.json</code></th><td>Only one module in the graph can effectively contribute it.</td></tr>
-          <tr><th scope="row"><code>lint.jar</code></th><td>Only one module can publish custom lint checks through the umbrella, and that includes the umbrella's own file.</td></tr>
-          <tr><th scope="row"><code>annotations.zip</code></th><td>AGP generates this file, so two modules that each produce one block the merge.</td></tr>
-          <tr><th scope="row"><code>baseline-prof.txt</code></th><td>Plain text, but not merged. Baseline profiles from two modules cannot be combined.</td></tr>
-          <tr><th scope="row"><code>prefab/</code></th><td>Files are kept per path, and a differing <code>prefab/prefab.json</code> fails the build. Assume one prefab module per umbrella. This case is untested.</td></tr>
+          <tr><th scope="row"><code>prefab/</code></th><td>Files are kept per path, and a differing <code>prefab/prefab.json</code> fails the build. AGP generates it, so it cannot be renamed. Keep prefab in one module per umbrella. No test builds a real prefab module.</td></tr>
         </tbody>
         <tbody>
           <tr class="group-row"><th colspan="2" scope="rowgroup">Dropped with no warning</th></tr>
-          <tr><th scope="row"><code>aar-metadata.properties</code></th><td>Dropped from every dependency module. Only the umbrella's copy ships, so <code>minCompileSdk</code>, <code>minAndroidGradlePluginVersion</code> and <code>coreLibraryDesugaringEnabled</code> set by a merged module are lost. Set them on the umbrella module.</td></tr>
-          <tr><th scope="row">Entries ending in <code>classes.jar</code></th><td>Any entry other than the root <code>classes.jar</code>, such as <code>libs/foo-classes.jar</code>. The filter is a suffix match.</td></tr>
           <tr><th scope="row"><code>MANIFEST.MF</code></th><td>Stripped from JAR modules only. One inside an AAR's <code>classes.jar</code> is not filtered.</td></tr>
           <tr><th scope="row"><code>module-info.class</code></th><td>Left out of <code>classes.jar</code>, at its root and under <code>META-INF/versions/</code>. One jar is no one JVM module, and an AAR's classes run from the class path, which reads none.</td></tr>
           <tr><th scope="row">Other task outputs</th><td>Any module output that is neither <code>.aar</code> nor <code>.jar</code>.</td></tr>
@@ -416,6 +421,8 @@ kotlin {
           <tr class="group-row"><th colspan="2" scope="rowgroup">Never in the AAR</th></tr>
           <tr><th scope="row">External dependencies</th><td>They stay external. The AAR carries no dependency list, so consumers only get them through a POM from the companion plugin.</td></tr>
           <tr><th scope="row">Modules reached only through <code>compileOnly</code></th><td>Not merged. The build logs a warning listing them. Use <code>api</code> or <code>implementation</code> if they must ship. An <code>exclude(...)</code> of the module on <code>export</code> says it stays out on purpose, which ends the warning.</td></tr>
+          <tr><th scope="row">Local modules the umbrella depends on without exporting them</th><td>Not merged, and not in the POM. An <code>implementation(project(...))</code> on the umbrella module is no export. The build logs a warning listing them. Add <code>export(project(...))</code> if they must ship.</td></tr>
+          <tr><th scope="row">Modules removed with <code>exclude(...)</code></th><td>Not merged, and not in the POM. The build logs a warning listing them. If the merged code uses them at runtime, publish them separately and have consumers depend on them.</td></tr>
         </tbody>
       </table>
     </div>
@@ -426,7 +433,7 @@ kotlin {
 
   <section id="publishing" class="col" aria-labelledby="publishing-title">
     <h2 id="publishing-title">Publishing</h2>
-    <p>The companion plugin, <code>io.github.tiper.umbrellaaar.pom</code>, writes the POM that the AAR alone cannot carry. It does nothing unless the main plugin is applied, and it can go before or after <code>maven-publish</code>.</p>
+    <p>The companion plugin, <code>io.github.tiper.umbrellaaar.pom</code>, writes the POM that the AAR alone cannot carry. Without the main plugin or <code>maven-publish</code> it publishes nothing, and warns which one is missing. It can go before or after <code>maven-publish</code>.</p>
     <figure class="snippet">
       <figcaption><span class="file">build.gradle.kts</span></figcaption>
       <div class="scroll" tabindex="0" role="group" aria-label="Build file with the POM plugin and a Maven repository">
@@ -486,7 +493,7 @@ publishing {
       </figure>
 
       <h4>Give the publications distinct coordinates</h4>
-      <p>The failure spells this out for your module. In a Kotlin Multiplatform project rename both variants: if you rename only release, debug stays on the project coordinates and still collides. On <code>com.android.library</code>, moving debug is enough, and so is disabling that variant.</p>
+      <p>The failure spells this out for your module. In a Kotlin Multiplatform project rename both variants: if you rename only release, debug stays on the project coordinates and still collides. On <code>com.android.library</code>, moving every build type but release is enough, and so is disabling those variants.</p>
       <figure class="snippet">
         <figcaption><span class="file">build.gradle.kts</span></figcaption>
         <div class="scroll" tabindex="0" role="group" aria-label="Distinct artifact ids for both umbrella publications">
@@ -501,12 +508,12 @@ publishing {
 </code></pre>
         </div>
       </figure>
-      <p>A debug build has no use on Maven Central. To leave one out of a run that publishes everything, disable its tasks. <code>onlyIf</code> does not count here, as it only decides once the run is under way.</p>
+      <p>A debug build has no use on Maven Central. To leave every build type but release out of a run that publishes everything, disable their tasks, a line for each, for repositories and Maven Local alike. <code>onlyIf</code> does not count here, as it only decides once the run is under way. While release shares its coordinates with another publication, such as <code>kotlinMultiplatform</code>, that does not end the clash, so give release coordinates of its own.</p>
       <figure class="snippet">
         <figcaption><span class="file">build.gradle.kts</span></figcaption>
         <div class="scroll" tabindex="0" role="group" aria-label="Publish tasks disabled for the debug umbrella publication">
 <pre><code>tasks.withType&lt;AbstractPublishToMaven&gt;().configureEach {
-    if (publication.name == <span class="tok-string">"androidDebugUmbrellaAar"</span>) enabled = false
+    if (name.startsWith(<span class="tok-string">"publishAndroidDebugUmbrellaAarPublicationTo"</span>)) enabled = false
 }
 </code></pre>
         </div>
@@ -523,12 +530,13 @@ publishing {
       <li><code>org.jetbrains.compose.*</code> and <code>org.jetbrains.androidx.*</code> coordinates become their <code>androidx</code> equivalent when one is resolved, and stay unchanged when none exists.</li>
       <li>Each library reaches the POM once per artifact, at the version Gradle resolved for the umbrella.</li>
       <li>What a module declares about a dependency ships with it, in the POM and the <code>.module</code>, as a stock publication writes it: <code>exclude(...)</code> on the dependency or on a configuration behind the selected variant, <code>isTransitive = false</code>, classifiers and artifact types, and requested capabilities, which only the <code>.module</code> can express. <code>strictly</code> and <code>reject</code> go out as a constraint on the module. A plain <code>exclude</code> on a dependency on a local module carries over to the external dependencies below it.</li>
+      <li>A few things differ from stock. Exclusions come from the runtime variant and go in the POM and both variants, so a rule on <code>implementation</code> also binds an <code>api</code> dependency. A rule on a configuration that matches a dependency declared on it removes that dependency. On a dependency, <code>prefer</code>, attributes and <code>because</code> do not ship, and attributes get a build warning. Constraints go out as declared.</li>
       <li>One entry speaks for every module declaring that dependency, and Gradle leaves a module out only if every path to it does. So an exclusion is published if all declarations carry it, and a plain declaration next to <code>isTransitive = false</code> stays transitive.</li>
-      <li>Constraints, platforms and resolution rules apply as they do when the modules are built. A platform itself is neither merged nor written. A module's own constraints on external modules are published as <code>dependencyConstraints</code> in the <code>.module</code> and <code>dependencyManagement</code> in the POM. Gradle consumers still pick the highest version they see, so a pin below what a library asks for does not carry over. What a platform says about a module the umbrella does not reach is lost, so a consumer that gets that module some other way gets the version it asked for. Declare a constraint on a module where that has to carry over.</li>
+      <li>Constraints, platforms and resolution rules apply as they do when the modules are built. A platform itself is neither merged nor written, though <code>platform(project(...))</code> of an Android library is that library, and it merges. A module's own constraints on external modules are published as <code>dependencyConstraints</code> in the <code>.module</code> and <code>dependencyManagement</code> in the POM. Gradle consumers still pick the highest version they see, so a pin below what a library asks for does not carry over. What a platform says about a module the umbrella does not reach is lost, so a consumer that gets that module some other way gets the version it asked for. Declare a constraint on a module where that has to carry over.</li>
       <li>A dependency an included build provides is published with the version that was asked for. One that nothing gives a version fails the build, bundling as well as publishing, and so does a file in a <code>flatDir</code>, which has no coordinates a consumer could find.</li>
       <li>A dependency Gradle cannot resolve fails the build. With <code>umbrellaaar.legacyGraph=true</code> it is left out of the POM, with no warning, so read <code>external-dependencies.txt</code> before you publish. That graph publishes coordinates alone, with nothing else a module declared.</li>
     </ul>
-    <p>To see the list before you publish, run <code>collectReleaseExternalDependencies</code>. It writes <code>build/reports/umbrellaaar/release/external-dependencies.txt</code>, sorted, one <code>group:name:version:scope</code> per line. Whatever else was declared follows, as in <code>com.squareup.okhttp3:okhttp:4.12.0:compile excludes=com.squareup.okio:*</code>, with <code>artifact=name:type:extension:classifier</code>, which keeps all four fields, and <code>capabilities=group:name</code> alike, and a constraint has <code>constraint</code> for a scope, then <code>strictly=</code>, <code>prefer=</code> and <code>reject=</code> where it sets them. <code>generatePomFileForAndroidReleaseUmbrellaAarPublication</code> writes the POM itself to <code>build/publications/androidReleaseUmbrellaAar/pom-default.xml</code>. The Kotlin plugin adds <code>kotlin-stdlib</code> late, so a full publish can list it when these tasks run on their own do not.</p>
+    <p>To see the list before you publish, run <code>bundleReleaseUmbrellaAar</code> or <code>collectReleaseExternalDependencies</code>. Either writes <code>build/reports/umbrellaaar/release/external-dependencies.txt</code>, sorted, one <code>group:name:version:scope</code> per line. Whatever else was declared follows, as in <code>com.squareup.okhttp3:okhttp:4.12.0:compile excludes=com.squareup.okio:*</code>, with <code>artifact=name:type:extension:classifier</code>, which keeps all four fields, and <code>capabilities=group:name</code> alike, and a constraint has <code>constraint</code> for a scope, then <code>strictly=</code>, <code>prefer=</code> and <code>reject=</code> where it sets them. <code>generatePomFileForAndroidReleaseUmbrellaAarPublication</code> writes the POM itself to <code>build/publications/androidReleaseUmbrellaAar/pom-default.xml</code>. With <code>umbrellaaar.legacyGraph=true</code>, the Kotlin plugin adds <code>kotlin-stdlib</code> late, so a full publish can list it even when these tasks, run on their own, do not.</p>
 
     <h3 id="merged-sources">Merged sources</h3>
     <p>The merged sources jar holds only <code>.java</code> and <code>.kt</code> entries. A file with the same path and the same bytes in two modules ships once. If the bytes differ both ship, and the one that comes later goes in a folder named after its module's sources jar. The umbrella's own files keep their paths.</p>
@@ -565,14 +573,14 @@ publishing {
           <tr>
             <th scope="col"><span class="visually-hidden">Tool or feature</span></th>
             <th scope="col">Minimum</th>
-            <th scope="col">In this repository</th>
-            <th scope="col">Reported downstream</th>
+            <th scope="col">Tested here</th>
+            <th scope="col">Reported downstream on 3.0</th>
           </tr>
         </thead>
         <tbody>
-          <tr><th scope="row">Gradle</th><td>9.1</td><td>9.1.0</td><td>9.5.1</td></tr>
-          <tr><th scope="row">AGP</th><td>9.0.0</td><td>9.0.0</td><td>9.3.1</td></tr>
-          <tr><th scope="row">Kotlin Gradle plugin</th><td>2.2.10</td><td>2.2.10</td><td>2.4.10</td></tr>
+          <tr><th scope="row">Gradle</th><td>9.1</td><td>9.1.0, 9.8.2</td><td>9.5.1</td></tr>
+          <tr><th scope="row">AGP</th><td>9.0.0</td><td>9.0.0, 9.5.0</td><td>9.3.1</td></tr>
+          <tr><th scope="row">Kotlin Gradle plugin</th><td>2.2.10</td><td>2.2.10, 2.4.21 (samples: 2.4.10)</td><td>2.4.10</td></tr>
           <tr><th scope="row">Java</th><td>17</td><td>17</td><td>21</td></tr>
           <tr><th scope="row">Configuration cache</th><td>Supported</td><td>Store and reuse work, including POM generation</td><td>Reported working</td></tr>
           <tr><th scope="row">Project isolation</th><td colspan="3">Not supported</td></tr>
@@ -580,8 +588,9 @@ publishing {
       </table>
     </div>
 
-    <p>The minimums come from the toolchain, not from a check in the plugin. AGP 9.0.0 refuses Gradle below 9.1.0. It also has a runtime dependency on Kotlin Gradle plugin 2.2.10, which raises lower versions on a shared classpath.</p>
-    <p>The downstream column is the maintainer's report: a 160-project Kotlin Multiplatform build with AGP 9.3.1, Gradle 9.5.1 and Kotlin 2.4.10, merging 95 modules into one SDK AAR. That build is not in this repository.</p>
+    <p>The functional tests run on AGP 9.0.0, Kotlin 2.2.10 and Gradle 9.1.0, and on AGP 9.5.0, Kotlin 2.4.21 and Gradle 9.8.2. The samples build on AGP 9.0.0, Gradle 9.1.0 and Kotlin 2.4.10.</p>
+    <p>The minimums come from the toolchain, not from a check in the plugin. AGP 9.0.0 refuses Gradle below 9.1.0. It also has a runtime dependency on Kotlin Gradle plugin 2.2.10, which raises lower versions on a shared classpath. A Kotlin plugin whose API this version cannot read fails the build, naming that version, rather than publish less than the modules declare. Use one listed here, or update UmbrellaAAR.</p>
+    <p>The downstream column is the maintainer's report on 3.0.0: a 160-project Kotlin Multiplatform build with AGP 9.3.1, Gradle 9.5.1 and Kotlin 2.4.10, merging 95 modules into one SDK AAR. That build is not in this repository. 3.1 has not been run on a real build of that size. The largest it was tested on is a generated 203-module build.</p>
 
     <div class="scroll table-scroll" tabindex="0" role="group" aria-labelledby="umbrella-caption">
       <table class="table-wide">
@@ -595,20 +604,23 @@ publishing {
         </thead>
         <tbody>
           <tr><th scope="row"><code>com.android.kotlin.multiplatform.library</code></th><td><code>release</code> and <code>debug</code>, from the same <code>androidMain</code> output</td><td>One shared <code>androidMain</code> pipeline</td></tr>
-          <tr><th scope="row"><code>com.android.library</code></th><td>One per build type present when the plugin is applied, normally <code>debug</code> and <code>release</code></td><td>One per build type</td></tr>
+          <tr><th scope="row"><code>com.android.library</code></th><td>One per build type you declare, normally <code>debug</code> and <code>release</code></td><td>One per build type</td></tr>
         </tbody>
       </table>
     </div>
 
-    <p>Under AGP 9, <code>org.jetbrains.kotlin.multiplatform</code> with <code>com.android.library</code> and <code>androidTarget()</code> is exercised in this repository only by <code>sample-legacy</code>, which sets <code>android.builtInKotlin=false</code> and <code>android.newDsl=false</code>.</p>
+    <p>Under AGP 9, to use <code>org.jetbrains.kotlin.multiplatform</code> with <code>com.android.library</code> and <code>androidTarget()</code>, set <code>android.builtInKotlin=false</code> and <code>android.newDsl=false</code> in <code>gradle.properties</code>. That is how this repository tests it, in <code>sample-legacy</code> and in one functional test.</p>
 
     <h3>Moving from 2.x</h3>
     <p>3.x no longer merges modules reachable only through <code>compileOnly</code>. 2.x did. 3.x lists them in a build warning, so the change is visible. Internal task names under the Kotlin Multiplatform plugin also changed. Public task and publication names did not.</p>
 
     <h3>Moving from 3.0</h3>
-    <p>A run that would publish two publications at one set of coordinates now fails, and by default a plain <code>publish</code> or <code>publishToMavenLocal</code> does. <a href="#collision-title">Before you publish</a> has the ways out.</p>
-    <p>A build script that did not change can get a different POM. A module with <code>androidTarget()</code> now publishes each dependency with exclusions for <code>kotlin-stdlib-common</code>, <code>kotlin-test-common</code> and <code>kotlin-test-annotations-common</code>, which KGP puts on its configurations, as a stock <code>.module</code> does. A dependency declared as <code>@aar</code>, or any other <code>@ext</code>, now publishes as not transitive, so consumers no longer get what it depends on from the umbrella. Set <code>isTransitive = true</code> on it to keep that. To check your own build, compare <code>external-dependencies.txt</code> with and without <code>umbrellaaar.legacyGraph=true</code>, and ignore <code> excludes=</code> and a <code>kotlin-stdlib</code> line.</p>
-    <p>An umbrella now resolves under the name <code>classpath</code>, the one AGP lets resolve while the task graph forms. A resolution rule that goes by the name <code>umbrella&lt;BuildType&gt;Classpath</code>, or by a filter that matched it, no longer applies, except for an <code>exclude</code>. Lines in <code>gradle.lockfile</code> for that name no longer apply either, so run with <code>--write-locks</code> once.</p>
+    <p>A build that worked on 3.0 can now fail, and the error says why. The likeliest is a plain <code>publish</code> or <code>publishToMavenLocal</code>, as an umbrella on its default coordinates shares them with another publication: <a href="#collision-title">Before you publish</a> has the ways out. The others are anything that does not resolve at or below an export, a module reached through two variants, an <code>export(...)</code> the plugin refuses, an umbrella merging another umbrella without what that one exports, a dependency with no group or no version, a build type of yours that a merged module has no match for, a merged class reading an <code>R</code> field the merged <code>R.txt</code> lacks, attr definitions a consumer rejects, a merged module that cannot be configured, and a Kotlin Gradle plugin this version cannot read. The <a href="https://github.com/tiper/UmbrellaAAR/blob/main/CHANGELOG.md">changelog</a> has the full list and the way out of each.</p>
+    <p>Some builds that failed now pass. A second, different file in <code>res/</code> or <code>assets/</code> keeps the first with a warning, as does <code>lint.jar</code>, and <code>annotations.zip</code>, <code>baseline-prof.txt</code> and service files merge. A module with no sources jar is left out of the merged sources jar with a warning.</p>
+    <p>A build script that did not change can get a different POM. A module with <code>androidTarget()</code> now publishes each dependency with exclusions for <code>kotlin-stdlib-common</code>, <code>kotlin-test-common</code> and <code>kotlin-test-annotations-common</code>, which KGP puts on its configurations, as a stock <code>.module</code> does. A dependency declared as <code>@aar</code>, or any other <code>@ext</code>, now publishes as not transitive, so consumers no longer get what it depends on from the umbrella. Set <code>isTransitive = true</code> on it to keep that. A rule on a merged module's configuration that matches a dependency declared on it now takes that dependency out of the POM, where 3.0 listed it. To check your own build, compare <code>external-dependencies.txt</code> with and without <code>umbrellaaar.legacyGraph=true</code>. Ignore <code> excludes=</code>, <code>artifact=</code> and <code>capabilities=</code> and constraint lines, which only the default graph writes, and a <code>kotlin-stdlib</code> line, which KGP adds too late for the legacy graph to always see.</p>
+    <p>What a consumer gets can change too. A merged module's <code>minCompileSdk</code>, minimum AGP version and desugaring requirement now ship in the merged AAR, so a consumer has to meet them. A resource two modules declare in <code>res/values</code> now ships once, the first in merge order, where 3.0 shipped both. Modules merge in the order a consumer ranks them, not by folder name. Read the duplicates warning after you upgrade. <code>module-info.class</code> is left out of <code>classes.jar</code>.</p>
+    <p>An umbrella now resolves under the name <code>classpath</code>, the one AGP lets resolve while the task graph forms, so a rule on every configuration now reaches it, and a build script or a plugin creating a configuration of that name after this plugin fails. It is locked like any other configuration, so with dependency locking run with <code>--write-locks</code> once.</p>
+    <p>With <code>maven-publish</code>, the <code>dependencies</code> report now stops on an umbrella that cannot be built, with the message a bundle would stop with. 3.0 marked that node <code>FAILED</code> and went on.</p>
     <p><code>android&lt;Variant&gt;UmbrellaAarSourcesJar</code> still builds the merged sources jar, but it no longer has the jar as an output. To wire the jar into another task, take it from <code>merge&lt;Variant&gt;UmbrellaAarSources</code>.</p>
     <p>A Kotlin Multiplatform umbrella now fails on a merged module left with a build type it did not ask for, where it used to ship that build.</p>
   </section>
@@ -619,14 +631,16 @@ publishing {
     <ul class="limits" role="list">
       <li><strong>Project isolation is not supported.</strong> The plugin reads sibling projects' configurations and forces their evaluation, which project isolation does not allow.</li>
       <li><strong>Prefix your resource names per module.</strong> If two merged modules declare the same <code>res/values</code> resource for the same qualifier, the first stays, as in a consumer of those modules, and the merge logs a warning naming both. Attr definitions a consumer rejects with <code>Duplicate value for resource</code> fail the bundle, naming both modules. The plugin never compiles or links the merged resources, so anything else wrong with them only surfaces in a consumer build.</li>
-      <li><strong>Test the merged AAR, especially with reflection or R8.</strong> <code>R</code> rewriting covers class references in the merged modules and in the umbrella module's own classes. It does not touch classes inside <code>libs/*.jar</code>, or string lookups such as <code>Class.forName</code>. Build a consumer against the merged AAR before you ship it.</li>
+      <li><strong>Test the merged AAR, especially with reflection or R8.</strong> <code>R</code> rewriting covers class references in the merged modules and in the umbrella module's own classes. It does not touch classes inside <code>libs/*.jar</code>, or string lookups such as <code>Class.forName</code>. Keep rules follow the umbrella's <code>R</code>, with a limit. A <code>-keepclassmembers</code> rule on every field of a module's <code>R</code> only applies while a class reads that <code>R</code>, and goes if none does. If another rule keeps that <code>R</code> alive, give that rule the members as well. Build a consumer against the merged AAR before you ship it.</li>
+      <li><strong>A project dependency does not get the merged AAR.</strong> A <code>project(":your-library")</code> dependency gets the umbrella module as an ordinary library: its own code, not the merged AAR. To try the merged AAR from an app, publish it and depend on its coordinates, as the repository's <code>sample/app</code> does.</li>
       <li><strong>Only local Android library and JVM modules can be merged.</strong> A module with no archive task fails the build, and the error names the project and the tasks it tried.</li>
-      <li><strong>A declared export ships, or the build fails.</strong> A module in <code>export(...)</code> that Gradle cannot resolve fails the build before any task runs, naming the module and Gradle's reason. So does anything below it that does not resolve, two local modules sharing a <code>group:name</code>, a module reached through two variants, as any <code>testFixtures(project(...))</code> is, and an umbrella merging another umbrella without what that one exports, which the outer umbrella has to export too. Use <code>exclude(...)</code> to leave one out on purpose. An Apple framework export with no Android side only gets a build warning.</li>
-      <li><strong>An umbrella resolves under the name <code>classpath</code>.</strong> A rule on every configuration reaches it, as <code>configurations.configureEach</code> does. A rule that goes by another name does not, except for an <code>exclude</code> on <code>umbrella&lt;BuildType&gt;Classpath</code>. Its lines in <code>gradle.lockfile</code> read <code>classpathCopy</code>, <code>classpathCopy2</code> and so on, one per build type in alphabetical order, so run with <code>--write-locks</code> once after adding a build type.</li>
-      <li><strong>Flavors must be selected, and no build types declared late.</strong> A merged module with product flavors needs one selected, with <code>missingDimensionStrategy</code> or <code>localDependencySelection</code>, and the umbrella module itself cannot have flavors. On <code>com.android.library</code>, a build type declared in your <code>android</code> block gets no umbrella tasks or publication, because the plugin reads build types before that block runs.</li>
+      <li><strong>A declared export ships, or the build fails.</strong> A module in <code>export(...)</code> that Gradle cannot resolve fails the build before any task runs, naming the module and Gradle's reason. So does anything below it that does not resolve, two local modules sharing a <code>group:name</code>, a module reached through two variants, as any <code>testFixtures(project(...))</code> is, and an umbrella merging another umbrella without what that one exports, which the outer umbrella has to export too. Use <code>exclude(...)</code> to leave one out on purpose. A module that only <code>includeFrameworkExports</code> brought in and that has no Android or JVM target gets a build warning instead.</li>
+      <li><strong>An umbrella resolves under the name <code>classpath</code>.</strong> A rule on every configuration reaches it, as <code>configurations.configureEach</code> does. A rule that goes by another name does not, except for an <code>exclude</code> on <code>umbrella&lt;BuildType&gt;Classpath</code>. Its lines in <code>gradle.lockfile</code> read <code>classpathCopy</code>, <code>classpathCopy2</code> and so on, one per build type in alphabetical order, so run with <code>--write-locks</code> once after upgrading, and again after adding a build type. The name is taken in an umbrella module, so a build script or a plugin creating a configuration of that name after this plugin fails.</li>
+      <li><strong>Flavors must be selected.</strong> A merged module with product flavors needs one selected, with <code>missingDimensionStrategy</code> or <code>localDependencySelection</code>, and the umbrella module itself cannot have flavors. On <code>com.android.library</code>, a build type of your own gets umbrella tasks and a publication. Give it <code>matchingFallbacks</code> if a merged module does not have it.</li>
       <li><strong>Debug on a Kotlin Multiplatform umbrella is not a separate build.</strong> Release and debug share one <code>androidMain</code> pipeline, and exported <code>com.android.library</code> modules contribute one AAR to both, release unless <code>localDependencySelection</code> selects another build type.</li>
       <li><strong><code>exclude</code> on <code>export</code> is global.</strong> <code>exclude(group = ..., module = ...)</code> on any <code>export</code> line applies to the whole umbrella. It removes matching local modules from the merge and matching external dependencies from the POM. A module reached only through an excluded module is still merged. A rule that leaves nothing out gets a build warning, showing the real group of a local module with that name.</li>
     </ul>
+    <p>The README lists the other <a href="https://github.com/tiper/UmbrellaAAR#build-messages">build messages</a> and what to do about each.</p>
   </section>
 
   <section id="fused-library" class="col" aria-labelledby="fused-library-title">
