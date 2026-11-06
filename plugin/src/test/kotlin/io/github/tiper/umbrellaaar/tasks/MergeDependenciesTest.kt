@@ -1356,6 +1356,7 @@ class MergeDependenciesTest {
         val extraction = project.objects.newInstance(ExtractDependencies.ExtractParameters::class.java).apply {
             archive.set(aar)
             target.set(File(depsDir, name))
+            module.set(":$name")
             mainNamespace.set("com/example/umbrella")
             mergedNamespaces.set(emptySet<String>())
         }

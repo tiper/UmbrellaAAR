@@ -54,6 +54,9 @@ internal class Fixture(val dir: File) {
     /** Lines added to the project's `gradle.properties`, for a build setting of the whole project. */
     val gradleProperties = mutableListOf<String>()
 
+    /** Goes above the root build file's `plugins` block, where a `buildscript` block has to be. */
+    var rootBuildscript = ""
+
     private val includedBuilds = mutableListOf<String>()
 
     fun androidLibrary(name: String, parent: Module? = null, configure: AndroidLibrary.() -> Unit = {}) = add(AndroidLibrary(this, name, parent), configure)
@@ -132,6 +135,7 @@ internal class Fixture(val dir: File) {
         projectDir.mkdirs()
         projectDir.writeCommonFiles()
         projectDir.resolve("gradle.properties").appendText(gradleProperties.joinToString("") { "$it\n" })
+        projectDir.resolve("build.gradle.kts").run { writeText(rootBuildscript + readText()) }
         projectDir.resolve("settings.gradle.kts").writeText(
             """
             |$FIXTURE_PLUGIN_MANAGEMENT

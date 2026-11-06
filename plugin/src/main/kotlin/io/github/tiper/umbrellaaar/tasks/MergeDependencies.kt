@@ -267,6 +267,7 @@ abstract class MergeDependencies : DefaultTask() {
             classEntries,
             umbrellaNamespace,
             namespaces.values.toSet(),
+            module = path.substringBeforeLast(':').ifEmpty { ":" },
             onDuplicate = ::onDuplicate,
             onRField = { field, reader -> rFieldReads += RFieldRead(field, reader, MAIN) },
             relocateRules = { it.relocateRInRules(umbrellaNamespace, rClasses) },

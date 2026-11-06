@@ -67,8 +67,10 @@ class UmbrellaAar : Plugin<Project> {
     /** The sources jars of one pipeline. A module without one adds nothing to them. */
     private class SourcesJars(val main: List<FileCollection>, val merged: List<FileCollection>)
 
-    /** The archives of one pipeline, by module, and the folder each one extracts to. */
-    private class Archives(val files: List<FileCollection>, val folders: Map<File, String>)
+    /** The archives of one pipeline, by module, and the project path and folder of each one. */
+    private class Archives(val files: List<FileCollection>, val modules: Map<File, String>) {
+        val folders = modules.folderNames()
+    }
 
     /**
      * Registers the expensive part of the pipeline exactly once per [key].
@@ -91,6 +93,7 @@ class UmbrellaAar : Plugin<Project> {
             mergedModules.set(graph.map { g -> g.modules.map { "${it.path}\t${g.via[it.path].orEmpty()}" }.sorted() })
             dependencies.from(archives.map { it.files })
             archiveFolders.set(archives.map { it.folders })
+            archiveModules.set(archives.map { it.modules })
             outputDir.convention(layout.buildDirectory.dir("$INTERMEDIATES_PATH/$key/dependencies"))
             extractionState.convention(layout.buildDirectory.file("$INTERMEDIATES_PATH/$key/extraction-state"))
             reportFile.convention(layout.buildDirectory.file("$REPORTS_PATH/$key/$MERGED_MODULES_FILE"))
@@ -122,7 +125,7 @@ class UmbrellaAar : Plugin<Project> {
             }
             Archives(
                 files = archives.values.toList(),
-                folders = archives.entries.flatMap { (path, files) -> files.map { it to path } }.toMap().folderNames(),
+                modules = archives.entries.flatMap { (path, files) -> files.map { it to path } }.toMap(),
             )
         }
         return provider { memo.value }

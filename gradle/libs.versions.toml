@@ -2,7 +2,7 @@
 agp = "9.0.0" # https://developer.android.com/build/releases/gradle-plugin
 android-tools = "31.1.4"
 androidx-activity-compose = "1.9.3" # https://developer.android.com/jetpack/androidx/releases/activity
-asm-commons = "9.6" # https://asm.ow2.io/versions.html
+asm-commons = "9.11.1" # https://asm.ow2.io/versions.html
 compose = "1.9.3" # https://github.com/JetBrains/compose-multiplatform/releases — requires Kotlin 2.0+
 compose-lifecycle = "2.8.0" # https://github.com/JetBrains/compose-multiplatform/releases
 # Oldest Kotlin Gradle plugin API the umbrella plugin compiles against: its minimum supported version.

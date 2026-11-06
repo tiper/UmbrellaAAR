@@ -97,6 +97,10 @@ abstract class ExtractDependencies : DefaultTask() {
     internal val folderNames: Provider<List<String>>
         get() = archiveFolders.map { it.values.toList() }
 
+    /** `archive -> the project path of its module`, for a failure to go by, and for nothing else. */
+    @get:Internal
+    abstract val archiveModules: MapProperty<File, String>
+
     @get:Inject
     abstract val workers: WorkerExecutor
 
@@ -148,6 +152,7 @@ abstract class ExtractDependencies : DefaultTask() {
             queue.submit(ExtractArchive::class.java) {
                 archive.set(file)
                 target.set(File(baseDir, folders.getValue(file)))
+                module.set(archiveModules.getting(file))
                 mainNamespace.set(this@ExtractDependencies.mainNamespace.get().replace('.', '/'))
                 mergedNamespaces.set(namespaces)
             }
@@ -186,6 +191,7 @@ abstract class ExtractDependencies : DefaultTask() {
     internal interface ExtractParameters : WorkParameters {
         val archive: RegularFileProperty
         val target: DirectoryProperty
+        val module: Property<String>
         val mainNamespace: Property<String>
         val mergedNamespaces: SetProperty<String>
     }
@@ -198,7 +204,8 @@ abstract class ExtractDependencies : DefaultTask() {
             val merged = parameters.mergedNamespaces.get()
             // The rewrite walks every field read anyway, so a later pass over the classes would only cost.
             val rReads = java.util.TreeSet<String>()
-            val transform = { bytes: ByteArray -> bytes.transformClass(namespace, merged) { field, reader -> rReads += "$field\t$reader" } }
+            val module = parameters.module.get()
+            val transform = { bytes: ByteArray -> bytes.transformClass(namespace, merged, module) { field, reader -> rReads += "$field\t$reader" } }
 
             when (file.extension) {
                 "aar" -> try {
