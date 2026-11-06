@@ -11,7 +11,7 @@ import java.util.zip.ZipOutputStream
 
 private const val SERVICES_DIR = "META-INF/services/"
 private const val TARGETED_RULES = "META-INF/com.android.tools/"
-private const val MERGED_RULES = "r8/umbrella-merged.pro"
+private const val MERGED_RULES = "${TARGETED_RULES}r8/umbrella-merged"
 
 /**
  * `classes/<path>` -> the jar entry name, applying the per-module rename of what every module can
@@ -73,7 +73,10 @@ internal fun buildClassesJar(
 
     // A consumer that finds targeted rules in an AAR's classes reads no other rules of that AAR.
     val rules = File(out, PROGUARD_TXT)
-    if (rules.isFile && entries.keys.any { it.startsWith(TARGETED_RULES) }) entries[TARGETED_RULES + MERGED_RULES] = MAIN to rules
+    if (rules.isFile && entries.keys.any { it.startsWith(TARGETED_RULES) }) {
+        val name = generateSequence(1, Int::inc).map { if (it == 1) "$MERGED_RULES.pro" else "$MERGED_RULES-$it.pro" }.first { it !in entries }
+        entries[name] = MAIN to rules
+    }
 
     val relocate = umbrellaNamespace.isNotEmpty() && mergedNamespaces.isNotEmpty()
     val jar = File(out, "classes.jar").apply { if (exists()) delete() }

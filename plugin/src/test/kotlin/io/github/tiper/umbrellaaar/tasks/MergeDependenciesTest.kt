@@ -1108,6 +1108,26 @@ class MergeDependenciesTest {
     }
 
     @Test
+    fun `merged rules take a name nothing else holds`() {
+        mainAar(
+            "proguard.txt" to "-keep class com.example.umbrella.Merged",
+            "classes/META-INF/com.android.tools/r8/umbrella-merged.pro" to "-keep class com.example.umbrella.Own",
+        )
+        module("umbrella", "com.example.a", "classes/META-INF/com.android.tools/r8/merged-2.pro" to "-keep class com.example.a.A")
+
+        val classes = File(merge(), "classes.jar")
+
+        assertEquals(
+            mapOf(
+                "umbrella-merged.pro" to "-keep class com.example.umbrella.Own",
+                "umbrella-merged-2.pro" to "-keep class com.example.a.A",
+                "umbrella-merged-3.pro" to "-keep class com.example.umbrella.Merged",
+            ),
+            jarEntries(classes).associate { it.substringAfter("r8/") to jarEntry(classes, it).decodeToString() },
+        )
+    }
+
+    @Test
     fun `no targeted rules leave the merged ones at the root alone`() {
         mainAar()
         module("moduleA", "com.example.a", "proguard.txt" to "-keep class com.example.a.R\$string")
