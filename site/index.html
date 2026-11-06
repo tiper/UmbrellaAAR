@@ -608,6 +608,7 @@ publishing {
     <h3>Moving from 3.0</h3>
     <p>A run that would publish two publications at one set of coordinates now fails, and by default a plain <code>publish</code> or <code>publishToMavenLocal</code> does. <a href="#collision-title">Before you publish</a> has the ways out.</p>
     <p>A build script that did not change can get a different POM. A module with <code>androidTarget()</code> now publishes each dependency with exclusions for <code>kotlin-stdlib-common</code>, <code>kotlin-test-common</code> and <code>kotlin-test-annotations-common</code>, which KGP puts on its configurations, as a stock <code>.module</code> does. A dependency declared as <code>@aar</code>, or any other <code>@ext</code>, now publishes as not transitive, so consumers no longer get what it depends on from the umbrella. Set <code>isTransitive = true</code> on it to keep that. To check your own build, compare <code>external-dependencies.txt</code> with and without <code>umbrellaaar.legacyGraph=true</code>, and ignore <code> excludes=</code> and a <code>kotlin-stdlib</code> line.</p>
+    <p><code>android&lt;Variant&gt;UmbrellaAarSourcesJar</code> still builds the merged sources jar, but it no longer has the jar as an output. To wire the jar into another task, take it from <code>merge&lt;Variant&gt;UmbrellaAarSources</code>.</p>
     <p>A Kotlin Multiplatform umbrella now fails on a merged module left with a build type it did not ask for, where it used to ship that build.</p>
   </section>
 

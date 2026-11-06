@@ -387,7 +387,7 @@ pluginManagement {
    | `merge<Pipeline>UmbrellaAarDependencies` | shared | Merges manifests, resources and consumer rules into the main unpacked AAR, and writes `classes.jar` straight from the extracted modules. |
    | `bundle<Variant>UmbrellaAar` | per variant | **Public** — packages everything as a single `.aar`. |
    | `merge<Variant>UmbrellaAarSources` | per variant | Streams every module's sources jar into one merged jar. |
-   | `android<Variant>UmbrellaAarSourcesJar` | per variant | **Public** — lifecycle task producing the merged sources jar. |
+   | `android<Variant>UmbrellaAarSourcesJar` | per variant | **Public** — lifecycle task that runs `merge<Variant>UmbrellaAarSources`. It has no output of its own: to wire the jar into another task, take it from that one. |
 
    **UmbrellaAarPom plugin tasks** (when applied):
 

@@ -38,7 +38,6 @@ import io.github.tiper.umbrellaaar.tasks.MergeDependencies
 import io.github.tiper.umbrellaaar.tasks.MergeSources
 import io.github.tiper.umbrellaaar.tasks.folderNames
 import java.io.File
-import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
@@ -152,11 +151,11 @@ class UmbrellaAar : Plugin<Project> {
             mergedSourcesJar.convention(layout.buildDirectory.file("$OUTPUTS_PATH/${project.name}-$variant-sources.jar"))
         }
 
-        tasks.register<DefaultTask>("android${variantCapitalized}UmbrellaAarSourcesJar") {
+        // Only a name to run: a second owner of the jar would be a task that the publication uses unasked.
+        tasks.register("android${variantCapitalized}UmbrellaAarSourcesJar") {
             group = GROUP
             description = "Merges subproject sources jars into one fat-sources.jar for $variant"
             dependsOn(mergeSources)
-            outputs.files(mergeSources.map { it.outputs.files })
         }
     }
 
