@@ -1,5 +1,8 @@
 package io.github.tiper.umbrellaaar.extensions
 
+import com.android.build.api.attributes.BuildTypeAttr
+import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryExtension
+import com.android.build.api.dsl.LibraryExtension
 import io.github.tiper.umbrellaaar.UMBRELLA_AAR_CONFIG
 import io.github.tiper.umbrellaaar.UMBRELLA_AAR_PLUGIN
 import org.gradle.api.GradleException
@@ -16,6 +19,8 @@ import org.gradle.api.artifacts.result.DependencyResult
 import org.gradle.api.artifacts.result.ResolvedComponentResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+import org.gradle.api.plugins.ExtensionAware
+import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.withType
 
 /**
@@ -50,6 +55,25 @@ private val Dependency.refusal: String?
         else -> "export(files(...)) is no local module. Move what it holds into a module of its own."
     }
 
+/** The build types of this umbrella that AGP was told to drop, for all that resolves it to ask. */
+internal val Project.disabledBuildTypes: MutableSet<String>
+    get() = extensions.extraProperties.run {
+        if (!has(DISABLED_BUILD_TYPES)) set(DISABLED_BUILD_TYPES, sortedSetOf<String>())
+        @Suppress("UNCHECKED_CAST")
+        get(DISABLED_BUILD_TYPES) as MutableSet<String>
+    }
+
+private const val DISABLED_BUILD_TYPES = "io.github.tiper.umbrellaaar.disabledBuildTypes"
+
+/** A task that was named outright, as lifecycle tasks leave these out. Stock has no such task at all. */
+internal fun Project.checkBuildType(buildType: String) {
+    if (buildType !in disabledBuildTypes) return
+    throw GradleException(
+        "[UmbrellaAar] $path has no $buildType variant, as it was disabled through androidComponents, so there is no umbrella of it to build.\n" +
+            "  Enable the variant, or leave this task out of the run.",
+    )
+}
+
 /** Nothing else says what a KMP umbrella declares, so its POM would lose all of that on a green build. */
 internal fun Project.checkHostClasspath(host: Configuration?) {
     if (host != null || !plugins.hasPlugin("com.android.kotlin.multiplatform.library")) return
@@ -57,6 +81,20 @@ internal fun Project.checkHostClasspath(host: Configuration?) {
         "[UmbrellaAar] $path has no runtime classpath for its Android target, so its own dependencies would be missing from its POM.\n" +
             "  Declare the target with kotlin { android { } }. If it is there, check that the README lists this version of Kotlin.",
     )
+}
+
+/**
+ * What a KMP umbrella asks for only ranks the build types of a module, so one with another left gets
+ * that one, and a debug build would go out in the release publication on a green build. A stock
+ * publication of that module could not: it would have no release component to publish.
+ */
+internal fun Project.unaskedBuildType(module: Project, variant: String): String? {
+    if (!plugins.hasPlugin("com.android.kotlin.multiplatform.library") || !module.plugins.hasPlugin("com.android.library")) return null
+    val asked = (extensions.getByName("kotlin") as ExtensionAware).extensions.getByType<KotlinMultiplatformAndroidLibraryExtension>().localDependencySelection.selectBuildTypeFrom.get()
+    val selected = module.configurations.getByName(variant).attributes.getAttribute(BuildTypeAttr.ATTRIBUTE)?.name
+    if (selected == null || selected in asked) return null
+    return "Gradle selected its $variant, as it has no ${asked.joinToString(" or ")} variant left, so this umbrella would ship a $selected build of it.\n" +
+        "Enable ${asked.first()} there, or ask for $selected in $path: kotlin { android { localDependencySelection { selectBuildTypeFrom.set(listOf(${(asked + selected).joinToString { "\"$it\"" }})) } } }"
 }
 
 /**
@@ -170,7 +208,18 @@ internal fun coordinatesMessage(winner: ResolvedComponentResult) = "It has the c
 
 private fun exclusionAdvice(group: Any, module: String) = "To leave it out: exclude(group = \"$group\", module = \"$module\")"
 
-internal fun Project.whyLost(module: String, edges: Set<DependencyResult>) = buildList {
+/**
+ * AGP keeps the DSL of a build type it was told to drop, and no variant of it. Gradle's own reason
+ * only lists the variants that are left, which says nothing of why this one is not among them.
+ */
+private fun Project.disabledVariantAdvice(buildType: String): String? {
+    if (!plugins.hasPlugin("com.android.library") || extensions.getByType<LibraryExtension>().buildTypes.findByName(buildType) == null) return null
+    if (configurations.names.any { it.endsWith("$buildType$RUNTIME_ELEMENTS", ignoreCase = true) }) return null
+    return "$path disabled its $buildType variant through androidComponents. Enable it there, disable that variant of the umbrella as well, " +
+        "or give the umbrella's $buildType build type matchingFallbacks."
+}
+
+internal fun Project.whyLost(module: String, edges: Set<DependencyResult>, buildType: String) = buildList {
     val edge = edges.firstOrNull { (it.requested as? ProjectComponentSelector)?.projectPath == module }
     add(
         when (edge) {
@@ -182,17 +231,18 @@ internal fun Project.whyLost(module: String, edges: Set<DependencyResult>) = bui
     rootProject.findProject(module)?.let { project ->
         val children = project.childProjects.values.map { it.path }.sorted()
         if (children.isNotEmpty()) add("It only groups other projects, export those instead: ${children.joinToString()}")
+        project.disabledVariantAdvice(buildType)?.let(::add)
         add(exclusionAdvice(project.group, project.name))
     }
 }.joinToString("\n")
 
-internal fun Project.whyUnreachable(edge: UnresolvedDependencyResult): String {
+internal fun Project.whyUnreachable(edge: UnresolvedDependencyResult, buildType: String): String {
     val advice = when (val requested = edge.requested) {
-        is ProjectComponentSelector -> rootProject.findProject(requested.projectPath)?.let { exclusionAdvice(it.group, it.name) }
-        is ModuleComponentSelector -> exclusionAdvice(requested.group, requested.module)
+        is ProjectComponentSelector -> rootProject.findProject(requested.projectPath)?.let { listOfNotNull(it.disabledVariantAdvice(buildType), exclusionAdvice(it.group, it.name)) }
+        is ModuleComponentSelector -> listOf(exclusionAdvice(requested.group, requested.module))
         else -> null
     }
-    return listOfNotNull(edge.rootCause, advice).joinToString("\n")
+    return (listOf(edge.rootCause) + advice.orEmpty()).joinToString("\n")
 }
 
 internal fun Project.brokenUmbrellaMessage(missing: Map<String, String>, conflicts: Map<String, String>, buildType: String) = buildString {

@@ -47,6 +47,34 @@ class PluginOrderTest {
         assertEquals(setOf(":feature"), afterCompose.mergedModules().keys)
     }
 
+    /** Convention code can come to it that late, when all it misses is what AGP disabled. */
+    @Test
+    fun `applying it from an afterEvaluate still builds, and says what it missed`() = fixture {
+        val late = scripted(
+            "late",
+            """
+            plugins {
+                id("com.android.library")
+                id("io.github.tiper.umbrellaaar") apply false
+            }
+
+            group = "$GROUP"
+
+            android {
+                namespace = "$GROUP.late"
+                compileSdk = $COMPILE_SDK
+            }
+
+            afterEvaluate { apply(plugin = "io.github.tiper.umbrellaaar") }
+            """,
+        )
+
+        gradle("${late.path}:bundleReleaseUmbrellaAar").run {
+            assertLogged("[UmbrellaAar] :late applied")
+            assertLogged("plugins block of :late")
+        }
+    }
+
     private companion object {
         const val KOTLIN = "id(\"org.jetbrains.kotlin.multiplatform\")"
         const val ANDROID = "id(\"com.android.kotlin.multiplatform.library\")"

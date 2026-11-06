@@ -425,7 +425,7 @@ pluginManagement {
    > …or give the publications distinct coordinates, which the failure spells out for your module.
    > In a KMP project both have to move: renaming only `androidReleaseUmbrellaAar` leaves
    > `androidDebugUmbrellaAar` colliding with `kotlinMultiplatform`. On `com.android.library`, moving
-   > debug is enough.
+   > debug is enough, and so is disabling that variant.
    >
    > ```kotlin
    > publishing {
@@ -451,6 +451,14 @@ pluginManagement {
    > the root `gradle.properties`, or pass it with `-P`. A module's own `gradle.properties` is not read.
    > Upgrading from `3.0`, an umbrella needs one of these for a plain `publish`, which used to leave
    > whichever publication task order ran last.
+
+   A variant disabled through `androidComponents` has no umbrella: `publish`, `publishToMavenLocal`
+   and `publishAllPublicationsTo<Repository>Repository` leave it out, and a task of that variant fails
+   if you name it. If a merged module disabled a variant the umbrella still needs, that umbrella fails
+   naming the module. Enable the variant, disable it on the umbrella as well, or give the umbrella's
+   build type `matchingFallbacks`. A `com.android.kotlin.multiplatform.library` umbrella has neither,
+   so it also fails on a merged module left with a build type it did not ask for. Enable the variant,
+   or add that build type to `selectBuildTypeFrom` in `localDependencySelection`.
 
 4. **Reports**
 

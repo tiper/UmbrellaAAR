@@ -486,7 +486,7 @@ publishing {
       </figure>
 
       <h4>Give the publications distinct coordinates</h4>
-      <p>The failure spells this out for your module. In a Kotlin Multiplatform project rename both variants: if you rename only release, debug stays on the project coordinates and still collides. On <code>com.android.library</code>, moving debug is enough.</p>
+      <p>The failure spells this out for your module. In a Kotlin Multiplatform project rename both variants: if you rename only release, debug stays on the project coordinates and still collides. On <code>com.android.library</code>, moving debug is enough, and so is disabling that variant.</p>
       <figure class="snippet">
         <figcaption><span class="file">build.gradle.kts</span></figcaption>
         <div class="scroll" tabindex="0" role="group" aria-label="Distinct artifact ids for both umbrella publications">
@@ -512,6 +512,8 @@ publishing {
         </div>
       </figure>
     </div>
+
+    <p>A variant disabled through <code>androidComponents</code> has no umbrella. <code>publish</code>, <code>publishToMavenLocal</code> and <code>publishAllPublicationsTo&lt;Repository&gt;Repository</code> leave it out, and a task of that variant fails if you name it. If a merged module disabled a variant the umbrella still needs, that umbrella fails naming the module. Enable the variant, disable it on the umbrella as well, or give the umbrella's build type <code>matchingFallbacks</code>. A <code>com.android.kotlin.multiplatform.library</code> umbrella has neither, so it also fails on a merged module left with a build type it did not ask for. Enable the variant, or add that build type to <code>selectBuildTypeFrom</code> in <code>localDependencySelection</code>.</p>
 
     <h3>What the POM lists</h3>
     <ul>
@@ -606,6 +608,7 @@ publishing {
     <h3>Moving from 3.0</h3>
     <p>A run that would publish two publications at one set of coordinates now fails, and by default a plain <code>publish</code> or <code>publishToMavenLocal</code> does. <a href="#collision-title">Before you publish</a> has the ways out.</p>
     <p>A build script that did not change can get a different POM. A module with <code>androidTarget()</code> now publishes each dependency with exclusions for <code>kotlin-stdlib-common</code>, <code>kotlin-test-common</code> and <code>kotlin-test-annotations-common</code>, which KGP puts on its configurations, as a stock <code>.module</code> does. A dependency declared as <code>@aar</code>, or any other <code>@ext</code>, now publishes as not transitive, so consumers no longer get what it depends on from the umbrella. Set <code>isTransitive = true</code> on it to keep that. To check your own build, compare <code>external-dependencies.txt</code> with and without <code>umbrellaaar.legacyGraph=true</code>, and ignore <code> excludes=</code> and a <code>kotlin-stdlib</code> line.</p>
+    <p>A Kotlin Multiplatform umbrella now fails on a merged module left with a build type it did not ask for, where it used to ship that build.</p>
   </section>
 
   <section id="before-you-adopt" class="col" aria-labelledby="before-you-adopt-title">

@@ -83,6 +83,7 @@ internal fun Project.findAllProjectDependencies(
  * project itself) into the published artifact.
  */
 internal fun Project.resolveProjectGraph(config: Configuration, buildType: String): ProjectGraph {
+    checkBuildType(buildType)
     checkExports(config)
     val host = this
     val result = linkedSetOf<Project>()

@@ -10,6 +10,7 @@ import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.checkCoordinateClashes
 import io.github.tiper.umbrellaaar.extensions.createAndroidResolutionConfig
 import io.github.tiper.umbrellaaar.extensions.createKmpResolutionConfig
+import io.github.tiper.umbrellaaar.extensions.disabledBuildTypes
 import io.github.tiper.umbrellaaar.extensions.exclude
 import io.github.tiper.umbrellaaar.extensions.hasAndroidLibraryPlugin
 import io.github.tiper.umbrellaaar.extensions.isExcluded
@@ -95,7 +96,9 @@ abstract class UmbrellaAarPom @Inject constructor(
 
         plugins.withType<MavenPublishPlugin> {
             val publicationName = "android${variantCapitalized}UmbrellaAar"
-            val component = createComponent(publicationName, variantCapitalized, publishedProvider)
+            // A report walks every configuration, and one of a variant AGP dropped has nothing to list.
+            val listed = provider { variant.takeUnless(disabledBuildTypes::contains) }.flatMap { publishedProvider }.orElse(Published(emptyList()))
+            val component = createComponent(publicationName, variantCapitalized, listed)
             extensions.configure<PublishingExtension> {
                 publications.register<MavenPublication>(publicationName) {
                     from(component)

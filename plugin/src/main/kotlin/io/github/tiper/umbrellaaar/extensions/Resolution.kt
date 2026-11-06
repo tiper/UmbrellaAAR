@@ -158,6 +158,7 @@ private fun Project.hostClasspath(buildType: String): Configuration? {
  * put in another's place is the build's own choice, and merges like the one it replaced.
  */
 internal fun Project.resolveUmbrella(export: Configuration, buildType: String): UmbrellaResolution {
+    checkBuildType(buildType)
     checkExports(export)
     val classpath = configurations.getByName(classpathName(buildType))
     val host = hostClasspath(buildType).also(::checkHostClasspath)
@@ -207,7 +208,7 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
                     // Not a concern of this edge: a declared export has more to report, below.
                     current == root && module in declared -> Unit
 
-                    else -> unreachable.putIfAbsent("${module ?: edge.requested.displayName} (via $reachedBy)", whyUnreachable(edge))
+                    else -> unreachable.putIfAbsent("${module ?: edge.requested.displayName} (via $reachedBy)", whyUnreachable(edge, buildType))
                 }
             }
         current.publishedEdges.forEach { edge ->
@@ -231,6 +232,9 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
                         if (selected.variants.size > 1 && !isExcluded(module.path)) {
                             conflicts["${module.path} (via ${labels.getValue(current.id)})"] = variantsMessage(selected)
                         }
+                        if (!isExcluded(module.path)) {
+                            unaskedBuildType(module, edge.resolvedVariant.displayName)?.let { conflicts["${module.path} (via ${labels.getValue(current.id)})"] = it }
+                        }
                     }
                 }
                 // External modules, and projects of included builds, which are published as such.
@@ -243,7 +247,7 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
         .filter { it.isPlatform || (it.selected.id as? ProjectComponentIdentifier)?.let(::localProject) in modules }
         .mapNotNull { (it.requested as? ProjectComponentSelector)?.projectPath }
     val lost = declared.filterNot { it == path || it in merged || isExcluded(it) }
-    val missing = lost.associate { "export(project(\"$it\")) (via $path -> export)" to whyLost(it, root.dependencies) } + unreachable
+    val missing = lost.associate { "export(project(\"$it\")) (via $path -> export)" to whyLost(it, root.dependencies, buildType) } + unreachable
     if (missing.isNotEmpty() || conflicts.isNotEmpty()) throw GradleException(brokenUmbrellaMessage(missing, conflicts, buildType))
     checkNestedUmbrellas(modules, rules)
 

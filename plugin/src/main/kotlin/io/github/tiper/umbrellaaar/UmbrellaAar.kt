@@ -2,12 +2,15 @@ package io.github.tiper.umbrellaaar
 
 import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryExtension
 import com.android.build.api.dsl.LibraryExtension
+import com.android.build.api.variant.LibraryAndroidComponentsExtension
 import io.github.tiper.umbrellaaar.extensions.FRAMEWORK_EXPORT
 import io.github.tiper.umbrellaaar.extensions.ProjectGraph
 import io.github.tiper.umbrellaaar.extensions.UmbrellaResolution
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.archiveVariant
 import io.github.tiper.umbrellaaar.extensions.capitalize
+import io.github.tiper.umbrellaaar.extensions.checkBuildType
+import io.github.tiper.umbrellaaar.extensions.disabledBuildTypes
 import io.github.tiper.umbrellaaar.extensions.fileDependencies
 import io.github.tiper.umbrellaaar.extensions.findAar
 import io.github.tiper.umbrellaaar.extensions.findAarTask
@@ -56,7 +59,7 @@ class UmbrellaAar : Plugin<Project> {
     /** `"<module>: <what gives it one>"` for every sources jar missing, whichever build type found it. */
     private val missingSources = sortedSetOf<String>()
 
-    /** Every build type of this umbrella, which this build need not resolve all of. */
+    /** Every build type of this umbrella AGP builds, which this build need not resolve all of. */
     private val buildTypes = sortedSetOf<String>()
 
     /** `build type -> the rules that left nothing out, as a line of a warning`, for each one resolved. */
@@ -369,6 +372,7 @@ class UmbrellaAar : Plugin<Project> {
                     graph = graphProvider(config, buildType),
                 )
             }
+            skipDisabledBuildTypes()
         }
 
         // AGP9: com.android.kotlin.multiplatform.library — a single "androidMain" variant, no build
@@ -395,6 +399,43 @@ class UmbrellaAar : Plugin<Project> {
         // Once every project is configured, so that it counts however late the Android plugin came.
         gradle.projectsEvaluated { warnIfNoUmbrellaFits() }
         gradle.taskGraph.whenReady { reportOncePerUmbrella() }
+    }
+
+    /**
+     * Only `androidComponents` can tell what a build disabled, and it tells long after a build script
+     * has had to find publications and tasks by name. So those stay, [checkBuildType] refuses a task
+     * named outright, and the lifecycle tasks drop theirs. They hold them by name, one per repository,
+     * and the last of those may come in any `afterEvaluate`, while an action added during that pass
+     * joins the end of it. `projectsEvaluated` would be too late to configure on demand.
+     *
+     * Applied from an `afterEvaluate` of its own, this comes after AGP has told, which is no reason to
+     * stop a build that does without it.
+     */
+    private fun Project.skipDisabledBuildTypes() {
+        val enabled = hashSetOf<String>()
+        try {
+            extensions.getByType<LibraryAndroidComponentsExtension>().onVariants { variant -> variant.buildType?.let(enabled::add) }
+        } catch (_: RuntimeException) {
+            warnOnce(
+                "[UmbrellaAar] $path applied $UMBRELLA_AAR_PLUGIN after Android had set up its variants, so publish and publishToMavenLocal still ask for one disabled through androidComponents.\n" +
+                    "  Apply it in the plugins block of $path.",
+            )
+            return
+        }
+        afterEvaluate {
+            afterEvaluate {
+                val disabled = buildTypes - enabled
+                if (disabled.isEmpty()) return@afterEvaluate
+                buildTypes -= disabled
+                disabledBuildTypes += disabled
+                val skipped = disabled.map { "publishAndroid${it.capitalize()}UmbrellaAarPublicationTo" }
+                tasks.names.filter { it == "publish" || it == "publishToMavenLocal" || it.startsWith("publishAllPublicationsTo") }.forEach { lifecycle ->
+                    tasks.named(lifecycle).configure {
+                        setDependsOn(dependsOn.filterNot { dependency -> skipped.any { dependency.toString().startsWith(it) } })
+                    }
+                }
+            }
+        }
     }
 
     /** A warning, as convention code may well apply this plugin to every project. */
