@@ -332,7 +332,7 @@ class UmbrellaAar : Plugin<Project> {
 
     override fun apply(target: Project) = with(target) {
         val config = configurations.maybeCreate(UMBRELLA_AAR_CONFIG).apply {
-            isCanBeResolved = true
+            isCanBeResolved = false
             isCanBeConsumed = false
         }
 

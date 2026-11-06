@@ -538,6 +538,15 @@ pluginManagement {
   AAR and sources jar are still taken from its `bundle<Variant>Aar` / sources-jar task, which means
   reading sibling projects' tasks. AGP does not hand the published AAR to other modules through
   dependency resolution — only a lint-specific copy that also carries the module's `R` classes.
+- **A resolution rule has to reach a configuration named `classpath`.** That is the one name AGP lets
+  resolve while the task graph forms, which is when an umbrella has to. A rule on every configuration
+  reaches it, as `configurations.configureEach` does, or an `afterEvaluate` going through
+  `configurations`. A rule that goes by name does not, if that name was `umbrella<BuildType>Classpath`
+  or a filter such as `endsWith("Classpath")`. Of those, only an `exclude` still counts.
+- **The lines of an umbrella in `gradle.lockfile` go by a number.** For the same reason they read
+  `classpathCopy`, `classpathCopy2` and so on, one per build type in alphabetical order, so a new
+  build type moves the ones after it. Lines for `umbrella<BuildType>Classpath`, which is what `3.0`
+  wrote, no longer apply. Run with `--write-locks` once after either of these.
 - **Product flavors of a merged module have to be selected.** Declare the selection as you would for
   any other consumer: `missingDimensionStrategy` on a `com.android.library` umbrella,
   `localDependencySelection` on a `com.android.kotlin.multiplatform.library` one. Without it the

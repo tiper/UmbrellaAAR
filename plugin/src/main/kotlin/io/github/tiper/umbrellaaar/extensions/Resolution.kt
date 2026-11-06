@@ -22,6 +22,7 @@ import org.gradle.api.attributes.Attribute
 import org.gradle.api.attributes.Category
 import org.gradle.api.attributes.Usage
 import org.gradle.api.attributes.java.TargetJvmEnvironment
+import org.gradle.api.specs.Spec
 import org.gradle.kotlin.dsl.named
 import org.gradle.kotlin.dsl.withType
 import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
@@ -73,14 +74,20 @@ internal class UmbrellaResolution(
     val notResolved: List<Pair<String?, String>>,
 )
 
-private fun dependenciesName(buildType: String) = "umbrella${buildType.capitalize()}Dependencies"
+private const val NAME_AGP_LEAVES_ALONE = "classpath"
+
+private const val COPIES = "io.github.tiper.umbrellaaar.resolutionCopies"
+
+private val CLASSPATH_NAME = Regex("umbrella.+Classpath")
 
 internal fun classpathName(buildType: String) = "umbrella${buildType.capitalize()}Classpath"
 
 /**
- * Registers the configurations Gradle resolves to work out the umbrella for [buildType].
+ * Registers what Gradle resolves to work out the umbrella for [buildType], see [resolutionOf]. The
+ * configuration AGP leaves alone comes along, so that a build going through its configurations
+ * early meets that one as well.
  *
- * They hold:
+ * The classpath holds:
  * - a copy of every `export(project(...))` dependency, *without* its exclude rules. Exclusions keep
  *   the plugin's own semantics (see [Project.isExcluded]): an excluded module is not merged, but the
  *   modules it pulls in still are, exactly as with the graph walk. A platform stays what it was
@@ -88,13 +95,13 @@ internal fun classpathName(buildType: String) = "umbrella${buildType.capitalize(
  * - the umbrella module's own external dependencies, platforms and constraints, so its versions are
  *   resolved together with the merged modules' and the POM never lists two versions of one module.
  *
- * Its attributes are copied from the umbrella's own runtime classpath when it is resolved, so the
- * variants Gradle picks in each module are exactly the ones AGP would pick.
+ * What resolves it takes its attributes from the umbrella's own runtime classpath, so the variants
+ * Gradle picks in each module are exactly the ones AGP would pick.
  */
 internal fun Project.registerUmbrellaClasspath(export: Configuration, buildType: String) {
     if (configurations.findByName(classpathName(buildType)) != null) return
 
-    val declared = configurations.dependencyScope(dependenciesName(buildType)) {
+    configurations.dependencyScope(classpathName(buildType)) {
         dependencies.addAllLater(
             provider {
                 val exports = export.dependencies.filterIsInstance<ModuleDependency>().map { exported ->
@@ -105,9 +112,7 @@ internal fun Project.registerUmbrellaClasspath(export: Configuration, buildType:
         )
         dependencyConstraints.addAllLater(provider { hostDeclarations(buildType).flatMap { it.dependencyConstraints } })
     }
-    configurations.resolvable(classpathName(buildType)) {
-        extendsFrom(declared.get())
-    }
+    if (NAME_AGP_LEAVES_ALONE !in configurations.names) configurations.resolvable(NAME_AGP_LEAVES_ALONE)
 }
 
 /** The declarable configurations feeding the umbrella module's own runtime classpath. */
@@ -162,7 +167,6 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
     checkExports(export)
     val classpath = configurations.getByName(classpathName(buildType))
     val host = hostClasspath(buildType).also(::checkHostClasspath)
-    if (classpath.attributes.isEmpty) copyAttributes(into = classpath, from = host, buildType = buildType)
 
     val rules = export.allExcludeRules()
     val exports = export.dependencies.withType<ProjectDependency>()
@@ -177,7 +181,8 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
         else -> false
     }
 
-    val root = classpath.incoming.resolutionResult.root
+    val resolved = resolutionOf(classpath, host, buildType)
+    val root = resolved.root
     val modules = linkedSetOf<Project>()
     val components = mutableListOf(root)
     val via = linkedMapOf<String, String>()
@@ -219,7 +224,7 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
                 conflicts.putIfAbsent("${requested.projectPath} (via ${labels.getValue(current.id)})", coordinatesMessage(selected))
             }
             when {
-                selected.id == root.id -> if (selfInclusionVia == null) selfInclusionVia = labels.getValue(current.id)
+                module == this -> if (selfInclusionVia == null) selfInclusionVia = labels.getValue(current.id)
                 module != null -> {
                     (current.id as? ProjectComponentIdentifier)?.takeIf { current != root }?.let { dependents.getOrPut(module.path) { mutableListOf() } += it.projectPath }
                     if (modules.add(module)) {
@@ -251,7 +256,7 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
     if (missing.isNotEmpty() || conflicts.isNotEmpty()) throw GradleException(brokenUmbrellaMessage(missing, conflicts, buildType))
     checkNestedUmbrellas(modules, rules)
 
-    val owners = components.associateBy { (it.id as ProjectComponentIdentifier).projectPath }
+    val owners = components.associateBy(::projectPathOf)
     val inForce = root.exclusionsInForce(declarations)
     val hostProjectDependencies = hostDeclarations(buildType)
         .flatMap { it.dependencies.withType<ProjectDependency>() }
@@ -273,15 +278,57 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
         },
         constraintsOf = owners.mapValues { (_, owner) -> declarations.getValue(owner.id).run { constraints + versionRules.map { versionRule(it) } } },
         attributedOf = owners.mapValues { (_, owner) -> declarations.getValue(owner.id).attributed },
-        pinned = classpath.incoming.resolutionResult.pinnedBy(components.filterNot { isExcluded((it.id as ProjectComponentIdentifier).projectPath) }).mapNotNull { component ->
+        pinned = resolved.pinnedBy(components.filterNot { isExcluded(projectPathOf(it)) }).mapNotNull { component ->
             component.moduleVersion?.let { Collector.Dependency(it.group, it.name, it.version, COMPILE_SCOPE, exclusions = inForce[component.id].orEmpty()) }
         },
-        moduleIds = classpath.incoming.resolutionResult.allComponents.mapNotNull { it.id as? ModuleComponentIdentifier },
+        moduleIds = resolved.allComponents.mapNotNull { it.id as? ModuleComponentIdentifier },
         hostProjectDependencies = hostProjectDependencies,
         unresolved = unresolved,
-        notResolved = classpath.incoming.resolutionResult.allDependencies.filterIsInstance<UnresolvedDependencyResult>().mapNotNull { coordinatesOf(it.requested) },
+        notResolved = resolved.allDependencies.filterIsInstance<UnresolvedDependencyResult>().mapNotNull { coordinatesOf(it.requested) },
     )
 }
+
+/**
+ * AGP calls any of a project's configurations resolved before the task graph is ready a performance
+ * problem, or a failure with `android.dependencyResolutionAtConfigurationTime.disallow`, and finding
+ * the tasks an umbrella depends on is what forms that graph. Only a detached configuration gets past
+ * it, but one takes no resolution rule of the build along, and a copy keeps what AGP hooked into the
+ * configuration it came from. That leaves the one name AGP makes an exception for: a copy of a
+ * configuration so named, which holds the build's rules, with all else of [classpath] added to it.
+ * Gradle keeps a result per configuration, so this keeps the one copy of each build type.
+ */
+private fun Project.resolutionOf(classpath: Configuration, host: Configuration?, buildType: String): ResolutionResult {
+    val results = extensions.extraProperties
+    val key = "${classpath.name}Resolution"
+    if (!results.has(key)) {
+        results[key] = resolutionCopies.getValue(classpath.name).run {
+            dependencies.addAll(classpath.allDependencies)
+            dependencyConstraints.addAll(classpath.allDependencyConstraints)
+            classpath.excludeRules.forEach(::exclude)
+            copyAttributes(into = this, from = host, buildType = buildType)
+            incoming.resolutionResult
+        }
+    }
+    return results[key] as ResolutionResult
+}
+
+/**
+ * A copy for each umbrella classpath of this project, by its name. Gradle numbers copies as they are
+ * made and dependency locking goes by that name, so they are all made at once, in an order no run
+ * can change, or which build type a run gets to first would decide whose lock each one is held to.
+ */
+private val Project.resolutionCopies: Map<String, Configuration>
+    get() = extensions.extraProperties.run {
+        if (!has(COPIES)) {
+            val rules = configurations.getByName(NAME_AGP_LEAVES_ALONE)
+            set(COPIES, configurations.names.filter(CLASSPATH_NAME::matches).sorted().associateWith { rules.copy(Spec { false }) })
+        }
+        @Suppress("UNCHECKED_CAST")
+        get(COPIES) as Map<String, Configuration>
+    }
+
+/** The project of [component]. The root of a copy's graph is no project, and stands for the umbrella module. */
+private fun Project.projectPathOf(component: ResolvedComponentResult) = (component.id as? ProjectComponentIdentifier)?.projectPath ?: path
 
 /**
  * External modules whose version comes from this build alone: the constraints of [owners], the
