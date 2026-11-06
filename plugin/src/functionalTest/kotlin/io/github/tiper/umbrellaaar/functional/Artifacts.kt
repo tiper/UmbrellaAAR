@@ -1,0 +1,276 @@
+package io.github.tiper.umbrellaaar.functional
+
+import groovy.json.JsonSlurper
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder.LITTLE_ENDIAN
+import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
+import javax.xml.parsers.DocumentBuilderFactory
+import org.w3c.dom.Element
+
+private fun ZipFile.textOf(name: String): String? = getEntry(name)?.let { entry -> getInputStream(entry).use { it.readBytes().decodeToString() } }
+
+private fun Element.child(name: String): Element? = childElements(name).firstOrNull()
+
+private fun Element.childElements(name: String): List<Element> {
+    val nodes = childNodes
+    return (0 until nodes.length).map(nodes::item).filterIsInstance<Element>().filter { it.tagName == name }
+}
+
+private fun Element.childText(name: String): String? = child(name)?.textContent?.trim()
+
+private fun parseXml(text: String): Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = false }
+    .newDocumentBuilder().parse(ByteArrayInputStream(text.toByteArray())).documentElement
+
+/** An `.aar` on disk, read the way AGP reads it. */
+internal class Aar(val file: File) {
+
+    val entries: Set<String> = ZipFile(file).use { zip -> zip.entries().asSequence().map { it.name }.toSet() }
+
+    /** Dotted names of every class in `classes.jar`. */
+    val classes: Set<String> by lazy {
+        classEntries.keys.mapTo(sortedSetOf()) { it.removeSuffix(".class").replace('/', '.') }
+    }
+
+    /** `type/name` of every symbol in `R.txt`. */
+    val symbols: Set<String> by lazy {
+        text("R.txt").orEmpty().lineSequence().filter { it.isNotBlank() }.mapTo(sortedSetOf()) { line ->
+            val (_, type, name) = line.trim().split(' ', limit = 4)
+            "$type/$name"
+        }
+    }
+
+    val proguardRules: String by lazy { text("proguard.txt").orEmpty() }
+
+    val manifest: Manifest by lazy { Manifest(checkNotNull(text("AndroidManifest.xml")) { "$file has no AndroidManifest.xml" }) }
+
+    private val classEntries: Map<String, ByteArray> by lazy {
+        val jar = ZipFile(file).use { zip -> zip.getInputStream(checkNotNull(zip.getEntry("classes.jar")) { "$file has no classes.jar" }).use { it.readBytes() } }
+        buildMap {
+            ZipInputStream(ByteArrayInputStream(jar)).use { zip ->
+                generateSequence { zip.nextEntry }.filter { it.name.endsWith(".class") }.forEach { put(it.name, zip.readBytes()) }
+            }
+        }
+    }
+
+    fun text(entry: String): String? = ZipFile(file).use { it.textOf(entry) }
+
+    /**
+     * True when class [name] mentions [text] anywhere in its constant pool. Enough to tell which
+     * `actual` was merged, or which `R` a class points at, without an ASM dependency here.
+     */
+    fun classMentions(name: String, text: String): Boolean {
+        val bytes = checkNotNull(classEntries["${name.replace('.', '/')}.class"]) { "$file has no class $name" }
+        return text in String(bytes, Charsets.ISO_8859_1)
+    }
+}
+
+/** An `AndroidManifest.xml` from an AAR. */
+internal class Manifest(val text: String) {
+
+    private val root = parseXml(text)
+
+    val packageName: String? = root.getAttribute("package").ifEmpty { null }
+
+    val permissions: Set<String> = root.childElements("uses-permission").mapTo(sortedSetOf()) { it.getAttribute("android:name") }
+}
+
+/** One `<dependency>` of a [Pom]. */
+internal data class PomDependency(
+    val group: String,
+    val artifact: String,
+    val version: String?,
+    val scope: String?,
+    val type: String?,
+    val classifier: String?,
+    val exclusions: List<String>,
+) {
+    val coordinates get() = "$group:$artifact:$version"
+}
+
+/** A parsed `.pom`. */
+internal class Pom(val file: File) {
+
+    private val root = parseXml(file.readText())
+
+    val group = root.childText("groupId")
+    val artifact = root.childText("artifactId")
+    val version = root.childText("version")
+    val packaging = root.childText("packaging")
+
+    val dependencies: List<PomDependency> = root.child("dependencies")?.childElements("dependency").orEmpty().map { dependency ->
+        PomDependency(
+            group = checkNotNull(dependency.childText("groupId")),
+            artifact = checkNotNull(dependency.childText("artifactId")),
+            version = dependency.childText("version"),
+            scope = dependency.childText("scope"),
+            type = dependency.childText("type"),
+            classifier = dependency.childText("classifier"),
+            exclusions = dependency.child("exclusions")?.childElements("exclusion").orEmpty().map {
+                "${it.childText("groupId")}:${it.childText("artifactId")}"
+            },
+        )
+    }
+}
+
+/** One variant of a [ModuleMetadata]. */
+internal class ModuleVariant(
+    val name: String,
+    val attributes: Map<String, Any>,
+    val dependencies: List<String>,
+    val files: List<String>,
+)
+
+/** A parsed Gradle Module Metadata `.module` file. */
+internal class ModuleMetadata(val file: File) {
+
+    val variants: List<ModuleVariant> = parse()
+
+    /** The one variant of the library itself for [usage], as opposed to its sources or javadoc. */
+    fun libraryVariant(usage: String) = variants.single { it.attributes["org.gradle.usage"] == usage && it.attributes["org.gradle.category"] == "library" }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun parse(): List<ModuleVariant> {
+        val root = JsonSlurper().parse(file) as Map<String, Any>
+        return (root["variants"] as List<Map<String, Any>>).map { variant ->
+            ModuleVariant(
+                name = variant["name"] as String,
+                attributes = variant["attributes"] as Map<String, Any>,
+                dependencies = (variant["dependencies"] as List<Map<String, Any>>?).orEmpty().map { dependency ->
+                    val version = (dependency["version"] as Map<String, String>?)?.get("requires")
+                    "${dependency["group"]}:${dependency["module"]}:$version"
+                },
+                files = (variant["files"] as List<Map<String, Any>>?).orEmpty().map { it["name"] as String },
+            )
+        }
+    }
+}
+
+/** What a [Umbrella.publish] left in the repository. */
+internal class Published(private val dir: File, private val baseName: String) {
+
+    val aar: Aar get() = Aar(dir.resolve("$baseName.aar"))
+
+    val pom: Pom get() = Pom(dir.resolve("$baseName.pom"))
+
+    val moduleMetadata: ModuleMetadata get() = ModuleMetadata(dir.resolve("$baseName.module"))
+
+    val sourcesJar: File get() = dir.resolve("$baseName-sources.jar")
+}
+
+/**
+ * An `.apk` as a device would see it. Classes come straight from the dex files. Resources and
+ * permissions come from the SDK's `aapt2`, which any AGP build needs an SDK for anyway.
+ */
+internal class Apk(val file: File) {
+
+    private val dex: List<Dex> by lazy {
+        ZipFile(file).use { zip ->
+            zip.entries().asSequence().filter { it.name.matches(DEX_ENTRY) }.map { entry -> Dex(zip.getInputStream(entry).use { it.readBytes() }) }.toList()
+        }
+    }
+
+    val classes: Set<String> by lazy { dex.flatMapTo(sortedSetOf()) { it.defined } }
+
+    /**
+     * Classes the code refers to but nothing in the APK defines, limited to [prefix]. Outside the
+     * platform and optional dependencies this is a `NoClassDefFoundError` waiting on a device.
+     */
+    fun danglingReferences(prefix: String): Set<String> = dex.flatMapTo(sortedSetOf()) { it.referenced }.filter { it.startsWith(prefix) }.toSet() - classes
+
+    /** `type/name` to its configurations and values, with resource ids masked: they differ by build. */
+    val resources: Map<String, List<String>> by lazy {
+        val entries = sortedMapOf<String, MutableList<String>>()
+        var current: MutableList<String>? = null
+        aapt2("dump", "resources").lineSequence().forEach { line ->
+            val resource = RESOURCE_LINE.find(line)?.groupValues?.get(1)
+            when {
+                resource != null -> current = entries.getOrPut(resource) { mutableListOf() }
+                line.startsWith("      ") -> current?.add(line.trim().replace(RESOURCE_ID, "0x7f"))
+                else -> current = null
+            }
+        }
+        entries
+    }
+
+    val permissions: Set<String> by lazy {
+        aapt2("dump", "permissions").lineSequence().filter { it.startsWith("uses-permission:") }.mapTo(sortedSetOf()) {
+            it.substringAfter("name='").substringBefore('\'')
+        }
+    }
+
+    /** Everything but code, compiled resources and the signature: assets, native code, service files. */
+    val otherEntries: Set<String> by lazy {
+        ZipFile(file).use { zip ->
+            zip.entries().asSequence().map { it.name }
+                .filterNot { it.matches(DEX_ENTRY) || it == "resources.arsc" || it.matches(SIGNATURE_ENTRY) || it.startsWith("res/") }
+                .toSortedSet()
+        }
+    }
+
+    private fun aapt2(vararg arguments: String): String {
+        val process = ProcessBuilder(listOf(AAPT2.path) + arguments + file.path).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        check(process.waitFor() == 0) { "aapt2 ${arguments.joinToString(" ")} failed on $file:\n$output" }
+        return output
+    }
+
+    private companion object {
+        val DEX_ENTRY = Regex("classes\\d*\\.dex")
+        val SIGNATURE_ENTRY = Regex("META-INF/[^/]+\\.(SF|RSA|DSA|EC|MF)")
+        val RESOURCE_LINE = Regex("^\\s+resource 0x[0-9a-f]+ (\\S+)")
+        val RESOURCE_ID = Regex("0x7f[0-9a-f]{6}")
+        val AAPT2: File by lazy {
+            ANDROID_SDK.resolve("build-tools").listFiles().orEmpty().sortedBy { it.name }.lastOrNull { it.resolve("aapt2").canExecute() }?.resolve("aapt2")
+                ?: error("No build-tools with aapt2 in $ANDROID_SDK")
+        }
+    }
+}
+
+/**
+ * The type tables of a dex file. The format has been stable since Android 1.0 and this needs four
+ * of its header fields, so a parser here is cheaper than depending on a dex library.
+ *
+ * https://source.android.com/docs/core/runtime/dex-format
+ */
+private class Dex(bytes: ByteArray) {
+
+    private val buffer = ByteBuffer.wrap(bytes).order(LITTLE_ENDIAN)
+
+    val referenced: Set<String>
+    val defined: Set<String>
+
+    init {
+        val strings = buffer.getInt(STRING_IDS_OFF_FIELD)
+        val typeCount = buffer.getInt(TYPE_IDS_SIZE_FIELD)
+        val types = buffer.getInt(TYPE_IDS_SIZE_FIELD + 4)
+        val classCount = buffer.getInt(CLASS_DEFS_SIZE_FIELD)
+        val classes = buffer.getInt(CLASS_DEFS_SIZE_FIELD + 4)
+
+        fun typeName(index: Int): String = string(buffer.getInt(strings + buffer.getInt(types + index * 4) * 4))
+
+        referenced = (0 until typeCount).map(::typeName).filter { it.startsWith("L") }.mapTo(mutableSetOf(), ::dotted)
+        defined = (0 until classCount).mapTo(mutableSetOf()) { dotted(typeName(buffer.getInt(classes + it * CLASS_DEF_SIZE))) }
+    }
+
+    /** A `string_data_item`: a uleb128 length, then NUL-terminated MUTF-8. Type names are ASCII in practice. */
+    private fun string(offset: Int): String {
+        var start = offset
+        while (buffer.get(start).toInt() and 0x80 != 0) start++
+        start++
+        var end = start
+        while (buffer.get(end).toInt() != 0) end++
+        return String(buffer.array(), start, end - start, Charsets.UTF_8)
+    }
+
+    private fun dotted(descriptor: String) = descriptor.removePrefix("L").removeSuffix(";").replace('/', '.')
+
+    private companion object {
+        const val STRING_IDS_OFF_FIELD = 0x3C
+        const val TYPE_IDS_SIZE_FIELD = 0x40
+        const val CLASS_DEFS_SIZE_FIELD = 0x60
+        const val CLASS_DEF_SIZE = 32
+    }
+}

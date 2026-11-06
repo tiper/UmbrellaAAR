@@ -1,3 +1,4 @@
+import java.time.Duration
 import org.gradle.jvm.toolchain.JavaLanguageVersion.of
 
 plugins {
@@ -9,6 +10,12 @@ plugins {
 
 group = "io.github.tiper"
 version = "3.0.0"
+
+// Fixtures resolve the plugin from here by version, as a real build would. TestKit's
+// withPluginClasspath would load it apart from the AGP and KGP the fixture applies.
+val pluginUnderTestRepo = layout.buildDirectory.dir("plugin-under-test")
+
+fun functionalTestProperty(name: String) = providers.gradleProperty("umbrellaaar.$name")
 
 java {
     toolchain {
@@ -26,6 +33,38 @@ dependencies {
     testImplementation(gradleTestKit())
     testRuntimeOnly(libs.android.gradle.plugin)
     testImplementation(libs.kotlin.gradle.plugin)
+}
+
+testing {
+    suites {
+        register<JvmTestSuite>("functionalTest") {
+            useJUnit()
+            dependencies {
+                implementation(gradleTestKit())
+                implementation(localGroovy())
+                implementation("org.jetbrains.kotlin:kotlin-test-junit:$embeddedKotlinVersion")
+            }
+            targets.configureEach {
+                testTask {
+                    dependsOn("publishAllPublicationsToPluginUnderTestRepository")
+                    // The publish tasks always run and stamp maven-metadata.xml, so only the
+                    // artifacts themselves can say whether the plugin under test changed.
+                    inputs.files(fileTree(pluginUnderTestRepo) { exclude("**/maven-metadata.xml*") })
+                        .withPropertyName("pluginUnderTest")
+                        .withPathSensitivity(PathSensitivity.RELATIVE)
+                    systemProperty("umbrellaaar.version", version.toString())
+                    systemProperty("umbrellaaar.pluginRepo", pluginUnderTestRepo.get().asFile.path)
+                    systemProperty("umbrellaaar.fixturesDir", layout.buildDirectory.dir("functional-test").get().asFile.path)
+                    systemProperty("umbrellaaar.testKitDir", functionalTestProperty("testKitDir").getOrElse(gradle.gradleUserHomeDir.resolve("umbrellaaar-test-kit").path))
+                    listOf("toolchain", "agp", "kgp", "gradle").forEach { name ->
+                        functionalTestProperty(name).orNull?.let { systemProperty("umbrellaaar.$name", it) }
+                    }
+                    // Below the CI job's limit, so a wedged fixture still leaves a report behind.
+                    timeout = Duration.ofMinutes(30)
+                }
+            }
+        }
+    }
 }
 
 gradlePlugin {
@@ -78,6 +117,10 @@ publishing {
                 username = providers.environmentVariable("GITHUB_USER").orNull
                 password = providers.environmentVariable("GITHUB_TOKEN").orNull
             }
+        }
+        maven {
+            name = "PluginUnderTest"
+            url = uri(pluginUnderTestRepo)
         }
     }
 }
