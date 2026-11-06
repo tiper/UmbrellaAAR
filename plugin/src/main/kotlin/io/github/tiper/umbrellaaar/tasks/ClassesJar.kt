@@ -6,6 +6,7 @@ import io.github.tiper.umbrellaaar.extensions.transformClass
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.util.zip.Deflater.NO_COMPRESSION
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -82,6 +83,8 @@ internal fun buildClassesJar(
     val relocate = umbrellaNamespace.isNotEmpty() && mergedNamespaces.isNotEmpty()
     val jar = File(out, "classes.jar").apply { if (exists()) delete() }
     ZipOutputStream(BufferedOutputStream(FileOutputStream(jar), IO_BUFFER_SIZE)).use { zos ->
+        // The AAR deflates this jar as a whole, and deflate finds nothing left in bytes already deflated.
+        zos.setLevel(NO_COMPRESSION)
         // Rules last: they go by what reads an `R`, and that takes the umbrella's own classes too.
         entries.entries.sortedWith(compareBy({ it.key.startsWith(TARGETED_RULES) }, { it.key })).forEach { (entryName, source) ->
             val (owner, file) = source

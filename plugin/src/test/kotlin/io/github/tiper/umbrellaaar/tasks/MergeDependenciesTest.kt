@@ -484,6 +484,16 @@ class MergeDependenciesTest {
     }
 
     @Test
+    fun `classes jar holds its entries uncompressed, as the AAR deflates the jar as a whole`() {
+        mainAar("classes/com/example/Main.class" to "same bytes ".repeat(1_000))
+        module("feature", "com.example.feature", "classes/com/example/Feature.class" to "more bytes ".repeat(1_000))
+
+        java.util.zip.ZipFile(File(merge(), "classes.jar")).use { zip ->
+            zip.entries().asSequence().forEach { assertTrue(it.compressedSize >= it.size, "${it.name} was compressed") }
+        }
+    }
+
+    @Test
     fun `module descriptors stay out of classes jar, whichever release they are for`() {
         mainAar()
         listOf("a", "b").forEach { name ->
