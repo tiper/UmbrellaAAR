@@ -1,4 +1,5 @@
 import java.time.Duration
+import java.util.concurrent.Callable
 import org.gradle.jvm.toolchain.JavaLanguageVersion.of
 
 plugins {
@@ -125,14 +126,18 @@ publishing {
     }
 }
 
-val signingKey = providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKey")
-
 signing {
-    // Contributors and the functional tests publish without keys. publish.yml always sets this
-    // variable, so a release whose secret went missing still fails instead of shipping unsigned.
-    isRequired = signingKey.isPresent
+    // Contributors and the functional tests publish without keys. Anything that leaves this machine
+    // must not, whatever the environment says, so a release fails instead of shipping unsigned. This
+    // is asked as each signature comes up: the root builds this plugin's jar to configure itself, and
+    // that is the only graph whenReady would ever see here.
+    setRequired(
+        Callable {
+            gradle.taskGraph.allTasks.any { it.name == "publishPlugins" || it is PublishToMavenRepository && it.repository.name != "PluginUnderTest" }
+        },
+    )
     useInMemoryPgpKeys(
-        signingKey.orNull,
+        providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKey").orNull,
         providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKeyPassword").orNull,
     )
 }
