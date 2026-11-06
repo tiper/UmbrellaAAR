@@ -1,5 +1,6 @@
 package io.github.tiper.umbrellaaar.tasks
 
+import io.github.tiper.umbrellaaar.extensions.contentHash
 import io.github.tiper.umbrellaaar.extensions.packageName
 import io.github.tiper.umbrellaaar.extensions.transformClass
 import io.github.tiper.umbrellaaar.extensions.unzip
@@ -18,15 +19,12 @@ import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
-import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity.NONE
 import org.gradle.api.tasks.TaskAction
-import org.gradle.work.ChangeType
 import org.gradle.work.Incremental
 import org.gradle.work.InputChanges
 import org.gradle.workers.WorkAction
@@ -42,10 +40,12 @@ abstract class ExtractDependencies : DefaultTask() {
     @get:Input
     abstract val mainNamespace: Property<String>
 
-    // Archives are content-addressed: their absolute location must not affect the result.
+    // Archives are content-addressed: their absolute location must not affect the result. Unlike
+    // any path sensitivity short of an absolute one, this also goes by their order, which is what
+    // pairs each with its entry of folderNames: what lands in a folder ships under that module's
+    // name, and two modules can trade bytes or project paths with no other input changing.
     @get:Incremental
-    @get:InputFiles
-    @get:PathSensitive(NONE)
+    @get:Classpath
     abstract val dependencies: ConfigurableFileCollection
 
     /**
@@ -64,22 +64,24 @@ abstract class ExtractDependencies : DefaultTask() {
     abstract val reportFile: RegularFileProperty
 
     /**
-     * `archive -> the folder it extracts to`, see [folderNames]. An archive's path belongs to this
-     * machine, so only the names of the folders are an input.
+     * `archive -> the folder it extracts to`, see [folderNames], in the order of [dependencies]. An
+     * archive's path belongs to this machine, so only the names of the folders are an input.
      */
     @get:Internal
     abstract val archiveFolders: MapProperty<File, String>
 
     @get:Input
     internal val folderNames: Provider<List<String>>
-        get() = archiveFolders.map { it.values.sorted() }
+        get() = archiveFolders.map { it.values.toList() }
 
     @get:Inject
     abstract val workers: WorkerExecutor
 
     /**
      * Incremental when only the *content* of some archives changed — the common case of rebuilding
-     * after editing one module: just those archives are extracted again.
+     * after editing one module: just those archives are extracted again. Which ones the hashes of
+     * the state file say, and not Gradle: with no paths to go by it pairs files by their bytes, so an
+     * archive taking on the bytes another one had looks to it like that archive having moved.
      *
      * Every archive's classes are relocated against the namespaces of *all* merged modules, and
      * folder names are derived from the whole set of archives. So when the set of archives, the
@@ -103,21 +105,15 @@ abstract class ExtractDependencies : DefaultTask() {
         logger.info("[UmbrellaAar] Relocating R classes for ${namespaces.size} merged namespaces")
 
         val stateFile = File(baseDir, STATE_FILE)
-        val state = buildString {
-            appendLine(mainNamespace.get())
-            namespaces.sorted().forEach(::appendLine)
-            // Not the archive's path: this file is part of what merging takes in, on any machine.
-            folders.entries.map { (file, folder) -> "${file.name} -> $folder" }.sorted().forEach(::appendLine)
-        }
-        val incremental = inputChanges.isIncremental && stateFile.isFile && stateFile.readText() == state
+        val shared = listOf(mainNamespace.get()) + namespaces.sorted() + folders.values.sorted()
+        val extracted = folders.mapValues { (archive, folder) -> "$folder\t${archive.contentHash()}" }
+        val previous = if (inputChanges.isIncremental && stateFile.isFile) stateFile.readLines() else emptyList()
+        val incremental = previous.take(shared.size) == shared && previous.size == shared.size + extracted.size
         // Only rewritten once every archive is extracted: an interrupted run must never look complete.
         stateFile.delete()
 
         val toExtract = if (incremental) {
-            inputChanges.getFileChanges(dependencies)
-                .filter { it.changeType != ChangeType.REMOVED && it.file.isFile }
-                .map { it.file }
-                .onEach { File(baseDir, folders.getValue(it)).deleteRecursively() }
+            archives.filter { extracted[it] !in previous }.onEach { File(baseDir, folders.getValue(it)).deleteRecursively() }
         } else {
             baseDir.deleteRecursively()
             archives
@@ -134,7 +130,7 @@ abstract class ExtractDependencies : DefaultTask() {
             }
         }
         queue.await()
-        stateFile.writeText(state)
+        stateFile.writeText((shared + extracted.values).joinToString("\n"))
 
         logger.lifecycle(
             "Extracted ${toExtract.size} of ${archives.size} dependency archives from ${mergedModules.get().size} modules" +

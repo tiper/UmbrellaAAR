@@ -4,6 +4,7 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.InputStream
 import java.nio.file.Files
+import java.security.MessageDigest
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -95,6 +96,15 @@ internal fun MutableMap<String, String>.caseVariant(entry: String, to: File): Pa
 
 /** This relative path, then the folders it is in, from the nearest out. */
 internal fun String.andFolders() = generateSequence(this) { it.substringBeforeLast('/', "").ifEmpty { null } }
+
+/** Empty for what is no file, which a build need not have made by the time it asks. */
+internal fun File.contentHash(): String {
+    if (!isFile) return ""
+    val digest = MessageDigest.getInstance("SHA-256")
+    val buffer = ByteArray(IO_BUFFER_SIZE)
+    inputStream().use { input -> generateSequence { input.read(buffer).takeIf { it >= 0 } }.forEach { digest.update(buffer, 0, it) } }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+}
 
 internal fun File.sameBytesAs(other: File) = length() == other.length() && readBytes().contentEquals(other.readBytes())
 
