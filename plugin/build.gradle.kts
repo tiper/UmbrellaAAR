@@ -53,6 +53,8 @@ testing {
                     inputs.files(fileTree(pluginUnderTestRepo) { exclude("**/maven-metadata.xml*") })
                         .withPropertyName("pluginUnderTest")
                         .withPathSensitivity(PathSensitivity.RELATIVE)
+                    // SigningGuardTest runs this very script.
+                    inputs.file("build.gradle.kts").withPropertyName("ownBuildScript").withPathSensitivity(PathSensitivity.NONE)
                     systemProperty("umbrellaaar.version", version.toString())
                     systemProperty("umbrellaaar.pluginRepo", pluginUnderTestRepo.get().asFile.path)
                     systemProperty("umbrellaaar.fixturesDir", layout.buildDirectory.dir("functional-test").get().asFile.path)

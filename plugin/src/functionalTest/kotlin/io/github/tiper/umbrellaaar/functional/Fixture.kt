@@ -207,6 +207,8 @@ private val FIXTURE_PLUGIN_MANAGEMENT = """
     |}
 """.trimMargin()
 
+internal const val FIXTURE_JVM_ARGS = "-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+
 /**
  * What every build of the suite shares. Identical JVM arguments let TestKit reuse one daemon, and
  * AGP and KGP sit in the root build's classloader, where a real project keeps them.
@@ -215,7 +217,7 @@ internal fun File.writeCommonFiles() {
     val toolchain = Toolchain.current
     resolve("gradle.properties").writeText(
         """
-        |org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8
+        |org.gradle.jvmargs=$FIXTURE_JVM_ARGS
         |org.gradle.configuration-cache=true
         |org.gradle.parallel=true
         |android.useAndroidX=true
