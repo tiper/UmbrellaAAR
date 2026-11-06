@@ -2,8 +2,10 @@ package io.github.tiper.umbrellaaar
 
 import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryExtension
 import com.android.build.api.dsl.LibraryExtension
+import io.github.tiper.umbrellaaar.extensions.FRAMEWORK_EXPORT
 import io.github.tiper.umbrellaaar.extensions.ProjectGraph
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
+import io.github.tiper.umbrellaaar.extensions.archiveVariant
 import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.findAar
 import io.github.tiper.umbrellaaar.extensions.findAarTask
@@ -57,7 +59,7 @@ class UmbrellaAar : Plugin<Project> {
             dependencies.from(
                 graph.map { g ->
                     g.modules.map { module ->
-                        module.findAarTask(*archiveCandidates).map { it.outputs.files }
+                        module.findAarTask(*g.archiveVariant(module, archiveCandidates)).map { it.outputs.files }
                     }
                 },
             )
@@ -103,7 +105,7 @@ class UmbrellaAar : Plugin<Project> {
             dependencySourcesJars.from(
                 graph.map { g ->
                     g.modules.map { module ->
-                        module.findSourcesJarTask(*archiveCandidates).map { it.outputs.files }
+                        module.findSourcesJarTask(*g.archiveVariant(module, archiveCandidates)).map { it.outputs.files }
                     }
                 },
             )
@@ -126,9 +128,9 @@ class UmbrellaAar : Plugin<Project> {
         namespace: Provider<String>,
         graph: Provider<ProjectGraph>,
     ) {
-        // Exported modules may use a different Android plugin than the umbrella module, so both the
-        // umbrella's own variant name and the declared publication variants are valid candidates
+        // Both the umbrella's own variant name and the declared publication variants are candidates
         // (`bundleAndroidMainAar` for AGP 9 KMP, `bundleReleaseAar` for `com.android.library`, …).
+        // For a merged module they only apply when Gradle's own selection cannot, see archiveVariant.
         val archiveCandidates = (listOf(aarBuildType) + variants).distinct().map { it.capitalize() }.toTypedArray()
         val mergeDependencies = registerSharedPipeline(key, archiveCandidates, namespace, graph)
         variants.forEach { registerVariant(it, archiveCandidates, graph, mergeDependencies) }
@@ -150,7 +152,7 @@ class UmbrellaAar : Plugin<Project> {
             objects.listProperty(ProjectDependency::class.java).value(
                 provider {
                     if (!extension.includeFrameworkExports.get()) return@provider emptyList()
-                    frameworkExports().map { dependencies.project(mapOf("path" to it)) as ProjectDependency }
+                    frameworkExports().map { (dependencies.project(mapOf("path" to it)) as ProjectDependency).apply { because(FRAMEWORK_EXPORT) } }
                 },
             ),
         )
@@ -208,7 +210,7 @@ class UmbrellaAar : Plugin<Project> {
     private fun Project.graphProvider(config: Configuration, buildType: String): Provider<ProjectGraph> {
         val memo = lazy {
             val rules = config.allExcludeRules()
-            val resolution = if (useLegacyGraph()) null else resolveUmbrella(buildType)
+            val resolution = if (useLegacyGraph()) null else resolveUmbrella(config, buildType)
             val graph = resolution?.graph ?: resolveProjectGraph(config, buildType)
 
             graph.selfInclusionVia?.let { via ->
@@ -233,6 +235,19 @@ class UmbrellaAar : Plugin<Project> {
                         },
                     )
                 }
+
+            resolution?.unresolved?.takeIf { it.isNotEmpty() }?.let { unresolved ->
+                logger.warn(
+                    buildString {
+                        appendLine("[UmbrellaAar] ${unresolved.size} framework export(s) of $path could not be resolved for its umbrella:")
+                        unresolved.forEach { (module, why) -> appendLine("  $module: $why") }
+                        append(
+                            "  They are neither merged into the AAR nor declared as dependencies in its POM. " +
+                                "That is expected of a framework export with no Android or JVM target.",
+                        )
+                    },
+                )
+            }
 
             // Behaviour change vs 2.x, called out explicitly so it can never be a silent difference
             // in the published artifact.
@@ -270,8 +285,6 @@ class UmbrellaAar : Plugin<Project> {
     }
 
     private companion object {
-        const val KMP_PIPELINE_KEY = "androidMain"
-
         /**
          * `com.android.kotlin.multiplatform.library` has no build types. Both publications are kept
          * for source compatibility with `com.android.library` umbrellas and share one pipeline.

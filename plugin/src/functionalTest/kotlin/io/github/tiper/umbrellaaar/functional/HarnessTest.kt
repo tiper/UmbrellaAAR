@@ -51,20 +51,4 @@ class HarnessTest {
         }
         assertEquals(mapOf(":core" to ":sdk -> export"), umbrella.mergedModules())
     }
-
-    /** A local java-platform fails the merge today. Replace this when platforms are skipped. */
-    @Test
-    fun `a local java-platform module cannot be merged yet`() = fixture {
-        val bom = javaPlatform("bom") { constraint("androidx.annotation:annotation:1.9.1") }
-        val core = androidLibrary("core") {
-            apiPlatform(bom)
-            api("androidx.annotation:annotation")
-        }
-        val umbrella = kmpUmbrella { export(core) }
-
-        gradleFails(umbrella.bundleTask()).assertLogged("UmbrellaAar cannot find an archive task in project ':bom'")
-        gradle(":bom:publishStockPublicationToStockRepository")
-
-        assertEquals("pom", Pom(stockRepo.resolve("com/acme/bom/$VERSION/bom-$VERSION.pom")).packaging)
-    }
 }

@@ -5,6 +5,7 @@ import io.github.tiper.umbrellaaar.extensions.PRODUCT_SCOPES
 import io.github.tiper.umbrellaaar.extensions.UmbrellaResolution
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.matches
+import io.github.tiper.umbrellaaar.extensions.pinnedBy
 import io.github.tiper.umbrellaaar.extensions.resolveUmbrella
 import io.github.tiper.umbrellaaar.extensions.useLegacyGraph
 import io.github.tiper.umbrellaaar.extensions.capitalize
@@ -12,6 +13,8 @@ import io.github.tiper.umbrellaaar.extensions.cleanPlatformSuffixes
 import io.github.tiper.umbrellaaar.extensions.createAndroidResolutionConfig
 import io.github.tiper.umbrellaaar.extensions.createKmpResolutionConfig
 import io.github.tiper.umbrellaaar.extensions.isExcluded
+import io.github.tiper.umbrellaaar.extensions.isPlatform
+import io.github.tiper.umbrellaaar.extensions.localProject
 import io.github.tiper.umbrellaaar.extensions.productConfigurationNames
 import io.github.tiper.umbrellaaar.extensions.resolveProjectGraph
 import io.github.tiper.umbrellaaar.pom.Collector
@@ -27,6 +30,7 @@ import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.ExcludeRule
 import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.attributes.Attribute
 import org.gradle.api.attributes.AttributeContainer
@@ -170,8 +174,9 @@ abstract class UmbrellaAarPom @Inject constructor(
             }
             .flatMap { conf ->
                 runCatching {
+                    // A local platform stays: versionless declarations get their version from it.
                     conf.dependencies
-                        .filterNot { it is ProjectDependency }
+                        .filterNot { it is ProjectDependency && !it.isPlatform }
                         .filterNot { it.isExcluded(excludeRules) }
                 }.getOrElse {
                     logger.debug("[UmbrellaAarPom] Could not process configuration ${conf.name}: ${it.message}")
@@ -185,7 +190,7 @@ abstract class UmbrellaAarPom @Inject constructor(
                 if (excludeRules.isNotEmpty()) " (${excludeRules.size} exclusion rules applied)" else "",
         )
 
-        val resolved = resolveWithAndroidAttributes(declaredDependencies.values, resolutionConfigFactory)
+        val resolved = resolveWithAndroidAttributes(declaredDependencies.values, excludeRules, resolutionConfigFactory)
         val collector = Collector()
         resolved.forEach(collector::add)
         reportConflicts(collector)
@@ -202,35 +207,29 @@ abstract class UmbrellaAarPom @Inject constructor(
 
     private fun Project.resolveWithAndroidAttributes(
         dependencies: Collection<org.gradle.api.artifacts.Dependency>,
+        excludeRules: List<ExcludeRule>,
         resolutionConfigFactory: () -> Configuration,
     ): List<Dependency> {
         if (dependencies.isEmpty()) return emptyList()
 
-        return try {
-            val config = resolutionConfigFactory()
-            dependencies.forEach { config.dependencies.add(it) }
+        val config = resolutionConfigFactory()
+        dependencies.forEach { config.dependencies.add(it) }
 
-            val declaredKeys = dependencies.mapTo(mutableSetOf()) { "${it.group}:${it.name}" }
-            val androidxMap = config.buildAndroidxArtifactMap()
+        val declaredKeys = dependencies.mapTo(mutableSetOf()) { "${it.group}:${it.name}" }
+        val androidxMap = config.buildAndroidxArtifactMap()
 
-            logger.debug("[UmbrellaAarPom] Found ${androidxMap.size} androidx artifacts for mapping")
+        logger.debug("[UmbrellaAarPom] Found ${androidxMap.size} androidx artifacts for mapping")
 
-            config.incoming.resolutionResult.root.dependencies
-                .filterIsInstance<ResolvedDependencyResult>()
-                .mapNotNull { it.selected.moduleVersion }
-                .filter { "${it.group}:${it.name}" in declaredKeys }
-                .map { resolveToAndroidx(it, androidxMap) }
-                .also { logger.debug("[UmbrellaAarPom] Resolved ${it.size} direct dependencies") }
-        } catch (e: Exception) {
-            logger.warn("[UmbrellaAarPom] Resolution failed, using unresolved coordinates as fallback: ${e.message}")
-            logger.debug("[UmbrellaAarPom] Resolution failure details:", e)
-            dependencies.mapNotNull { dep ->
-                val group = dep.group ?: return@mapNotNull null
-                val version = dep.version ?: return@mapNotNull null
-                if (dep.name in listOf("unspecified", "null")) return@mapNotNull null
-                Dependency(group, dep.name, version, "compile")
-            }
-        }
+        // Platforms stay in the resolution, where they give versionless declarations a version.
+        val resolution = config.incoming.resolutionResult
+        val direct = resolution.root.dependencies
+            .filterIsInstance<ResolvedDependencyResult>()
+            .filterNot { it.isPlatform || (it.selected.id as? ProjectComponentIdentifier)?.let(::localProject) != null }
+            .mapNotNull { it.selected.moduleVersion }
+            .filter { "${it.group}:${it.name}" in declaredKeys }
+        return (direct + resolution.pinnedBy(listOf(resolution.root)).filterNot { id -> excludeRules.any { it.matches(id.group, id.name) } })
+            .map { resolveToAndroidx(it, androidxMap) }
+            .also { logger.debug("[UmbrellaAarPom] Resolved ${it.size} direct dependencies") }
     }
 
     private fun Configuration.buildAndroidxArtifactMap(): Map<String, ModuleComponentIdentifier> = androidxArtifactMap(
@@ -302,7 +301,7 @@ abstract class UmbrellaAarPom @Inject constructor(
                     resolutionConfigFactory = resolutionConfigFactory,
                 )
             } else {
-                val resolution = resolveUmbrella(buildType)
+                val resolution = resolveUmbrella(config, buildType)
                 collectResolvedDependencies(
                     resolution = resolution,
                     modules = resolution.graph.modules.filterNot { it.isExcluded(rules) },
@@ -315,15 +314,16 @@ abstract class UmbrellaAarPom @Inject constructor(
 
     /**
      * The external dependencies to publish: the direct ones of the umbrella module and of every merged
-     * module, at the versions Gradle selected for the whole umbrella graph — so constraints, platforms
-     * and resolution rules apply exactly as they do when the modules are built.
+     * module, at the versions Gradle selected for the whole umbrella graph, and the transitive ones
+     * that would lose their version otherwise — so constraints, platforms and resolution rules apply
+     * exactly as they do when the modules are built.
      */
     private fun Project.collectResolvedDependencies(
         resolution: UmbrellaResolution,
         modules: Collection<Project>,
         excludeRules: List<ExcludeRule>,
     ): List<String> {
-        val direct = (resolution.hostExternals + modules.flatMap { resolution.externalsOf[it.path].orEmpty() })
+        val direct = (resolution.hostExternals + modules.flatMap { resolution.externalsOf[it.path].orEmpty() } + resolution.pinned)
             .filterNot { id -> excludeRules.any { it.matches(id.group, id.name) } }
 
         val androidxMap = androidxArtifactMap(resolution.moduleIds)

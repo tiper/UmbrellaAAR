@@ -7,10 +7,14 @@ import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.ExcludeRule
+import org.gradle.api.artifacts.ModuleDependency
 import org.gradle.api.artifacts.ProjectDependency
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.attributes.Category
 import org.gradle.api.attributes.Category.CATEGORY_ATTRIBUTE
+import org.gradle.api.attributes.Category.ENFORCED_PLATFORM
 import org.gradle.api.attributes.Category.LIBRARY
+import org.gradle.api.attributes.Category.REGULAR_PLATFORM
 import org.gradle.api.attributes.Usage
 import org.gradle.api.attributes.Usage.JAVA_RUNTIME
 import org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE
@@ -29,12 +33,15 @@ import org.gradle.kotlin.dsl.withType
  * @param compileOnlyOnly projects reachable *only* through `compileOnly`. They are deliberately not
  *   merged — `compileOnly` means "provided by the consumer" — but the previous deny-list traversal
  *   did merge them, so they are reported rather than silently dropped.
+ * @param variantOf `project path -> the variant Gradle selected in it`, for example
+ *   `paidReleaseRuntimeElements`. Empty on the legacy graph, which resolves nothing.
  */
 internal data class ProjectGraph(
     val modules: Set<Project>,
     val via: Map<String, String>,
     val selfInclusionVia: String?,
     val compileOnlyOnly: Map<String, String> = emptyMap(),
+    val variantOf: Map<String, String> = emptyMap(),
 )
 
 internal fun Project.findAllProjectDependencies(
@@ -54,6 +61,7 @@ internal fun Project.findAllProjectDependencies(
  * project itself) into the published artifact.
  */
 internal fun Project.resolveProjectGraph(config: Configuration, buildType: String): ProjectGraph {
+    checkExports(config)
     val host = this
     val result = linkedSetOf<Project>()
     val via = linkedMapOf<String, String>()
@@ -66,8 +74,8 @@ internal fun Project.resolveProjectGraph(config: Configuration, buildType: Strin
         }
     }
 
-    fun Configuration.projectDependencies() = dependencies.filterIsInstance<ProjectDependency>().mapNotNull {
-        findProject(it.path)
+    fun Configuration.projectDependencies() = dependencies.filterIsInstance<ProjectDependency>().mapNotNull { dependency ->
+        findProject(dependency.path)?.takeUnless { dependency.isPlatform && it.isJavaPlatform() }
     }
 
     config.projectDependencies().forEach { enqueue(host.path, config.name, it) }
@@ -135,6 +143,27 @@ internal fun Project.createKmpResolutionConfig(): Configuration = configurations
         attribute(TARGET_JVM_ENVIRONMENT_ATTRIBUTE, objects.named(TargetJvmEnvironment::class.java, ANDROID))
     }
 }
+
+/** `platform(project(...))` of anything else is a module like any other to Gradle, which then merges it. */
+private fun Project.isJavaPlatform(): Boolean {
+    ensureEvaluated()
+    return plugins.hasPlugin("java-platform")
+}
+
+private val PLATFORM_CATEGORIES = setOf(REGULAR_PLATFORM, ENFORCED_PLATFORM)
+
+/**
+ * `platform(...)` and `enforcedPlatform(...)` pin versions and ship nothing. Versions are published
+ * resolved, so a platform has no place in the AAR or the POM: a BOM listed as a library cannot be
+ * consumed at all.
+ */
+internal val ModuleDependency.isPlatform: Boolean get() = attributes.getAttribute(CATEGORY_ATTRIBUTE)?.name in PLATFORM_CATEGORIES
+
+/** [ModuleDependency.isPlatform] once resolved. A published module's attributes come back untyped, so the key goes by name. */
+internal val ResolvedDependencyResult.isPlatform: Boolean
+    get() = resolvedVariant.attributes.let { attributes ->
+        attributes.keySet().firstOrNull { it.name == CATEGORY_ATTRIBUTE.name }?.let { attributes.getAttribute(it).toString() } in PLATFORM_CATEGORIES
+    }
 
 internal fun Configuration.allExcludeRules(): List<ExcludeRule> = (excludeRules + dependencies.filterIsInstance<ProjectDependency>().flatMap { it.excludeRules }).toList()
 

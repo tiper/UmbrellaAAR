@@ -50,13 +50,22 @@ internal class Fixture(val dir: File) {
 
     internal val modules = linkedMapOf<String, Module>()
 
-    fun androidLibrary(name: String, configure: AndroidLibrary.() -> Unit = {}) = add(AndroidLibrary(this, name), configure)
+    fun androidLibrary(name: String, parent: Module? = null, configure: AndroidLibrary.() -> Unit = {}) = add(AndroidLibrary(this, name, parent), configure)
 
     fun kmpLibrary(name: String, configure: KmpLibrary.() -> Unit = {}) = add(KmpLibrary(this, name), configure)
 
     fun javaLibrary(name: String, configure: JavaLibrary.() -> Unit = {}) = add(JavaLibrary(this, name), configure)
 
     fun javaPlatform(name: String, configure: JavaPlatform.() -> Unit = {}) = add(JavaPlatform(this, name), configure)
+
+    /** A Kotlin Multiplatform module with [target] as its only JVM target, and no Android one. */
+    fun kotlinJvmLibrary(name: String, target: String = "jvm", configure: KotlinJvmLibrary.() -> Unit = {}) = add(KotlinJvmLibrary(this, name, target), configure)
+
+    /** A Kotlin Multiplatform module with only iOS targets. */
+    fun iosLibrary(name: String, configure: IosLibrary.() -> Unit = {}) = add(IosLibrary(this, name), configure)
+
+    /** A project with no plugins, as a directory holding other modules usually is. */
+    fun container(name: String, configure: Container.() -> Unit = {}) = add(Container(this, name), configure)
 
     /** An umbrella on `com.android.kotlin.multiplatform.library`. */
     fun kmpUmbrella(name: String = "sdk", configure: KmpUmbrella.() -> Unit = {}) = add(KmpUmbrella(this, name), configure)
@@ -83,7 +92,7 @@ internal class Fixture(val dir: File) {
         return Build(runner(projectDir, arguments).buildAndFail())
     }
 
-    private fun <T : Module> add(module: T, configure: T.() -> Unit): T = module.apply(configure).also { modules[it.name] = it }
+    private fun <T : Module> add(module: T, configure: T.() -> Unit): T = module.apply(configure).also { modules[it.path] = it }
 
     private fun write() {
         projectDir.mkdirs()

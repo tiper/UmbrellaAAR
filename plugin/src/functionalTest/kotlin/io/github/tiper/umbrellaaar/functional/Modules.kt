@@ -6,9 +6,9 @@ import java.io.File
  * One project of a [Fixture]. Every module gets a class named after it, so an empty module is still
  * a real module and a consumer has something to call.
  */
-internal sealed class Module(val fixture: Fixture, val name: String) {
+internal sealed class Module(val fixture: Fixture, val name: String, parent: Module? = null) {
 
-    val path = ":$name"
+    val path: String = "${parent?.path.orEmpty()}:$name"
 
     val coordinates = "$GROUP:$name:$VERSION"
 
@@ -26,15 +26,12 @@ internal sealed class Module(val fixture: Fixture, val name: String) {
     /** The publish tasks that release this module as an ordinary library, see [parity]. */
     abstract val stockPublishTasks: List<String>
 
-    protected val dependencies = mutableListOf<String>()
-
     protected val defaultClass = name.split('-').joinToString("") { it.replaceFirstChar(Char::uppercaseChar) }
 
     protected val packageDir = namespace.replace('.', '/')
 
-    protected open val visibleModules: List<Module> get() = apiModules
+    protected open val visibleModules: List<Module> get() = emptyList()
 
-    private val apiModules = mutableListOf<Module>()
     private val files = linkedMapOf<String, String>()
     private val extraScript = mutableListOf<String>()
 
@@ -47,6 +44,54 @@ internal sealed class Module(val fixture: Fixture, val name: String) {
     fun buildScript(text: String) {
         extraScript += text.trimIndent()
     }
+
+    internal fun write() {
+        val dir = fixture.projectDir.resolve(path.removePrefix(":").replace(':', '/')).apply { mkdirs() }
+        (generatedFiles() + files).forEach { (path, content) ->
+            dir.resolve(path).apply { parentFile.mkdirs() }.writeText(content)
+        }
+        dir.resolve("build.gradle.kts").writeText((scriptBlocks() + extraScript).joinToString("\n\n", postfix = "\n"))
+    }
+
+    protected abstract fun scriptBlocks(): List<String>
+
+    protected open fun generatedFiles(): Map<String, String> = emptyMap()
+
+    protected fun coordinatesBlock() = "group = \"$GROUP\"\nversion = \"$VERSION\""
+
+    protected fun stockPublishing(component: String? = null): String {
+        val publication = component?.let {
+            """
+            |    publications {
+            |        register<MavenPublication>("stock") {
+            |            afterEvaluate { from(components["$it"]) }
+            |        }
+            |    }
+            """.trimMargin()
+        }
+        return listOfNotNull("publishing {", publication, repositoryBlock("stock", fixture.stockRepo), "}").joinToString("\n")
+    }
+}
+
+private fun repositoryBlock(name: String, location: File) = """
+    |    repositories {
+    |        maven {
+    |            name = "$name"
+    |            url = uri("${location.toURI()}")
+    |        }
+    |    }
+""".trimMargin()
+
+private fun pluginsBlock(plugins: List<String>) = plugins.joinToString("\n", prefix = "plugins {\n", postfix = "\n}") { "    $it" }
+
+/** A module whose script writes the dependencies it declares. No other kind can be given any. */
+internal sealed class DependentModule(fixture: Fixture, name: String, parent: Module? = null) : Module(fixture, name, parent) {
+
+    protected val dependencies = mutableListOf<String>()
+
+    override val visibleModules: List<Module> get() = apiModules
+
+    private val apiModules = mutableListOf<Module>()
 
     fun api(module: Module) {
         apiModules += module
@@ -68,40 +113,17 @@ internal sealed class Module(val fixture: Fixture, val name: String) {
     fun compileOnly(coordinates: String) = declare("compileOnly", coordinates.quoted)
 
     /** Imports the constraints of [platform], which is what `platform(project(...))` does. */
-    fun apiPlatform(platform: JavaPlatform) = declare("api", platform(platform.notation))
+    fun apiPlatform(platform: Module) = declare("api", platform(platform.notation))
 
     fun apiPlatform(coordinates: String) = declare("api", platform(coordinates.quoted))
 
-    internal fun write() {
-        val dir = fixture.projectDir.resolve(name).apply { mkdirs() }
-        (generatedFiles() + files).forEach { (path, content) ->
-            dir.resolve(path).apply { parentFile.mkdirs() }.writeText(content)
-        }
-        dir.resolve("build.gradle.kts").writeText((scriptBlocks() + extraScript).joinToString("\n\n", postfix = "\n"))
-    }
+    fun apiEnforcedPlatform(coordinates: String) = declare("api", platform(coordinates.quoted, enforced = true))
 
-    protected abstract fun scriptBlocks(): List<String>
+    fun apiTestFixtures(module: Module) = declare("api", "testFixtures(${module.notation})")
 
-    protected open fun generatedFiles(): Map<String, String> = emptyMap()
-
-    protected open fun platform(notation: String) = "platform($notation)"
-
-    protected fun coordinatesBlock() = "group = \"$GROUP\"\nversion = \"$VERSION\""
+    protected open fun platform(notation: String, enforced: Boolean = false) = "${if (enforced) "enforcedPlatform" else "platform"}($notation)"
 
     protected fun dependenciesBlock(lines: List<String> = dependencies) = lines.joinToString("\n", prefix = "dependencies {\n", postfix = "\n}") { "    $it" }
-
-    protected fun stockPublishing(component: String? = null): String {
-        val publication = component?.let {
-            """
-            |    publications {
-            |        register<MavenPublication>("stock") {
-            |            afterEvaluate { from(components["$it"]) }
-            |        }
-            |    }
-            """.trimMargin()
-        }
-        return listOfNotNull("publishing {", publication, repositoryBlock("stock", fixture.stockRepo), "}").joinToString("\n")
-    }
 
     private fun declare(scope: String, notation: String) {
         dependencies += "$scope($notation)"
@@ -112,19 +134,8 @@ internal sealed class Module(val fixture: Fixture, val name: String) {
     private val String.quoted get() = "\"$this\""
 }
 
-private fun repositoryBlock(name: String, location: File) = """
-    |    repositories {
-    |        maven {
-    |            name = "$name"
-    |            url = uri("${location.toURI()}")
-    |        }
-    |    }
-""".trimMargin()
-
-private fun pluginsBlock(plugins: List<String>) = plugins.joinToString("\n", prefix = "plugins {\n", postfix = "\n}") { "    $it" }
-
 /** What a module built by either Android library plugin can carry. */
-internal sealed class AndroidModule(fixture: Fixture, name: String) : Module(fixture, name) {
+internal sealed class AndroidModule(fixture: Fixture, name: String, parent: Module? = null) : DependentModule(fixture, name, parent) {
 
     /** The source set shared by everything the module targets. */
     protected abstract val mainSourceSet: String
@@ -161,6 +172,9 @@ internal sealed class AndroidModule(fixture: Fixture, name: String) : Module(fix
     /** Adds Kotlin file [name] of the [namespace] package to the Android source set. */
     fun androidKotlin(name: String, content: String) = file("src/$androidSourceSet/kotlin/$packageDir/$name.kt", content.trimIndent() + "\n")
 
+    /** Adds a class to [sourceSet], which is how a build type or flavor differs from the others. */
+    fun classIn(sourceSet: String, name: String) = file("src/$sourceSet/kotlin/$packageDir/$name.kt", "package $namespace\n\nclass $name\n")
+
     /** Adds a class that reads the string resource [string] through this module's own `R`. */
     fun classUsingR(name: String, string: String) {
         androidKotlin(name, "package $namespace\n\nclass $name { fun label() = R.string.$string }")
@@ -190,7 +204,7 @@ internal sealed class AndroidModule(fixture: Fixture, name: String) : Module(fix
 }
 
 /** A `com.android.library` module. Its Kotlin comes from AGP's built-in support. */
-internal open class AndroidLibrary(fixture: Fixture, name: String) : AndroidModule(fixture, name) {
+internal open class AndroidLibrary(fixture: Fixture, name: String, parent: Module? = null) : AndroidModule(fixture, name, parent) {
 
     override val mainSourceSet = "main"
 
@@ -200,7 +214,45 @@ internal open class AndroidLibrary(fixture: Fixture, name: String) : AndroidModu
 
     protected open val extraPlugins get() = emptyList<String>()
 
-    protected open fun publishingBlocks() = listOf(stockPublishing(component = "release"))
+    protected open fun publishingBlocks() = listOf(stockPublishing(component = stockComponent))
+
+    /** What a stock publication of this module ships. */
+    protected val stockComponent get() = flavors.firstOrNull()?.let { "${it}Release" } ?: "release"
+
+    private var dimension = ""
+    private val flavors = mutableListOf<String>()
+    private val buildTypes = mutableListOf<String>()
+    private val fallbacks = mutableMapOf<String, String>()
+    private val withoutSources = mutableSetOf<String>()
+
+    private val variants: List<String>
+        get() {
+            val types = listOf("release", "debug") + buildTypes
+            return if (flavors.isEmpty()) types else flavors.flatMap { flavor -> types.map { "$flavor${it.replaceFirstChar(Char::uppercaseChar)}" } }
+        }
+
+    /** Adds product flavors under [dimension]. A stock publication of this module ships the first. */
+    fun flavors(dimension: String, vararg names: String) {
+        this.dimension = dimension
+        flavors += names
+    }
+
+    /** Adds a build type that selects [fallback] in modules which do not have it. */
+    fun buildType(name: String, fallback: String) {
+        buildTypes += name
+        fallbacks[name] = fallback
+    }
+
+    /** Leaves [variant] with no sources jar, which only the `publishing` block of a module asks for. */
+    fun withoutSourcesJar(variant: String) {
+        withoutSources += variant
+    }
+
+    /** Adds a class to the test fixtures of this module, which `testFixtures(project(...))` reaches. */
+    fun testFixture(name: String) {
+        buildScript("android { testFixtures { enable = true } }")
+        file("src/testFixtures/java/$packageDir/$name.java", "package $namespace;\n\npublic class $name {}\n")
+    }
 
     override fun scriptBlocks() = listOf(
         pluginsBlock(listOf("id(\"com.android.library\")") + extraPlugins + "`maven-publish`"),
@@ -213,9 +265,15 @@ internal open class AndroidLibrary(fixture: Fixture, name: String) : AndroidModu
         |        minSdk = $MIN_SDK
         |        ${if (hasConsumerRules) "consumerProguardFiles(\"consumer-rules.pro\")" else ""}
         |    }
+        |    ${if (flavors.isEmpty()) "" else "flavorDimensions += \"$dimension\""}
+        |    productFlavors {
+        |${flavors.joinToString("\n") { "        create(\"$it\") { dimension = \"$dimension\" }" }}
+        |    }
+        |    buildTypes {
+        |${fallbacks.entries.joinToString("\n") { (name, fallback) -> "        create(\"$name\") { initWith(getByName(\"$fallback\")); matchingFallbacks += \"$fallback\" }" }}
+        |    }
         |    publishing {
-        |        singleVariant("release") { withSourcesJar() }
-        |        singleVariant("debug") { withSourcesJar() }
+        |${variants.joinToString("\n") { "        singleVariant(\"$it\") { ${if (it in withoutSources) "" else "withSourcesJar()"} }" }}
         |    }
         |}
         """.trimMargin(),
@@ -261,7 +319,7 @@ internal open class KmpLibrary(fixture: Fixture, name: String) : AndroidModule(f
 
     protected open fun publishingBlocks() = listOf(stockPublishing())
 
-    override fun platform(notation: String) = "project.dependencies.platform($notation)"
+    override fun platform(notation: String, enforced: Boolean) = "project.dependencies.${super.platform(notation, enforced)}"
 
     override fun scriptBlocks() = listOf(
         pluginsBlock(listOf("id(\"org.jetbrains.kotlin.multiplatform\")", "id(\"com.android.kotlin.multiplatform.library\")") + extraPlugins + "`maven-publish`"),
@@ -297,12 +355,29 @@ internal open class KmpLibrary(fixture: Fixture, name: String) : AndroidModule(f
 }
 
 /** A `java-library` module. */
-internal class JavaLibrary(fixture: Fixture, name: String) : Module(fixture, name) {
+internal class JavaLibrary(fixture: Fixture, name: String) : DependentModule(fixture, name) {
 
     override val stockPublishTasks get() = listOf("$path:publishStockPublicationToStockRepository")
 
     init {
         calls += "$namespace.$defaultClass()"
+    }
+
+    /** Adds a class to the test fixtures of this module, which `testFixtures(project(...))` reaches. */
+    fun testFixture(name: String) {
+        buildScript("apply(plugin = \"java-test-fixtures\")")
+        file("src/testFixtures/java/$packageDir/$name.java", "package $namespace;\n\npublic class $name {}\n")
+    }
+
+    /** Adds a source set [name] published as a feature variant, with [name] as its capability suffix. */
+    fun feature(name: String, className: String) {
+        buildScript(
+            """
+            sourceSets.create("$name")
+            java { registerFeature("$name") { usingSourceSet(sourceSets["$name"]); withSourcesJar() } }
+            """,
+        )
+        file("src/$name/java/$packageDir/$className.java", "package $namespace;\n\npublic class $className {}\n")
     }
 
     override fun scriptBlocks() = listOf(
@@ -325,21 +400,68 @@ internal class JavaLibrary(fixture: Fixture, name: String) : Module(fixture, nam
     )
 }
 
+/** A `kotlin("multiplatform")` module whose only product is a JVM target named [target]. */
+internal class KotlinJvmLibrary(fixture: Fixture, name: String, private val target: String) : Module(fixture, name) {
+
+    override val stockPublishTasks get() = emptyList<String>()
+
+    init {
+        calls += "$namespace.$defaultClass()"
+    }
+
+    override fun scriptBlocks() = listOf(
+        pluginsBlock(listOf("id(\"org.jetbrains.kotlin.multiplatform\")")),
+        coordinatesBlock(),
+        "kotlin {\n    jvm(\"$target\")\n}",
+    )
+
+    override fun generatedFiles() = mapOf("src/${target}Main/kotlin/$packageDir/$defaultClass.kt" to "package $namespace\n\nclass $defaultClass\n")
+}
+
+/** A `kotlin("multiplatform")` module for iOS alone, so nothing in it runs on Android. */
+internal class IosLibrary(fixture: Fixture, name: String) : Module(fixture, name) {
+
+    override val stockPublishTasks get() = emptyList<String>()
+
+    override fun scriptBlocks() = listOf(
+        pluginsBlock(listOf("id(\"org.jetbrains.kotlin.multiplatform\")")),
+        coordinatesBlock(),
+        "kotlin {\n    iosArm64()\n    iosSimulatorArm64()\n}",
+    )
+
+    override fun generatedFiles() = mapOf("src/commonMain/kotlin/$packageDir/$defaultClass.kt" to "package $namespace\n\nclass $defaultClass\n")
+}
+
+/** A project without plugins, which Gradle offers no variant of. */
+internal class Container(fixture: Fixture, name: String) : Module(fixture, name) {
+
+    override val stockPublishTasks get() = emptyList<String>()
+
+    override fun scriptBlocks() = emptyList<String>()
+}
+
 /** A `java-platform` module, which has no code and exists to constrain versions. */
 internal class JavaPlatform(fixture: Fixture, name: String) : Module(fixture, name) {
 
     override val stockPublishTasks get() = listOf("$path:publishStockPublicationToStockRepository")
 
     private val constraints = mutableListOf<String>()
+    private val ownDependencies = mutableListOf<String>()
 
     fun constraint(coordinates: String) {
         constraints += "        api(\"$coordinates\")"
     }
 
+    /** A dependency of the platform itself, not a constraint on someone else's. */
+    fun dependency(coordinates: String) {
+        ownDependencies += "    api(\"$coordinates\")"
+    }
+
     override fun scriptBlocks() = listOf(
         pluginsBlock(listOf("`java-platform`", "`maven-publish`")),
         coordinatesBlock(),
-        constraints.joinToString("\n", prefix = "dependencies {\n    constraints {\n", postfix = "\n    }\n}"),
+        "javaPlatform { allowDependencies() }",
+        (ownDependencies + constraints.joinToString("\n", prefix = "    constraints {\n", postfix = "\n    }")).joinToString("\n", prefix = "dependencies {\n", postfix = "\n}"),
         stockPublishing(component = "javaPlatform"),
     )
 }
@@ -367,6 +489,18 @@ internal sealed interface Umbrella {
         exports += modules
     }
 
+    /** Has an Apple framework export [modules], and the umbrella follow it with `includeFrameworkExports`. */
+    fun frameworkExports(vararg modules: Module) {
+        val paths = modules.map { "\"${it.path}\"" }
+        (this as Module).buildScript(
+            """
+            umbrellaAar { includeFrameworkExports = true }
+            kotlin { iosArm64 { binaries.framework { ${paths.joinToString("; ") { "export(project($it))" }} } } }
+            dependencies { ${paths.joinToString("; ") { "\"iosArm64MainApi\"(project($it))" }} }
+            """,
+        )
+    }
+
     /** The task behind [bundle], for a test that expects it to fail or wants its log. */
     fun bundleTask(variant: String = "release") = "$path:bundle${variant.capitalized()}UmbrellaAar"
 
@@ -374,14 +508,23 @@ internal sealed interface Umbrella {
     fun publishTask(variant: String = "release") = "$path:publishAndroid${variant.capitalized()}UmbrellaAarPublicationToUmbrellaRepository"
 
     /** Bundles [variant] without publishing it. */
-    fun bundle(variant: String = "release"): Aar {
-        fixture.gradle(bundleTask(variant))
-        return Aar(fixture.projectDir.resolve("$name/build/outputs/umbrellaaar/$name-$variant.aar"))
+    fun bundle(variant: String = "release", vararg arguments: String): Aar {
+        fixture.gradle(bundleTask(variant), *arguments)
+        return bundled(variant)
+    }
+
+    /** What the last build left as the AAR of [variant]. */
+    fun bundled(variant: String = "release") = Aar(fixture.projectDir.resolve("$name/build/outputs/umbrellaaar/$name-$variant.aar"))
+
+    /** Merges the sources of [variant] and lists the jar's entries. */
+    fun mergedSources(variant: String = "release", vararg arguments: String): Set<String> {
+        fixture.gradle("$path:merge${variant.capitalized()}UmbrellaAarSources", *arguments)
+        return zipEntries(fixture.projectDir.resolve("$name/build/outputs/umbrellaaar/$name-$variant-sources.jar"))
     }
 
     /** Publishes [variant] to [Fixture.umbrellaRepo] with its own task, the safe way the README asks for. */
-    fun publish(variant: String = "release"): Published {
-        fixture.gradle(publishTask(variant))
+    fun publish(variant: String = "release", vararg arguments: String): Published {
+        fixture.gradle(publishTask(variant), *arguments)
         return published()
     }
 
@@ -418,7 +561,7 @@ internal class AndroidUmbrella(fixture: Fixture, name: String) :
     override fun publishingBlocks() = listOf(
         exportBlock(),
         umbrellaPublishing(),
-        "if (providers.gradleProperty(\"stock\").isPresent) {\n${stockPublishing(component = "release").prependIndent("    ")}\n}",
+        "if (providers.gradleProperty(\"stock\").isPresent) {\n${stockPublishing(component = stockComponent).prependIndent("    ")}\n}",
     )
 
     override fun pipeline(variant: String) = variant

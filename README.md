@@ -50,11 +50,9 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 | `com.android.library` | one per declared build type (`release`, `debug`, …) | one per build type |
 | `com.android.kotlin.multiplatform.library` | `release` + `debug` (aliases — the plugin is single-variant) | **one shared** `androidMain` pipeline |
 
-A `com.android.kotlin.multiplatform.library` umbrella can merge plain `com.android.library` modules,
-but not the other way round. A `com.android.library` umbrella exporting a
-`com.android.kotlin.multiplatform.library` module fails with `UmbrellaAar cannot find an archive
-task`. If that module has a `jvm()` target the build succeeds, but silently merges its `jvmJar`
-instead of its Android code.
+The two mix in both directions. Either umbrella can merge `com.android.library` and
+`com.android.kotlin.multiplatform.library` modules, and a module with an Android target always
+contributes its Android code and resources, even when it also has a `jvm()` target.
 
 ## Quick Start
 
@@ -238,20 +236,39 @@ pluginManagement {
    }
    ```
 
-   The plugin will only merge these local modules, ignoring any external libraries like `com.example:some-aar:1.0.0`.
+   `export(...)` takes local modules and platforms. An external library like
+   `com.example:some-aar:1.0.0` fails the build, because it would not be merged: declare it with
+   `api(...)` or `implementation(...)` to publish it. So does `files(...)`, and a project asked for a
+   capability, a configuration or attributes, or with `isTransitive = false`, none of which the
+   umbrella could ship as written.
 
    **Which modules are merged?** Gradle's own dependency resolution decides. Starting from the
    declared modules, the plugin resolves them with the umbrella module's Android runtime
    attributes, so every module contributes exactly what it would contribute to an Android app: the
    `api`, `implementation` and `runtimeOnly` dependencies of its Android runtime variant, including
    everything `commonMain` and custom intermediate source sets feed into it. When a module has no
-   Android target, its `jvm()` variant is used instead (it is merged through `jvmJar`). Test scopes,
+   Android target, its `jvm()` variant is used instead (it is merged through that target's jar). Test scopes,
    `compileOnly`, metadata and internal build-graph configurations never take part, and the umbrella
    module itself can never end up inside its own graph.
 
+   Each module's AAR and sources jar come from the variant Gradle selected, so `matchingFallbacks`
+   and flavor selection apply to the umbrella as they do to any other consumer, and classes and
+   sources never come from different variants. A variant with no archive under its name fails the
+   build rather than shipping another one. So does a module reached through two variants, as any
+   `testFixtures(project(...))` is, since an AAR can only hold one.
+
+   **What you export ships, or the build fails.** A module declared with `export(...)` that Gradle
+   cannot resolve fails the build before any task runs, naming the module, how it was reached and
+   Gradle's reason. So does anything below it that does not resolve, and two local modules sharing a
+   `group:name`, of which Gradle keeps one. Use `exclude(...)` to leave one out on purpose.
+
    The external dependencies written to the POM come from the same resolution, so their versions
    honour dependency constraints, platforms and resolution rules exactly as when the modules are
-   built.
+   built. `platform(...)` and `enforcedPlatform(...)` dependencies only pin those versions: they are
+   neither merged nor written to the POM, local `java-platform` projects included. A transitive
+   module they moved is written as a direct dependency, because consumers would otherwise get the
+   version the library asked for. Gradle consumers still pick the highest version they see, so a pin
+   below that does not carry over.
 
    > Set `umbrellaaar.legacyGraph=true` in `gradle.properties` to fall back to the `3.0` graph walk,
    > which reads each module's configurations by name. It is kept so large builds can diff
@@ -271,7 +288,8 @@ pluginManagement {
    }
    ```
 
-   `export(...)` dependencies keep working alongside it.
+   `export(...)` dependencies keep working alongside it. A framework can export a module with no
+   Android or JVM target, which is left out of the AAR with a build warning naming it.
 
 2. **Publishing Configuration (UmbrellaAarPom)**
 
@@ -419,6 +437,9 @@ pluginManagement {
   `exclude(...)`, or one the umbrella module depends on without exporting it, is not in the AAR and
   not in its POM. Both cases are reported in a build warning: if the merged code needs them at
   runtime, publish them separately and have consumers depend on them.
+- **A platform's own dependencies are not followed.** A `java-platform` with `allowDependencies()`
+  can bring libraries along. The umbrella skips platforms, so those are neither merged nor in its
+  POM. Declare them directly on a merged module.
 - **`compileOnly` dependencies are not written to the POM** either: every coordinate in the
   generated POM carries `<scope>compile</scope>`, so publishing them would hand consumers, at
   runtime, exactly the dependencies you marked as non-transitive.
@@ -426,7 +447,11 @@ pluginManagement {
   AAR and sources jar are still taken from its `bundle<Variant>Aar` / sources-jar task, which means
   reading sibling projects' tasks. AGP does not hand the published AAR to other modules through
   dependency resolution — only a lint-specific copy that also carries the module's `R` classes.
-- **Product flavors are not supported**, neither on the umbrella module nor on merged modules.
+- **Product flavors of a merged module have to be selected.** Declare the selection as you would for
+  any other consumer: `missingDimensionStrategy` on a `com.android.library` umbrella,
+  `localDependencySelection` on a `com.android.kotlin.multiplatform.library` one. Without it the
+  build fails naming the module. `umbrellaaar.legacyGraph=true` cannot select a flavor, and product
+  flavors on the umbrella module itself are not supported.
 - **The generated POM reflects dependencies as declared at execution time.** The Kotlin plugin adds
   some dependencies lazily — `kotlin-stdlib` appears in every KMP project's `commonMainApi` only
   once a JVM-target project has been configured, for example — so a POM generated in a task graph
@@ -470,8 +495,9 @@ pluginManagement {
   best-effort (false positives only cost a no-op rewrite).
 - **Mixed-plugin umbrellas and the `debug` publication.** `com.android.kotlin.multiplatform.library`
   has no build types, so the umbrella's own AAR is the same `androidMain` artifact for both
-  publications. Exported plain `com.android.library` modules are therefore also taken from their
-  **release** AAR for both. Publish only `release` if that distinction matters to you.
+  publications. Exported plain `com.android.library` modules are therefore also taken from one AAR
+  for both, **release** unless `localDependencySelection` selects another build type. Publish only
+  `release` if that distinction matters to you.
 - **Merged sources need a sources jar in the umbrella module and every merged module.** Without one,
   `android<Variant>UmbrellaAarSourcesJar` fails with `Cannot query the value of this provider because
   it has no value available`. Publications include the merged sources, so publishing stops too.
@@ -600,7 +626,7 @@ android {
 }
 ```
 
-A `com.android.kotlin.multiplatform.library` umbrella takes plain `com.android.library` modules from their `release` variant for both publications, so those modules only need `release`.
+A `com.android.kotlin.multiplatform.library` umbrella takes plain `com.android.library` modules from their `release` variant for both publications, unless `localDependencySelection` selects another build type, so those modules only need `release`.
 
 A `java-library` module needs `java { withSourcesJar() }`.
 

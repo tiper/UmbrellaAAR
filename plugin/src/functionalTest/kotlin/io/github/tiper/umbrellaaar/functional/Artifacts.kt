@@ -10,6 +10,8 @@ import java.util.zip.ZipInputStream
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
 
+internal fun zipEntries(file: File): Set<String> = ZipFile(file).use { zip -> zip.entries().asSequence().map { it.name }.toSet() }
+
 private fun ZipFile.textOf(name: String): String? = getEntry(name)?.let { entry -> getInputStream(entry).use { it.readBytes().decodeToString() } }
 
 private fun Element.child(name: String): Element? = childElements(name).firstOrNull()
@@ -27,7 +29,7 @@ private fun parseXml(text: String): Element = DocumentBuilderFactory.newInstance
 /** An `.aar` on disk, read the way AGP reads it. */
 internal class Aar(val file: File) {
 
-    val entries: Set<String> = ZipFile(file).use { zip -> zip.entries().asSequence().map { it.name }.toSet() }
+    val entries: Set<String> = zipEntries(file)
 
     /** Dotted names of every class in `classes.jar`. */
     val classes: Set<String> by lazy {
@@ -158,6 +160,8 @@ internal class Published(private val dir: File, private val baseName: String) {
     val moduleMetadata: ModuleMetadata get() = ModuleMetadata(dir.resolve("$baseName.module"))
 
     val sourcesJar: File get() = dir.resolve("$baseName-sources.jar")
+
+    val sources: Set<String> get() = zipEntries(sourcesJar)
 }
 
 /**

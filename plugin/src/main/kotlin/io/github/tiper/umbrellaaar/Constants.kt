@@ -9,3 +9,6 @@ internal const val EXTERNAL_DEPENDENCIES_FILE = "external-dependencies.txt"
 internal const val MERGED_MODULES_FILE = "merged-modules.txt"
 
 internal const val GROUP = "umbrellaaar"
+
+/** The only variant of `com.android.kotlin.multiplatform.library`, as its tasks spell it. */
+internal const val KMP_PIPELINE_KEY = "androidMain"

@@ -27,4 +27,23 @@ class ParityTest {
         assertTrue("release APK entry only in stock: assets/left_out.txt" in differences, differences.toString())
         consumerOf(umbrella, "broken-consumer") { uses("com.acme.leftout.LeftOut()") }.assembleFails().assertLogged("Unresolved reference")
     }
+
+    /** Stock publishes the first flavor, so an umbrella selecting the other gets the same name with another value. */
+    @Test
+    fun `parity notices a resource with another value`() = fixture {
+        val flavored = androidLibrary("flavored") {
+            flavors("tier", "paid", "free")
+            listOf("paid", "free").forEach { flavor ->
+                file("src/$flavor/res/values/label.xml", "<resources>\n    <string name=\"tier_label\">$flavor label</string>\n</resources>\n")
+            }
+        }
+        val umbrella = androidUmbrella {
+            buildScript("android { defaultConfig { missingDimensionStrategy(\"tier\", \"free\") } }")
+            export(flavored)
+        }
+
+        val differences = parity(umbrella).differences
+
+        assertTrue(differences.any { "release resource string/tier_label is" in it && "free label" in it && "paid label" in it }, differences.toString())
+    }
 }

@@ -133,7 +133,7 @@ internal fun Project.frameworkExports(): List<String> {
         .distinct()
 }
 
-private fun Project.hasAndroidPlugin(): Boolean = plugins.hasPlugin("com.android.library") ||
+internal fun Project.hasAndroidPlugin(): Boolean = plugins.hasPlugin("com.android.library") ||
     plugins.hasPlugin("com.android.kotlin.multiplatform.library") ||
     plugins.hasPlugin("com.android.application")
 
