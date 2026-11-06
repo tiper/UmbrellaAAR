@@ -2,11 +2,15 @@ package io.github.tiper.umbrellaaar.extensions
 
 import com.android.build.api.attributes.BuildTypeAttr
 import com.android.build.api.attributes.BuildTypeAttr.Companion.ATTRIBUTE
+import io.github.tiper.umbrellaaar.UMBRELLA_AAR_CONFIG
+import io.github.tiper.umbrellaaar.UMBRELLA_AAR_PLUGIN
 import io.github.tiper.umbrellaaar.pom.configureKotlinPlatformAttribute
+import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.ExcludeRule
+import org.gradle.api.artifacts.FileCollectionDependency
 import org.gradle.api.artifacts.ModuleDependency
 import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
@@ -30,9 +34,9 @@ import org.gradle.kotlin.dsl.withType
  * @param via `project path -> "<owner path> -> <configuration name>"`, i.e. the edge that first
  *   reached the project. Used for reporting and diagnostics.
  * @param selfInclusionVia set when the host project was reached from its own graph.
- * @param compileOnlyOnly projects reachable *only* through `compileOnly`. They are deliberately not
- *   merged — `compileOnly` means "provided by the consumer" — but the previous deny-list traversal
- *   did merge them, so they are reported rather than silently dropped.
+ * @param compileOnlyOnly projects reachable *only* through `compileOnly`, with the edge that reached
+ *   them. They are deliberately not merged — `compileOnly` means "provided by the consumer" — but the
+ *   previous deny-list traversal did merge them, so they are reported rather than silently dropped.
  * @param variantOf `project path -> the variant Gradle selected in it`, for example
  *   `paidReleaseRuntimeElements`. Empty on the legacy graph, which resolves nothing.
  */
@@ -100,6 +104,7 @@ internal fun Project.resolveProjectGraph(config: Configuration, buildType: Strin
     }
 
     val selfInclusionVia = via[host.path].takeIf { result.remove(host) }
+    checkNestedUmbrellas(result, config.allExcludeRules())
     return ProjectGraph(
         modules = result,
         via = via - host.path,
@@ -107,6 +112,41 @@ internal fun Project.resolveProjectGraph(config: Configuration, buildType: Strin
         compileOnlyOnly = compileOnlyOnly.filterKeys { path -> result.none { it.path == path } && path != host.path },
     )
 }
+
+/**
+ * Fails on anything an umbrella among [modules] exports that this one would leave behind: an export
+ * is no dependency of the module declaring it, so only that module's own classes come along. What
+ * is excluded here is out on purpose. It takes the other umbrella's declarations to tell, and not
+ * its graph, which would add a resolution for each one.
+ */
+internal fun Project.checkNestedUmbrellas(modules: Set<Project>, rules: List<ExcludeRule>) {
+    val lost = modules.filterNot { it.isExcluded(rules) }
+        .associateWith { inner -> inner.umbrellaExports().filterNot { it == this || it in modules || it.isExcluded(rules) } }
+        .filterValues { it.isNotEmpty() }
+    if (lost.isEmpty()) return
+    throw GradleException(
+        "[UmbrellaAar] $path merges ${lost.keys.joinToString { it.path }}, whose exports do not come along with it:\n" +
+            lost.flatMap { (inner, exports) -> exports.map { "  - ${it.path} (exported by ${inner.path})\n" } }.joinToString("") +
+            "  Export them from $path too, or exclude them there to leave them out.",
+    )
+}
+
+/**
+ * What [this] merges by exporting it, should it be an umbrella. A framework export can be a module
+ * with nothing to merge, see [FRAMEWORK_EXPORT].
+ */
+internal fun Project.umbrellaExports(): List<Project> {
+    if (!plugins.hasPlugin(UMBRELLA_AAR_PLUGIN)) return emptyList()
+    val export = configurations.getByName(UMBRELLA_AAR_CONFIG)
+    val rules = export.allExcludeRules()
+    return export.dependencies.filterIsInstance<ProjectDependency>().filterNot { it.isPlatform }.mapNotNull { dependency ->
+        findProject(dependency.path)?.also { it.ensureEvaluated() }?.takeUnless {
+            it.isExcluded(rules) || (dependency.reason == FRAMEWORK_EXPORT && !it.hasRuntimeVariant())
+        }
+    }
+}
+
+private fun Project.hasRuntimeVariant() = configurations.any { it.isCanBeConsumed && it.name.endsWith(RUNTIME_ELEMENTS, ignoreCase = true) }
 
 /**
  * The graph is walked lazily, so it may be evaluated at different points depending on the task
@@ -117,10 +157,33 @@ internal fun Project.resolveProjectGraph(config: Configuration, buildType: Strin
 private fun Project.ensureEvaluated() {
     if (state.executed) return
     runCatching { rootProject.evaluationDependsOn(path) }.onFailure {
-        logger.warn(
-            "[UmbrellaAar] Could not force evaluation of $path — the merged module graph may be incomplete: ${it.message}",
+        throw GradleException(
+            "[UmbrellaAar] Could not evaluate $path, so what the umbrella merges through it is unknown: ${it.message}\n" +
+                "  Fix what stops it from configuring. If that is a circular reference, do not resolve the umbrella while projects are still being configured.",
+            it,
         )
     }
+}
+
+/** What the umbrella module and [modules] declare on anything but a local module, on the legacy graph. */
+internal fun Project.declaredExternals(modules: Collection<Project>, buildType: String): List<Dependency> = (listOf(this) + modules).flatMap { project ->
+    val allowed = project.productConfigurationNames(buildType, PRODUCT_SCOPES)
+    project.configurations.filter { !it.isCanBeResolved && !it.isCanBeConsumed && it.name in allowed }
+}.flatMap { configuration ->
+    // A local platform stays: versionless declarations get their version from it.
+    configuration.dependencies.filterNot { it is ProjectDependency && !it.isPlatform }
+}
+
+/**
+ * The files [this] declares on the side that ships, relative to it. [variant] is what Gradle selected
+ * in it, which the legacy graph does not know.
+ */
+internal fun Project.fileDependencies(variant: String?, buildType: String): List<String> {
+    val declaring = variant?.let { configurations.getByName(it).hierarchy } ?: productConfigurationNames(buildType).mapNotNull(configurations::findByName)
+    return declaring.flatMap { it.dependencies.filterIsInstance<FileCollectionDependency>() }
+        .flatMap { it.files.files }
+        .map { it.relativeToOrSelf(projectDir).invariantSeparatorsPath }
+        .distinct()
 }
 
 internal fun Project.createAndroidResolutionConfig(buildType: String): Configuration = configurations.detachedConfiguration().apply {

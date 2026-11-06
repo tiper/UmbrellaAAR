@@ -122,10 +122,6 @@ abstract class ExtractDependencies : DefaultTask() {
         }
         baseDir.mkdirs()
 
-        if (archives.isEmpty()) {
-            logger.warn("No dependencies to extract")
-        }
-
         val queue = workers.noIsolation()
         toExtract.forEach { file ->
             queue.submit(ExtractArchive::class.java) {

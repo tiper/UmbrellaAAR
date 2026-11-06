@@ -2,7 +2,6 @@ package io.github.tiper.umbrellaaar
 
 import com.android.build.api.dsl.LibraryExtension
 import io.github.tiper.umbrellaaar.extensions.COMPILE_SCOPE
-import io.github.tiper.umbrellaaar.extensions.PRODUCT_SCOPES
 import io.github.tiper.umbrellaaar.extensions.UmbrellaResolution
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.matches
@@ -13,13 +12,16 @@ import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.cleanPlatformSuffixes
 import io.github.tiper.umbrellaaar.extensions.createAndroidResolutionConfig
 import io.github.tiper.umbrellaaar.extensions.createKmpResolutionConfig
+import io.github.tiper.umbrellaaar.extensions.declaredExternals
 import io.github.tiper.umbrellaaar.extensions.exclude
+import io.github.tiper.umbrellaaar.extensions.hasAndroidLibraryPlugin
 import io.github.tiper.umbrellaaar.extensions.isExcluded
 import io.github.tiper.umbrellaaar.extensions.isPlatform
 import io.github.tiper.umbrellaaar.extensions.localProject
-import io.github.tiper.umbrellaaar.extensions.productConfigurationNames
 import io.github.tiper.umbrellaaar.extensions.publishedCoordinates
 import io.github.tiper.umbrellaaar.extensions.resolveProjectGraph
+import io.github.tiper.umbrellaaar.extensions.rulesInUse
+import io.github.tiper.umbrellaaar.extensions.warnOnce
 import io.github.tiper.umbrellaaar.pom.Collector
 import io.github.tiper.umbrellaaar.pom.Collector.Dependency
 import io.github.tiper.umbrellaaar.pom.Collector.Exclusion
@@ -34,7 +36,6 @@ import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.DependencyConstraint
 import org.gradle.api.artifacts.ExcludeRule
 import org.gradle.api.artifacts.ModuleDependency
-import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
@@ -93,7 +94,9 @@ abstract class UmbrellaAarPom @Inject constructor(
         }
 
         tasks.named("bundle${variantCapitalized}UmbrellaAar").configure {
-            dependsOn(collectDeps)
+            // Through the provider, so what it refuses fails the task graph, like all that fails before
+            // a task runs, and not as the configuration cache or the collect task gets to it.
+            dependsOn(publishedProvider.map { collectDeps })
         }
 
         plugins.withType<MavenPublishPlugin> {
@@ -201,38 +204,22 @@ abstract class UmbrellaAarPom @Inject constructor(
         buildType: String,
         modules: Set<Project>,
         excludeRules: List<ExcludeRule>,
+        rulesApplied: Int,
         resolutionConfigFactory: () -> Configuration,
     ): List<Dependency> {
         // `compileOnly` is deliberately *not* collected: every coordinate written here gets
         // `<scope>compile</scope>`, so publishing compileOnly dependencies would hand consumers, at
         // runtime, exactly the dependencies the author marked as non-transitive.
-        val declaredDependencies = (setOf(this) + modules).asSequence()
-            .flatMap { project ->
-                val allowed = project.productConfigurationNames(buildType, PRODUCT_SCOPES)
-                project.configurations.asSequence().filter { !it.isCanBeResolved && !it.isCanBeConsumed && it.name in allowed }
-            }
-            .flatMap { conf ->
-                runCatching {
-                    // A local platform stays: versionless declarations get their version from it.
-                    conf.dependencies
-                        .filterNot { it is ProjectDependency && !it.isPlatform }
-                        .filterNot { it.isExcluded(excludeRules) }
-                }.getOrElse {
-                    logger.debug("[UmbrellaAarPom] Could not process configuration ${conf.name}: ${it.message}")
-                    emptyList()
-                }
-            }
+        val declaredDependencies = declaredExternals(modules, buildType)
+            .filterNot { it.isExcluded(excludeRules) }
             .associateBy { "${it.group}:${it.name}" }
 
-        logger.lifecycle(
-            "[UmbrellaAarPom] Collected ${declaredDependencies.size} dependencies from ${modules.size + 1} modules" +
-                if (excludeRules.isNotEmpty()) " (${excludeRules.size} exclusion rules applied)" else "",
-        )
+        logger.lifecycle("[UmbrellaAarPom] Collected ${declaredDependencies.size} dependencies from ${modules.size + 1} modules${rulesApplied.asSuffix()}")
 
         val resolved = resolveWithAndroidAttributes(declaredDependencies.values, excludeRules, resolutionConfigFactory)
         val collector = Collector()
         resolved.forEach(collector::add)
-        reportConflicts(collector)
+        reportConflicts(collector) { _, _ -> emptySet() }
 
         val kept = declaredDependencies.keys - resolved.map { "${it.group}:${it.name}" }.toSet()
         if (kept.isNotEmpty()) {
@@ -345,6 +332,7 @@ abstract class UmbrellaAarPom @Inject constructor(
                         buildType = buildType,
                         modules = graph.modules.filterNot { it.isExcluded(rules) }.toSet(),
                         excludeRules = rules,
+                        rulesApplied = rulesInUse(rules, graph, null, buildType).size,
                         resolutionConfigFactory = resolutionConfigFactory,
                     ),
                 )
@@ -354,6 +342,7 @@ abstract class UmbrellaAarPom @Inject constructor(
                     resolution = resolution,
                     modules = resolution.graph.modules.filterNot { it.isExcluded(rules) },
                     excludeRules = rules,
+                    rulesApplied = rulesInUse(rules, resolution.graph, resolution, buildType).size,
                 )
             }
         }
@@ -372,55 +361,84 @@ abstract class UmbrellaAarPom @Inject constructor(
         resolution: UmbrellaResolution,
         modules: Collection<Project>,
         excludeRules: List<ExcludeRule>,
+        rulesApplied: Int,
     ): Published {
         fun isExcluded(group: String?, name: String) = excludeRules.any { it.matches(group, name) }
 
         val owners = listOf(path) + modules.map { it.path }
         val declared = owners.associateWith { owner -> resolution.externalsOf[owner].orEmpty().filterNot { isExcluded(it.group, it.name) } }
-        checkVersions(declared)
+        checkCoordinates(declared)
+        warnOnAttributes(owners.associateWith { owner -> resolution.attributedOf[owner].orEmpty().filterNot { isExcluded(it.substringBefore(':'), it.substringAfter(':')) } })
 
         val androidxMap = androidxArtifactMap(resolution.moduleIds)
         val collector = Collector()
-        val entries = declared.values.flatten()
+        val entries = declared.mapValues { (_, dependencies) -> dependencies.map { resolveToAndroidx(it, androidxMap) } }
         // A declaration is at the selected version already, and a plain entry next to one that names
         // an artifact or a capability would ship that module a second time.
-        val named = entries.mapTo(hashSetOf()) { "${it.group}:${it.name}" }
+        val named = declared.values.flatten().mapTo(hashSetOf()) { "${it.group}:${it.name}" }
         val pins = resolution.pinned.filterNot { isExcluded(it.group, it.name) || "${it.group}:${it.name}" in named }
-        (entries + pins).forEach { collector.add(resolveToAndroidx(it, androidxMap)) }
-        reportConflicts(collector)
+        (entries.values.flatten() + pins.map { resolveToAndroidx(it, androidxMap) }).forEach(collector::add)
+        reportConflicts(collector) { key, version ->
+            entries.filterValues { dependencies -> dependencies.any { "${it.group}:${it.name}" == key && it.version == version } }.keys
+        }
 
         val local = rootProject.allprojects.mapTo(hashSetOf()) { "${it.group}:${it.name}" }
         val constraints = owners.flatMap { resolution.constraintsOf[it].orEmpty() }
             .filterNot { isExcluded(it.group, it.name) || "${it.group}:${it.name}" in local }
             .distinctBy { Triple(it.group, it.name, it.versionConstraint) }
 
-        logger.lifecycle(
-            "[UmbrellaAarPom] POM will include ${collector.getStatistics().totalCount} dependencies from ${modules.size + 1} modules" +
-                if (excludeRules.isNotEmpty()) " (${excludeRules.size} exclusion rules applied)" else "",
-        )
+        logger.lifecycle("[UmbrellaAarPom] POM will include ${collector.getStatistics().totalCount} dependencies from ${modules.size + 1} modules${rulesApplied.asSuffix()}")
         return Published(collector.getDependencies(), constraints)
     }
 
-    /** A project of an included build can have no version, and a consumer cannot resolve that. */
-    private fun Project.checkVersions(declared: Map<String, List<Dependency>>) {
-        val unversioned = declared.flatMap { (owner, dependencies) ->
-            dependencies.filter { it.version.isEmpty() || it.version == Project.DEFAULT_VERSION }.map { "${it.group}:${it.name} (declared by $owner)" }
-        }.distinct()
-        if (unversioned.isEmpty()) return
+    private fun Int.asSuffix() = if (this > 0) " ($this exclusion rules applied)" else ""
+
+    /** A consumer cannot resolve a project of an included build with no version, or a file in a flatDir. */
+    private fun Project.checkCoordinates(declared: Map<String, List<Dependency>>) {
+        fun lines(line: (Dependency) -> String?) = declared.flatMap { (owner, dependencies) -> dependencies.mapNotNull(line).map { "$it (declared by $owner)" } }.distinct()
+
+        val ungrouped = lines { dependency -> dependency.name.takeIf { dependency.group.isEmpty() } }
+        val unversioned = lines { dependency -> "${dependency.group}:${dependency.name}".takeIf { dependency.group.isNotEmpty() && (dependency.version.isEmpty() || dependency.version == Project.DEFAULT_VERSION) } }
+        if (ungrouped.isEmpty() && unversioned.isEmpty()) return
         throw GradleException(
             buildString {
-                appendLine("[UmbrellaAarPom] $path would publish dependencies that have no version, so no consumer could resolve them:")
-                unversioned.forEach { appendLine("  $it") }
-                append("  Declare a version on each of them, or give the project in the included build that provides it one.")
+                if (ungrouped.isNotEmpty()) {
+                    appendLine("[UmbrellaAarPom] $path would publish dependencies that have no group, so no consumer could resolve them:")
+                    ungrouped.forEach { appendLine("  $it") }
+                    appendLine("  A file in a flatDir has no coordinates. Publish it to a repository and depend on that.")
+                }
+                if (unversioned.isNotEmpty()) {
+                    appendLine("[UmbrellaAarPom] $path would publish dependencies that have no version, so no consumer could resolve them:")
+                    unversioned.forEach { appendLine("  $it") }
+                    appendLine("  Declare a version on each of them, or give the project in the included build that provides it one.")
+                }
+            }.trimEnd(),
+        )
+    }
+
+    /** Nothing a published dependency says can select a variant, so a consumer picks its own. */
+    private fun Project.warnOnAttributes(attributed: Map<String, List<String>>) {
+        val lines = attributed.flatMap { (owner, dependencies) -> dependencies.map { "$it (declared by $owner)" } }.distinct()
+        if (lines.isEmpty()) return
+        warnOnce(
+            buildString {
+                appendLine("[UmbrellaAarPom] $path publishes these dependencies without the attributes they ask for, so consumers get the variant their own attributes select:")
+                lines.forEach { appendLine("  $it") }
+                append("  Ask for those attributes in the consumers that need that variant, or depend on a library that has only that one.")
             },
         )
     }
 
-    private fun Project.reportConflicts(collector: Collector) = collector.getConflicts().takeIf { it.isNotEmpty() }?.let { conflicts ->
-        logger.warn(
+    /** [owners] says who declares a version of a dependency, which the legacy graph no longer knows. */
+    private fun Project.reportConflicts(collector: Collector, owners: (String, String) -> Set<String>) = collector.getConflicts().takeIf { it.isNotEmpty() }?.let { conflicts ->
+        fun Set<String>.declaring() = if (isEmpty()) "" else " (declared by ${joinToString()})"
+
+        warnOnce(
             buildString {
-                appendLine("[UmbrellaAarPom] ${conflicts.size} dependency version disagreement(s); the first resolved version was published:")
-                conflicts.entries.sortedBy { it.key }.forEach { (key, versions) -> appendLine("  $key -> ${versions.sorted().joinToString()}") }
+                appendLine("[UmbrellaAarPom] ${conflicts.size} dependency version disagreement(s) in $path; the first resolved version was published:")
+                conflicts.entries.sortedBy { it.key }.forEach { (key, versions) ->
+                    appendLine("  $key -> ${versions.sorted().joinToString { version -> version + owners(key, version).declaring() }}")
+                }
                 append("  Align them with a version catalog or dependency constraints if this is unexpected.")
             }.trimEnd(),
         )
@@ -470,7 +488,7 @@ abstract class UmbrellaAarPom @Inject constructor(
     }
 
     override fun apply(target: Project) = with(target) {
-        plugins.withId("io.github.tiper.umbrellaaar") {
+        plugins.withId(UMBRELLA_AAR_PLUGIN) {
             val config = configurations.findByName(UMBRELLA_AAR_CONFIG) ?: return@withId
 
             plugins.withId("com.android.library") {
@@ -500,6 +518,24 @@ abstract class UmbrellaAarPom @Inject constructor(
                 // while `afterEvaluate` is running are appended to the same pass.
                 afterEvaluate { afterEvaluate { warnOnCoordinateClashes() } }
             }
+        }
+
+        // Once every project is configured, as UmbrellaAar does.
+        gradle.projectsEvaluated { warnIfNothingToPublish() }
+    }
+
+    /** A module no umbrella fits is UmbrellaAar's to report, and maven-publish would not help it. */
+    private fun Project.warnIfNothingToPublish() {
+        if (!plugins.hasPlugin(UMBRELLA_AAR_PLUGIN)) {
+            warnOnce(
+                "[UmbrellaAarPom] $path applies $UMBRELLA_AAR_POM_PLUGIN without $UMBRELLA_AAR_PLUGIN, so there is no umbrella here to publish.\n" +
+                    "  Apply $UMBRELLA_AAR_PLUGIN to this module, or remove this plugin from it.",
+            )
+        } else if (hasAndroidLibraryPlugin() && !plugins.hasPlugin("maven-publish")) {
+            warnOnce(
+                "[UmbrellaAarPom] $path applies $UMBRELLA_AAR_POM_PLUGIN without maven-publish, so nothing publishes the umbrella.\n" +
+                    "  Apply maven-publish to this module, or remove this plugin from it.",
+            )
         }
     }
 

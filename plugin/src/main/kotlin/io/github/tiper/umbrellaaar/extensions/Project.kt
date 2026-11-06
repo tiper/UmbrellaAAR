@@ -2,6 +2,7 @@ package io.github.tiper.umbrellaaar.extensions
 
 import io.github.tiper.umbrellaaar.KMP_PIPELINE_KEY
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.Task
@@ -77,14 +78,16 @@ internal fun Project.findAarTask(vararg buildTypes: String): Provider<Task> = pr
     tasks.named(taskName).get()
 }
 
+/** Absent when the module has no sources jar, which is how `com.android.library` and `java-library` start out. */
 internal fun Project.findSourcesJarTask(vararg buildTypes: String): Provider<Task> = provider {
-    val taskName = firstRegistered(sourcesJarTaskCandidates(buildTypes))
-    if (taskName == null) {
-        logger.info("[UmbrellaAar] No sources jar task in project '$path' — its sources will be missing from the merged sources jar.")
-        null
-    } else {
-        tasks.named(taskName).get()
-    }
+    firstRegistered(sourcesJarTaskCandidates(buildTypes))?.let { tasks.named(it).get() }
+}
+
+/** What gives this module a sources jar for [variant]. */
+internal fun Project.sourcesJarSetup(variant: String): String = when {
+    plugins.hasPlugin("com.android.library") -> "android { publishing { singleVariant(\"${variant.replaceFirstChar(Char::lowercaseChar)}\") { withSourcesJar() } } }"
+    plugins.hasPlugin("java") -> "java { withSourcesJar() }"
+    else -> "kotlin { withSourcesJar() }"
 }
 
 internal fun Project.findAar(
@@ -99,4 +102,20 @@ internal fun Project.findAar(
         )
 }
 
-private const val RUNTIME_ELEMENTS = "RuntimeElements"
+/**
+ * Logs [message] once for this project, whichever build type or publication gets here first. Both
+ * plugins come through here, and a `com.android.library` umbrella resolves once per build type.
+ * [key] is for a message that differs per build type in nothing worth printing it again for.
+ */
+internal fun Project.warnOnce(message: String, key: String = message) {
+    val warned = extensions.extraProperties.run {
+        if (!has(WARNED)) set(WARNED, ConcurrentHashMap.newKeySet<String>())
+        @Suppress("UNCHECKED_CAST")
+        get(WARNED) as MutableSet<String>
+    }
+    if (warned.add(key)) logger.warn(message)
+}
+
+internal const val WARNED = "io.github.tiper.umbrellaaar.warned"
+
+internal const val RUNTIME_ELEMENTS = "RuntimeElements"

@@ -615,7 +615,49 @@ class DeclaredDependencyTest {
             assertLogged("com.acme.incl:incl-lib (declared by :core)")
             assertLogged("Declare a version")
         }
-        gradleFails(umbrella.bundleTask()).assertLogged("com.acme.incl:incl-lib (declared by :core)")
+        gradleFails(umbrella.bundleTask()).run {
+            assertLogged("com.acme.incl:incl-lib (declared by :core)")
+            assertLogged("Could not determine the dependencies of task ':sdk:bundleReleaseUmbrellaAar'")
+            assertNotLogged("could not be cached")
+        }
+        gradleFails(umbrella.bundleTask(), "--no-configuration-cache").run {
+            assertLogged("com.acme.incl:incl-lib (declared by :core)")
+            assertNotLogged("> Task :")
+        }
+    }
+
+    private fun AndroidLibrary.flatDirDependency(libs: String, notation: String) {
+        file("libs/$libs", "Nothing reads this.")
+        buildScript(FLAT_DIR)
+        buildScript("dependencies { implementation($notation) }")
+    }
+
+    @Test
+    fun `a file in a flatDir fails, as it has no coordinates a consumer could find`() = fixture {
+        val core = androidLibrary("core") { flatDirDependency("locallib.aar", "mapOf(\"name\" to \"locallib\", \"ext\" to \"aar\")") }
+        val umbrella = androidUmbrella {
+            export(core)
+            buildScript(FLAT_DIR)
+        }
+
+        gradleFails(umbrella.bundleTask()).run {
+            assertLogged("[UmbrellaAarPom] :sdk would publish dependencies that have no group, so no consumer could resolve them:")
+            assertLogged("locallib (declared by :core)")
+            assertLogged("A file in a flatDir has no coordinates. Publish it to a repository and depend on that.")
+            assertNotLogged("Declare a version")
+        }
+    }
+
+    /** Which is what the advice above leads to, if it says to declare a version. */
+    @Test
+    fun `a file in a flatDir fails with a version as well`() = fixture {
+        val core = androidLibrary("core") { flatDirDependency("locallib-1.0.aar", "\":locallib:1.0@aar\"") }
+        val umbrella = androidUmbrella {
+            export(core)
+            buildScript(FLAT_DIR)
+        }
+
+        gradleFails(umbrella.publishTask()).assertLogged("locallib (declared by :core)")
     }
 
     /** Each stands in for a project there, so nothing resolved a conflict between them. */
@@ -626,7 +668,10 @@ class DeclaredDependencyTest {
         val b = androidLibrary("b") { api("com.acme.incl:incl-lib:1.3.0") }
         val umbrella = androidUmbrella { export(a, b) }
 
-        gradle(umbrella.publishTask()).assertLogged("com.acme.incl:incl-lib -> 1.2.3, 1.3.0")
+        gradle(umbrella.publishTask()).run {
+            assertLogged("[UmbrellaAarPom] 1 dependency version disagreement(s) in :sdk; the first resolved version was published:")
+            assertLogged("com.acme.incl:incl-lib -> 1.2.3 (declared by :a), 1.3.0 (declared by :b)")
+        }
 
         assertEquals(listOf("com.acme.incl:incl-lib:1.2.3"), umbrella.published().pom.dependencies.filter { it.artifact == "incl-lib" }.map { it.coordinates })
     }
@@ -706,6 +751,34 @@ class DeclaredDependencyTest {
         }
 
         assertEquals(emptySet(), androidUmbrella { export(core) }.publish().pom.managed)
+    }
+
+    @Test
+    fun `attributes on a dependency are named, as they do not ship`() = fixture {
+        val core = androidLibrary("core") { implementation(GUAVA, STANDARD_JVM) }
+        val umbrella = androidUmbrella { export(core) }
+
+        gradle(umbrella.publishTask()).run {
+            assertLoggedOnce("[UmbrellaAarPom] :sdk publishes these dependencies without the attributes they ask for")
+            assertLoggedOnce("com.google.guava:guava (declared by :core)")
+            assertLogged("Ask for those attributes in the consumers that need that variant")
+        }
+    }
+
+    @Test
+    fun `attributes that do not concern what is published are not named`() = fixture {
+        val left = androidLibrary("left") { implementation(GUAVA, STANDARD_JVM) }
+        val core = androidLibrary("core") {
+            api(left)
+            apiPlatform("com.squareup.okhttp3:okhttp-bom:4.12.0")
+            implementation("com.google.code.gson:gson:2.11.0", STANDARD_JVM)
+        }
+        val umbrella = androidUmbrella {
+            export(core)
+            buildScript("configurations.named(\"export\") { exclude(group = \"com.google.code.gson\"); exclude(module = \"left\") }")
+        }
+
+        gradle(umbrella.publishTask()).assertNotLogged("without the attributes they ask for")
     }
 
     @Test
@@ -976,9 +1049,13 @@ class DeclaredDependencyTest {
         const val EPOLL = "io.netty:netty-transport-native-epoll:4.1.115.Final"
         const val KOTLIN_TEST = "org.jetbrains.kotlin:kotlin-test:2.2.10"
         const val COMPOSE_RUNTIME = "org.jetbrains.compose.runtime:runtime:1.9.3"
+        const val FLAT_DIR = "repositories { flatDir { dirs(rootDir.resolve(\"core/libs\")) }; google(); mavenCentral() }"
+        const val GUAVA = "com.google.guava:guava:33.3.1-jre"
         const val OKIO_360 = "com.squareup.okio:okio:3.6.0"
         const val OKIO_391 = "com.squareup.okio:okio:3.9.1"
         const val UNSATISFIABLE_OKIO = "Cannot find a version of 'com.squareup.okio:okio' that satisfies the version constraints"
+        const val JVM_ENVIRONMENT = "org.gradle.api.attributes.java.TargetJvmEnvironment"
+        const val STANDARD_JVM = "attributes { attribute($JVM_ENVIRONMENT.TARGET_JVM_ENVIRONMENT_ATTRIBUTE, project.objects.named($JVM_ENVIRONMENT.STANDARD_JVM)) }"
         const val NETTY_BOM = "io.netty:netty-bom:4.1.115.Final"
         const val OKHTTP_BOM = "com.squareup.okhttp3:okhttp-bom:4.12.0"
         const val ANDROIDX_CORE = "androidx.core:core:1.13.1"

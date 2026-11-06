@@ -1,6 +1,7 @@
 package io.github.tiper.umbrellaaar.functional
 
 import java.io.File
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.gradle.testkit.runner.BuildResult
 import org.gradle.testkit.runner.GradleRunner
@@ -157,6 +158,9 @@ internal class Build(private val result: BuildResult) {
     fun assertLogged(text: String) = assertTrue(text in output, "Expected the build log to contain '$text':\n$output")
 
     fun assertNotLogged(text: String) = assertTrue(text !in output, "Expected the build log not to contain '$text':\n$output")
+
+    /** A warning that repeats per task or per publication is one nobody reads. */
+    fun assertLoggedOnce(text: String) = assertEquals(1, output.split(text).size - 1, "Expected the build log to contain '$text' once:\n$output")
 }
 
 internal fun runner(projectDir: File, arguments: Array<out String>): GradleRunner = GradleRunner.create()

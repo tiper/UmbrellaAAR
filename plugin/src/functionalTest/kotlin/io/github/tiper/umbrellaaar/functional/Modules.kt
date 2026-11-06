@@ -1,6 +1,8 @@
 package io.github.tiper.umbrellaaar.functional
 
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * One project of a [Fixture]. Every module gets a class named after it, so an empty module is still
@@ -33,11 +35,17 @@ internal sealed class Module(val fixture: Fixture, val name: String, parent: Mod
     protected open val visibleModules: List<Module> get() = emptyList()
 
     private val files = linkedMapOf<String, String>()
+    private val jars = mutableListOf<String>()
     private val extraScript = mutableListOf<String>()
 
     /** Adds [content] at [path], relative to the module. */
     fun file(path: String, content: String) {
         files[path] = content
+    }
+
+    /** Adds a real jar at [path], relative to the module, for a `files(...)` dependency to point at. */
+    fun jar(path: String) {
+        jars += path
     }
 
     /** Appends raw build script, for what the DSL has no word for. */
@@ -49,6 +57,12 @@ internal sealed class Module(val fixture: Fixture, val name: String, parent: Mod
         val dir = fixture.projectDir.resolve(path.removePrefix(":").replace(':', '/')).apply { mkdirs() }
         (generatedFiles() + files).forEach { (path, content) ->
             dir.resolve(path).apply { parentFile.mkdirs() }.writeText(content)
+        }
+        jars.forEach { path ->
+            ZipOutputStream(dir.resolve(path).apply { parentFile.mkdirs() }.outputStream()).use { jar ->
+                jar.putNextEntry(ZipEntry("local.txt"))
+                jar.closeEntry()
+            }
         }
         dir.resolve("build.gradle.kts").writeText((scriptBlocks() + extraScript).joinToString("\n\n", postfix = "\n"))
     }
@@ -365,8 +379,15 @@ internal class JavaLibrary(fixture: Fixture, name: String) : DependentModule(fix
 
     override val stockPublishTasks get() = listOf("$path:publishStockPublicationToStockRepository")
 
+    private var sourcesJar = true
+
     init {
         calls += "$namespace.$defaultClass()"
+    }
+
+    /** Leaves the module with no sources jar, which is what `java-library` does by itself. */
+    fun withoutSourcesJar() {
+        sourcesJar = false
     }
 
     /** Adds a class to the test fixtures of this module, which `testFixtures(project(...))` reaches. */
@@ -393,7 +414,7 @@ internal class JavaLibrary(fixture: Fixture, name: String) : DependentModule(fix
         |java {
         |    sourceCompatibility = JavaVersion.VERSION_11
         |    targetCompatibility = JavaVersion.VERSION_11
-        |    withSourcesJar()
+        |    ${if (sourcesJar) "withSourcesJar()" else ""}
         |}
         """.trimMargin(),
         dependenciesBlock(),
@@ -518,6 +539,9 @@ internal sealed interface Umbrella {
     /** The task behind [bundle], for a test that expects it to fail or wants its log. */
     fun bundleTask(variant: String = "release") = "$path:bundle${variant.capitalized()}UmbrellaAar"
 
+    /** The task behind [mergedSources], for a test that wants its log. */
+    fun sourcesTask(variant: String = "release") = "$path:merge${variant.capitalized()}UmbrellaAarSources"
+
     /** The task behind [publish], for a test that expects it to fail or wants its log. */
     fun publishTask(variant: String = "release") = "$path:publishAndroid${variant.capitalized()}UmbrellaAarPublicationToUmbrellaRepository"
 
@@ -535,7 +559,7 @@ internal sealed interface Umbrella {
 
     /** Merges the sources of [variant] and lists the jar's entries. */
     fun mergedSources(variant: String = "release", vararg arguments: String): Set<String> {
-        fixture.gradle("$path:merge${variant.capitalized()}UmbrellaAarSources", *arguments)
+        fixture.gradle(sourcesTask(variant), *arguments)
         return zipEntries(fixture.projectDir.resolve("$name/build/outputs/umbrellaaar/$name-$variant-sources.jar"))
     }
 

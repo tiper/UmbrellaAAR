@@ -1,5 +1,8 @@
 package io.github.tiper.umbrellaaar
 
+internal const val UMBRELLA_AAR_PLUGIN = "io.github.tiper.umbrellaaar"
+internal const val UMBRELLA_AAR_POM_PLUGIN = "io.github.tiper.umbrellaaar.pom"
+
 internal const val UMBRELLA_AAR_CONFIG = "export"
 
 internal const val INTERMEDIATES_PATH = "intermediates/umbrellaaar"

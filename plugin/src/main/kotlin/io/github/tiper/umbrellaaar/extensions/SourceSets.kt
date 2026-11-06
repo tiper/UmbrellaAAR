@@ -1,5 +1,6 @@
 package io.github.tiper.umbrellaaar.extensions
 
+import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.artifacts.ProjectDependency
 import org.jetbrains.kotlin.gradle.plugin.HasKotlinDependencies
@@ -40,8 +41,8 @@ internal fun Project.productConfigurationNames(
 private fun Project.kotlinSourceSetConfigurationNames(buildType: String, scopes: Set<Scope>): Set<String>? {
     if (!isKotlinProject()) return null
 
-    return runCatching {
-        val container = extensions.findByName("kotlin") as? KotlinTargetsContainer ?: return@runCatching null
+    return readingKotlin("the source sets", "Falling back on matching configurations by name, which can miss a custom source set.") {
+        val container = extensions.findByName("kotlin") as? KotlinTargetsContainer ?: return@readingKotlin null
 
         // Android first, and *only* Android when an Android target exists. Collecting the `jvm()`
         // target alongside it drags in `jvmMain` and everything it dependsOn — custom intermediate
@@ -67,11 +68,45 @@ private fun Project.kotlinSourceSetConfigurationNames(buildType: String, scopes:
         // AGP contributes plain `implementation`/`api`/… to the KMP android target too.
         names += conventionalConfigurationNames(buildType, scopes)
         names.takeIf { it.isNotEmpty() }
-    }.getOrElse {
-        logger.debug("$LOG_TAG Could not read Kotlin source sets of $path, falling back to name matching", it)
+    }
+}
+
+/**
+ * Runs [read], which goes through KGP's API. This plugin is built against one version of it, and one
+ * that changed shows up as a [LinkageError], on whichever line needed it first. Going on from there
+ * would publish less than the modules declare, on a green build, so that fails.
+ */
+internal fun <T> Project.askingKotlin(read: () -> T): T = try {
+    read()
+} catch (e: LinkageError) {
+    throw unsupportedKotlin(e)
+}
+
+/**
+ * [askingKotlin] for an answer that can be done without. Anything else that goes wrong gets a warning
+ * saying what [read] was for, and leaves the caller to go on without it.
+ */
+internal fun <T> Project.readingKotlin(what: String, consequence: String, read: () -> T?): T? = askingKotlin {
+    try {
+        read()
+    } catch (e: Exception) {
+        warnOnce(
+            "$LOG_TAG Could not read $what of $path from Kotlin Gradle plugin $kotlinPluginVersion: $e\n" +
+                "  $consequence If the README does not list this Kotlin version, use one it does, or update UmbrellaAAR.",
+        )
         null
     }
 }
+
+private fun Project.unsupportedKotlin(cause: LinkageError) = GradleException(
+    "$LOG_TAG This version of UmbrellaAAR does not support Kotlin Gradle plugin $kotlinPluginVersion, which $path applies: $cause\n" +
+        "  Use a Kotlin version the README lists, or update UmbrellaAAR.",
+    cause,
+)
+
+/** Read off the jar and not asked of KGP, whose API is what just failed. */
+private val Project.kotlinPluginVersion: String
+    get() = KOTLIN_PLUGINS.firstNotNullOfOrNull(plugins::findPlugin)?.javaClass?.`package`?.implementationVersion?.substringBefore("-release") ?: "of unknown version"
 
 private fun HasKotlinDependencies.configurationNames(scopes: Set<Scope>): List<String> = scopes.map { scope ->
     when (scope) {
@@ -124,22 +159,25 @@ private fun Project.conventionalConfigurationNames(buildType: String, scopes: Se
  */
 internal fun Project.frameworkExports(): List<String> {
     if (!plugins.hasPlugin("org.jetbrains.kotlin.multiplatform")) return emptyList()
-    val kotlin = extensions.findByName("kotlin") as? KotlinTargetsContainer ?: return emptyList()
-    return kotlin.targets.withType(KotlinNativeTarget::class.java)
-        .flatMap { it.binaries.withType(AbstractNativeLibrary::class.java) }
-        .mapNotNull { configurations.findByName(it.exportConfigurationName) }
-        .flatMap { it.dependencies.withType(ProjectDependency::class.java) }
-        .map { it.path }
-        .distinct()
+    return askingKotlin {
+        val kotlin = extensions.findByName("kotlin") as? KotlinTargetsContainer ?: return@askingKotlin emptyList()
+        kotlin.targets.withType(KotlinNativeTarget::class.java)
+            .flatMap { it.binaries.withType(AbstractNativeLibrary::class.java) }
+            .mapNotNull { configurations.findByName(it.exportConfigurationName) }
+            .flatMap { it.dependencies.withType(ProjectDependency::class.java) }
+            .map { it.path }
+            .distinct()
+    }
 }
 
-internal fun Project.hasAndroidPlugin(): Boolean = plugins.hasPlugin("com.android.library") ||
-    plugins.hasPlugin("com.android.kotlin.multiplatform.library") ||
-    plugins.hasPlugin("com.android.application")
+internal fun Project.hasAndroidPlugin(): Boolean = hasAndroidLibraryPlugin() || plugins.hasPlugin("com.android.application")
 
-private fun Project.isKotlinProject(): Boolean = plugins.hasPlugin("org.jetbrains.kotlin.multiplatform") ||
-    plugins.hasPlugin("org.jetbrains.kotlin.android") ||
-    plugins.hasPlugin("org.jetbrains.kotlin.jvm")
+internal fun Project.hasAndroidLibraryPlugin(): Boolean = plugins.hasPlugin("com.android.library") ||
+    plugins.hasPlugin("com.android.kotlin.multiplatform.library")
+
+private fun Project.isKotlinProject(): Boolean = KOTLIN_PLUGINS.any(plugins::hasPlugin)
+
+private val KOTLIN_PLUGINS = listOf("org.jetbrains.kotlin.multiplatform", "org.jetbrains.kotlin.android", "org.jetbrains.kotlin.jvm")
 
 private const val LOG_TAG = "[UmbrellaAar]"
 

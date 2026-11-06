@@ -9,6 +9,7 @@ import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.DependencyConstraint
+import org.gradle.api.artifacts.ExcludeRule
 import org.gradle.api.artifacts.ExternalDependency
 import org.gradle.api.artifacts.ModuleDependency
 import org.gradle.api.artifacts.ProjectDependency
@@ -55,21 +56,27 @@ internal const val FRAMEWORK_EXPORT = "Exported by an Apple framework of this mo
  *   as well.
  * @param constraintsOf `project path -> the constraints it declares`, the same way, along with what
  *   its dependencies rule out, see [Declarations.versionRules].
+ * @param attributedOf `project path -> group:name of each dependency it asks for attributes of`, which
+ *   are not published.
  * @param pinned external modules that need publishing to keep their version, see [pinnedBy].
  * @param moduleIds every external component in the graph, for the Compose → androidx mapping.
  * @param hostProjectDependencies local modules the umbrella module itself depends on. Ones that are
  *   not exported end up neither in the AAR nor in its POM.
  * @param unresolved `"<module> (via <edge>)" -> why`, for what an Apple framework exports and Android
  *   has no use for. Anything else that does not resolve fails [resolveUmbrella] instead.
+ * @param notResolved `group to name` of all that did not resolve and did no harm, which an exclude
+ *   rule can be the reason for.
  */
 internal class UmbrellaResolution(
     val graph: ProjectGraph,
     val externalsOf: Map<String, List<Collector.Dependency>>,
     val constraintsOf: Map<String, List<DependencyConstraint>>,
+    val attributedOf: Map<String, List<String>>,
     val pinned: List<Collector.Dependency>,
     val moduleIds: List<ModuleComponentIdentifier>,
     val hostProjectDependencies: Set<String>,
     val unresolved: Map<String, String>,
+    val notResolved: List<Pair<String?, String>>,
 )
 
 private fun dependenciesName(buildType: String) = "umbrella${buildType.capitalize()}Dependencies"
@@ -141,6 +148,15 @@ private val Dependency.refusal: String?
         else -> "export(files(...)) is no local module. Move what it holds into a module of its own."
     }
 
+/** Nothing else says what a KMP umbrella declares, so its POM would lose all of that on a green build. */
+internal fun Project.checkHostClasspath(host: Configuration?) {
+    if (host != null || !plugins.hasPlugin("com.android.kotlin.multiplatform.library")) return
+    throw GradleException(
+        "[UmbrellaAar] $path has no runtime classpath for its Android target, so its own dependencies would be missing from its POM.\n" +
+            "  Declare the target with kotlin { android { } }. If it is there, check that the README lists this version of Kotlin.",
+    )
+}
+
 /** The declarable configurations feeding the umbrella module's own runtime classpath. */
 private fun Project.hostDeclarations(buildType: String): List<Configuration> =
     hostClasspath(buildType)?.hierarchy.orEmpty().filter { it.isCanBeDeclared }
@@ -165,13 +181,13 @@ private fun Project.hostDependencies(buildType: String): List<Dependency> {
  */
 private fun Project.hostClasspath(buildType: String): Configuration? {
     configurations.findByName("${buildType}RuntimeClasspath")?.let { return it }
-    val name = runCatching {
+    val name = readingKotlin("the runtime classpath of the Android target", "Without it the umbrella module's own dependencies are unknown.") {
         (extensions.findByName("kotlin") as? KotlinTargetsContainer)?.targets
             ?.filter { it.platformType == KotlinPlatformType.androidJvm }
             ?.flatMap { it.compilations }
             ?.firstOrNull { it.name == "main" }
             ?.runtimeDependencyConfigurationName
-    }.getOrNull()
+    }
     return name?.let(configurations::findByName)
 }
 
@@ -191,7 +207,8 @@ private fun Project.hostClasspath(buildType: String): Configuration? {
 internal fun Project.resolveUmbrella(export: Configuration, buildType: String): UmbrellaResolution {
     checkExports(export)
     val classpath = configurations.getByName(classpathName(buildType))
-    if (classpath.attributes.isEmpty) copyAttributes(into = classpath, from = hostClasspath(buildType), buildType = buildType)
+    val host = hostClasspath(buildType).also(::checkHostClasspath)
+    if (classpath.attributes.isEmpty) copyAttributes(into = classpath, from = host, buildType = buildType)
 
     val rules = export.allExcludeRules()
     val exports = export.dependencies.withType<ProjectDependency>()
@@ -271,25 +288,99 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
     val lost = declared.filterNot { it == path || it in merged || isExcluded(it) }
     val missing = lost.associate { "export(project(\"$it\")) (via $path -> export)" to whyLost(it, root.dependencies) } + unreachable
     if (missing.isNotEmpty() || conflicts.isNotEmpty()) throw GradleException(brokenUmbrellaMessage(missing, conflicts, buildType))
+    checkNestedUmbrellas(modules, rules)
 
     val owners = components.associateBy { (it.id as ProjectComponentIdentifier).projectPath }
     val inForce = root.exclusionsInForce(declarations)
+    val hostProjectDependencies = hostDeclarations(buildType)
+        .flatMap { it.dependencies.withType<ProjectDependency>() }
+        .filterNot { it.isPlatform }
+        .mapTo(sortedSetOf()) { it.path }
+    val runtimeSides = listOfNotNull(host?.let { this to it }) +
+        modules.filterNot { isExcluded(it.path) }.map { it to it.configurations.getByName(variantOf.getValue(it.path)) }
     return UmbrellaResolution(
-        graph = ProjectGraph(modules = modules, via = via, selfInclusionVia = selfInclusionVia, variantOf = variantOf),
+        graph = ProjectGraph(
+            modules = modules,
+            via = via,
+            selfInclusionVia = selfInclusionVia,
+            compileOnlyOnly = compileOnlyModules(runtimeSides, reached = hostProjectDependencies + modules.map { it.path } + path),
+            variantOf = variantOf,
+        ),
         externalsOf = owners.mapValues { (_, owner) ->
             externalEdges[owner.id].orEmpty().flatMap { it.declaredBy(declarations.getValue(owner.id), inForce[owner.id].orEmpty()) }
         },
         constraintsOf = owners.mapValues { (_, owner) -> declarations.getValue(owner.id).run { constraints + versionRules.map { versionRule(it) } } },
+        attributedOf = owners.mapValues { (_, owner) -> declarations.getValue(owner.id).attributed },
         pinned = classpath.incoming.resolutionResult.pinnedBy(components.filterNot { isExcluded((it.id as ProjectComponentIdentifier).projectPath) }).mapNotNull { component ->
             component.moduleVersion?.let { Collector.Dependency(it.group, it.name, it.version, COMPILE_SCOPE, exclusions = inForce[component.id].orEmpty()) }
         },
         moduleIds = classpath.incoming.resolutionResult.allComponents.mapNotNull { it.id as? ModuleComponentIdentifier },
-        hostProjectDependencies = hostDeclarations(buildType)
-            .flatMap { it.dependencies.withType<ProjectDependency>() }
-            .filterNot { it.isPlatform }
-            .mapTo(sortedSetOf()) { it.path },
+        hostProjectDependencies = hostProjectDependencies,
         unresolved = unresolved,
+        notResolved = classpath.incoming.resolutionResult.allDependencies.filterIsInstance<UnresolvedDependencyResult>().mapNotNull { coordinatesOf(it.requested) },
     )
+}
+
+private fun Project.coordinatesOf(selector: ComponentSelector) = when (selector) {
+    is ProjectComponentSelector -> rootProject.findProject(selector.projectPath)?.let { it.group.toString() to it.name }
+    is ModuleComponentSelector -> selector.group to selector.module
+    else -> null
+}
+
+/**
+ * The [rules] that left something out. For that, what one matches has to be there to begin with: a
+ * local module of [graph], one that only `compileOnly` reaches, what an umbrella among those exports,
+ * or an external module or a constraint that would be published. A module below a dependency would
+ * not be, so leaving that out of the POM is no use, and consumers get it all the same.
+ */
+internal fun Project.rulesInUse(rules: List<ExcludeRule>, graph: ProjectGraph, resolution: UmbrellaResolution?, buildType: String): Set<ExcludeRule> {
+    if (rules.isEmpty()) return emptySet()
+    val kept = graph.modules.filterNot { it.isExcluded(rules) }
+    val owners = listOf(path) + kept.map { it.path }
+    val externals = when (resolution) {
+        null -> declaredExternals(kept, buildType).map { it.group to it.name }
+        else -> owners.flatMap { resolution.externalsOf[it].orEmpty() }.plus(resolution.pinned).map { it.group to it.name } +
+            owners.flatMap { resolution.constraintsOf[it].orEmpty() }.map { it.group to it.name } + resolution.notResolved
+    }
+    val provided = graph.compileOnlyOnly.keys.mapNotNull(rootProject::findProject)
+    val excludable = (graph.modules + provided + kept.flatMap { it.umbrellaExports() }).map { it.group.toString() to it.name } + externals
+    return rules.filterTo(linkedSetOf()) { rule -> excludable.any { (group, name) -> rule.matches(group, name) } }
+}
+
+/**
+ * The [rules] written for this umbrella. One that is on its classpath as well came from something
+ * like `configurations.configureEach`, so it is the build's and may be there for any other module.
+ * Gradle applies it there, and whether it did anything no longer shows in the graph.
+ */
+internal fun Project.umbrellaRules(rules: List<ExcludeRule>, buildType: String): Set<ExcludeRule> =
+    rules.toSet() - configurations.getByName(classpathName(buildType)).excludeRules
+
+/**
+ * `project path -> the scope that declares it`, for the local modules that [runtimeSides] compile
+ * against and that the runtime side, which is all that ships, does not [reached]. Declarations are
+ * enough to tell: resolving each module's compile classpath would add a resolution per module.
+ */
+private fun compileOnlyModules(runtimeSides: List<Pair<Project, Configuration>>, reached: Set<String>): Map<String, String> {
+    val compileOnly = linkedMapOf<String, String>()
+    runtimeSides.forEach { (owner, runtime) ->
+        owner.compileOnlyScopes(runtime).forEach { scope ->
+            scope.dependencies.withType<ProjectDependency>()
+                .filterNot { it.isPlatform || it.path in reached }
+                .forEach { compileOnly.putIfAbsent(it.path, "${owner.path} -> ${scope.name}") }
+        }
+    }
+    return compileOnly
+}
+
+/**
+ * What the compile side of [runtime] declares beyond it, whatever a plugin calls that: `compileOnly`,
+ * `paidCompileOnly`, `compileOnlyApi`, `commonMainCompileOnly`. Every plugin names both sides of a
+ * variant alike, as in `paidReleaseRuntimeElements` and `paidReleaseCompileClasspath`.
+ */
+private fun Project.compileOnlyScopes(runtime: Configuration): List<Configuration> {
+    val variant = runtime.name.capitalize().removeSuffix(RUNTIME_ELEMENTS).removeSuffix(RUNTIME_CLASSPATH)
+    val compile = configurations.findByName("${variant}CompileClasspath".replaceFirstChar(Char::lowercaseChar)) ?: return emptyList()
+    return (compile.hierarchy - runtime.hierarchy).filter { it.isCanBeDeclared }
 }
 
 /**
@@ -339,6 +430,8 @@ private class Declarations(configurations: Collection<Configuration>, externalOn
     val versionRules = dependencies.filterIsInstance<ExternalDependency>().filterNot { it.isPlatform }.filter {
         it.versionConstraint.strictVersion.isNotEmpty() || it.versionConstraint.rejectedVersions.isNotEmpty()
     }
+
+    val attributed = dependencies.filterIsInstance<ExternalDependency>().filterNot { it.isPlatform || it.attributes.isEmpty }.map { "${it.group}:${it.name}" }
 
     /** Each declaration [selector] came from. One module can be declared many times over. */
     fun of(selector: ComponentSelector) = dependencies.filter {
@@ -420,6 +513,8 @@ internal val ResolvedDependencyResult.publishedCoordinates: Collector.Dependency
     }
 
 internal const val COMPILE_SCOPE = "compile"
+
+private const val RUNTIME_CLASSPATH = "RuntimeClasspath"
 
 /** Gradle's own explanation sits below a generic "Could not resolve", in the innermost cause. */
 private val UnresolvedDependencyResult.rootCause: String

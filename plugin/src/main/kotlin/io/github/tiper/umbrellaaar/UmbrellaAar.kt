@@ -4,18 +4,30 @@ import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryExtension
 import com.android.build.api.dsl.LibraryExtension
 import io.github.tiper.umbrellaaar.extensions.FRAMEWORK_EXPORT
 import io.github.tiper.umbrellaaar.extensions.ProjectGraph
+import io.github.tiper.umbrellaaar.extensions.UmbrellaResolution
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.archiveVariant
 import io.github.tiper.umbrellaaar.extensions.capitalize
+import io.github.tiper.umbrellaaar.extensions.fileDependencies
 import io.github.tiper.umbrellaaar.extensions.findAar
 import io.github.tiper.umbrellaaar.extensions.findAarTask
 import io.github.tiper.umbrellaaar.extensions.findSourcesJarTask
 import io.github.tiper.umbrellaaar.extensions.frameworkExports
+import io.github.tiper.umbrellaaar.extensions.groupOrEmpty
+import io.github.tiper.umbrellaaar.extensions.hasAndroidLibraryPlugin
+import io.github.tiper.umbrellaaar.extensions.hasAndroidPlugin
 import io.github.tiper.umbrellaaar.extensions.isExcluded
+import io.github.tiper.umbrellaaar.extensions.matches
+import io.github.tiper.umbrellaaar.extensions.moduleOrEmpty
+import io.github.tiper.umbrellaaar.extensions.notation
 import io.github.tiper.umbrellaaar.extensions.registerUmbrellaClasspath
 import io.github.tiper.umbrellaaar.extensions.resolveProjectGraph
 import io.github.tiper.umbrellaaar.extensions.resolveUmbrella
+import io.github.tiper.umbrellaaar.extensions.rulesInUse
+import io.github.tiper.umbrellaaar.extensions.sourcesJarSetup
+import io.github.tiper.umbrellaaar.extensions.umbrellaRules
 import io.github.tiper.umbrellaaar.extensions.useLegacyGraph
+import io.github.tiper.umbrellaaar.extensions.warnOnce
 import io.github.tiper.umbrellaaar.tasks.BundleUmbrellaAar
 import io.github.tiper.umbrellaaar.tasks.ExtractDependencies
 import io.github.tiper.umbrellaaar.tasks.ExtractMainAar
@@ -25,7 +37,9 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.ExcludeRule
 import org.gradle.api.artifacts.ProjectDependency
+import org.gradle.api.file.FileCollection
 import org.gradle.api.plugins.ExtensionAware
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.TaskProvider
@@ -36,6 +50,18 @@ import org.gradle.kotlin.dsl.register
 
 @Suppress("unused")
 class UmbrellaAar : Plugin<Project> {
+
+    /** `"<module>: <what gives it one>"` for every sources jar missing, whichever build type found it. */
+    private val missingSources = sortedSetOf<String>()
+
+    /** Every build type of this umbrella, which this build need not resolve all of. */
+    private val buildTypes = sortedSetOf<String>()
+
+    /** `build type -> the rules that left nothing out, as a line of a warning`, for each one resolved. */
+    private val idleRules = linkedMapOf<String, Map<ExcludeRule, String>>()
+
+    /** The sources jars of one pipeline. A module without one adds nothing to them. */
+    private class SourcesJars(val main: List<FileCollection>, val merged: List<FileCollection>)
 
     /**
      * Registers the expensive part of the pipeline exactly once per [key].
@@ -84,8 +110,7 @@ class UmbrellaAar : Plugin<Project> {
     /** Registers the cheap, per-publication tail of the pipeline. */
     private fun Project.registerVariant(
         variant: String,
-        archiveCandidates: Array<String>,
-        graph: Provider<ProjectGraph>,
+        sourcesJars: Provider<SourcesJars>,
         mergeDependencies: TaskProvider<MergeDependencies>,
     ) {
         val variantCapitalized = variant.capitalize()
@@ -97,19 +122,11 @@ class UmbrellaAar : Plugin<Project> {
             umbrellaAarOutput.convention(layout.buildDirectory.file("$OUTPUTS_PATH/${project.name}-$variant.aar"))
         }
 
-        val mainSources = findSourcesJarTask(*archiveCandidates)
-
         val mergeSources = tasks.register<MergeSources>("merge${variantCapitalized}UmbrellaAarSources") {
             // Dependency sources are streamed straight out of each module's sources jar: the
             // previous extract-to-disk-then-walk-and-re-read round trip has been removed.
-            dependencySourcesJars.from(
-                graph.map { g ->
-                    g.modules.map { module ->
-                        module.findSourcesJarTask(*g.archiveVariant(module, archiveCandidates)).map { it.outputs.files }
-                    }
-                },
-            )
-            mainSourcesJars.from(mainSources.map { it.outputs.files })
+            dependencySourcesJars.from(sourcesJars.map { it.merged })
+            mainSourcesJars.from(sourcesJars.map { it.main })
             mergedSourcesJar.convention(layout.buildDirectory.file("$OUTPUTS_PATH/${project.name}-$variant-sources.jar"))
         }
 
@@ -133,7 +150,68 @@ class UmbrellaAar : Plugin<Project> {
         // For a merged module they only apply when Gradle's own selection cannot, see archiveVariant.
         val archiveCandidates = (listOf(aarBuildType) + variants).distinct().map { it.capitalize() }.toTypedArray()
         val mergeDependencies = registerSharedPipeline(key, archiveCandidates, namespace, graph)
-        variants.forEach { registerVariant(it, archiveCandidates, graph, mergeDependencies) }
+        val sourcesJars = sourcesJarsProvider(archiveCandidates, graph)
+        variants.forEach { registerVariant(it, sourcesJars, mergeDependencies) }
+    }
+
+    /**
+     * Memoised for the publications sharing a pipeline, which ask for the very same jars. Having none
+     * is the default for `com.android.library` and `java-library` modules, so it costs a module its
+     * sources and no more. Classes never depend on it, and no other variant's sources can stand in.
+     */
+    private fun Project.sourcesJarsProvider(archiveCandidates: Array<String>, graph: Provider<ProjectGraph>): Provider<SourcesJars> {
+        fun Project.sourcesJar(variants: Array<out String>) = findSourcesJarTask(*variants).orNull?.outputs?.files.also {
+            if (it == null) missingSources += "$path: ${sourcesJarSetup(variants.firstOrNull().orEmpty())}"
+        }
+
+        val memo = lazy {
+            val g = graph.get()
+            SourcesJars(
+                main = listOfNotNull(sourcesJar(archiveCandidates)),
+                merged = g.modules.mapNotNull { it.sourcesJar(g.archiveVariant(it, archiveCandidates)) },
+            )
+        }
+        return provider { memo.value }
+    }
+
+    /**
+     * One warning however many build types were asked for, all of them known by now. A rule covers
+     * every build type, so it takes all of those it left nothing out in, and it may well do its work
+     * in one that was not asked for, so removing it is only good advice with all of them in.
+     */
+    private fun Project.reportOncePerUmbrella() {
+        if (missingSources.isNotEmpty()) {
+            logger.warn(
+                buildString {
+                    appendLine("[UmbrellaAar] The merged sources jar of $path leaves out these modules, which have no sources jar:")
+                    missingSources.forEach { appendLine("  $it") }
+                    append("  Add what each line says to that module to ship its sources. Publishing goes on without them.")
+                },
+            )
+        }
+        val idle = idleRules.values.map { it.keys }.reduceOrNull(Set<ExcludeRule>::intersect).orEmpty()
+        if (idle.isNotEmpty()) {
+            val unchecked = buildTypes - idleRules.keys
+            logger.warn(
+                buildString {
+                    appendLine("[UmbrellaAar] ${idle.size} exclude rule(s) of $path left nothing out${if (unchecked.isEmpty()) "" else " in ${idleRules.keys.joinToString()}"}:")
+                    idle.forEach { rule -> appendLine("  ${idleRules.values.firstNotNullOf { it[rule] }}") }
+                    append(if (unchecked.isEmpty()) "  Fix each of them, or remove it." else "  Fix each of them. Remove one only if no other build type needs it, as this build did not check ${unchecked.joinToString()}.")
+                    append(" A rule has to match a local module of the umbrella, or a dependency that would be in its POM.")
+                },
+            )
+        }
+    }
+
+    /** [rule] as written, and what is known about why it left nothing out. */
+    private fun idleLine(rule: ExcludeRule, graph: ProjectGraph, resolution: UmbrellaResolution?): String {
+        val local = graph.modules.firstOrNull { rule.groupOrEmpty.isNotEmpty() && it.name == rule.moduleOrEmpty }
+        val transitive = resolution?.moduleIds?.firstOrNull { rule.matches(it.group, it.module) }
+        return rule.notation + when {
+            local != null -> ": the local module ${local.path} has group \"${local.group}\". Use exclude(group = \"${local.group}\", module = \"${local.name}\")."
+            transitive != null -> ": ${transitive.group}:${transitive.module} comes in below another dependency, so consumers still get it. Exclude it on that dependency."
+            else -> ""
+        }
     }
 
     override fun apply(target: Project) = with(target) {
@@ -197,6 +275,20 @@ class UmbrellaAar : Plugin<Project> {
                 }
             }
         }
+
+        // Once every project is configured, so that it counts however late the Android plugin came.
+        gradle.projectsEvaluated { warnIfNoUmbrellaFits() }
+        gradle.taskGraph.whenReady { reportOncePerUmbrella() }
+    }
+
+    /** A warning, as convention code may well apply this plugin to every project. */
+    private fun Project.warnIfNoUmbrellaFits() {
+        if (hasAndroidLibraryPlugin()) return
+        val found = OTHER_PLUGINS.filter(plugins::hasPlugin).joinToString().ifEmpty { "no other plugin it knows" }
+        warnOnce(
+            "[UmbrellaAar] $path applies $UMBRELLA_AAR_PLUGIN, but found $found, so it registers no umbrella tasks here.\n" +
+                "  Apply com.android.library or com.android.kotlin.multiplatform.library to this module, or remove this plugin from it.",
+        )
     }
 
     /**
@@ -208,15 +300,17 @@ class UmbrellaAar : Plugin<Project> {
      * hand-written walk when `umbrellaaar.legacyGraph=true`.
      */
     private fun Project.graphProvider(config: Configuration, buildType: String): Provider<ProjectGraph> {
+        buildTypes += buildType
         val memo = lazy {
             val rules = config.allExcludeRules()
             val resolution = if (useLegacyGraph()) null else resolveUmbrella(config, buildType)
             val graph = resolution?.graph ?: resolveProjectGraph(config, buildType)
 
             graph.selfInclusionVia?.let { via ->
-                logger.warn(
+                warnOnce(
                     "[UmbrellaAar] Project '$path' appeared in its own umbrella graph (reached via '$via') and was dropped.\n" +
-                        "  A module merged into the umbrella depends on the umbrella module itself.",
+                        "  A module merged into the umbrella depends on the umbrella module itself. Remove that dependency, or stop exporting the module that has it.",
+                    key = "selfInclusion",
                 )
             }
 
@@ -224,7 +318,7 @@ class UmbrellaAar : Plugin<Project> {
                 ?.filter { dependency -> graph.modules.none { it.path == dependency } }
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { unexported ->
-                    logger.warn(
+                    warnOnce(
                         buildString {
                             appendLine("[UmbrellaAar] $path depends on local module(s) that are not exported:")
                             unexported.forEach { appendLine("  $it") }
@@ -237,7 +331,7 @@ class UmbrellaAar : Plugin<Project> {
                 }
 
             resolution?.unresolved?.takeIf { it.isNotEmpty() }?.let { unresolved ->
-                logger.warn(
+                warnOnce(
                     buildString {
                         appendLine("[UmbrellaAar] ${unresolved.size} framework export(s) of $path could not be resolved for its umbrella:")
                         unresolved.forEach { (module, why) -> appendLine("  $module: $why") }
@@ -251,14 +345,15 @@ class UmbrellaAar : Plugin<Project> {
 
             // Behaviour change vs 2.x, called out explicitly so it can never be a silent difference
             // in the published artifact.
-            graph.compileOnlyOnly.takeIf { it.isNotEmpty() }?.let { skipped ->
-                logger.warn(
+            graph.compileOnlyOnly.filterKeys { rootProject.findProject(it)?.isExcluded(rules) != true }.takeIf { it.isNotEmpty() }?.let { skipped ->
+                warnOnce(
                     buildString {
-                        appendLine("[UmbrellaAar] ${skipped.size} module(s) are reachable only through `compileOnly` and were NOT merged into the umbrella AAR:")
+                        appendLine("[UmbrellaAar] ${skipped.size} module(s) are reachable only through `compileOnly` and were NOT merged into the umbrella AAR of $path:")
                         skipped.entries.sortedBy { it.key }.forEach { (module, via) -> appendLine("  $module (via $via)") }
                         append(
                             "  `compileOnly` means \"provided by the consumer\". If these modules must ship inside the AAR, " +
-                                "declare them with `api`/`implementation` instead.",
+                                "declare them with `api`/`implementation` instead. If they stay out on purpose, say so with " +
+                                "exclude(...) on `export`, which ends this warning.",
                         )
                     },
                 )
@@ -267,7 +362,7 @@ class UmbrellaAar : Plugin<Project> {
             val kept = graph.modules.filterNot { it.isExcluded(rules) }.toSet()
             (graph.modules - kept).takeIf { it.isNotEmpty() }?.let { excluded ->
                 // The merged modules still call into these, so the consumer needs them from somewhere.
-                logger.warn(
+                warnOnce(
                     buildString {
                         appendLine("[UmbrellaAar] ${excluded.size} local module(s) in the umbrella graph of $path are excluded:")
                         excluded.sortedBy { it.path }.forEach { appendLine("  ${it.path} (via ${graph.via[it.path]})") }
@@ -276,8 +371,33 @@ class UmbrellaAar : Plugin<Project> {
                                 "If the merged modules use them at runtime, publish them separately and have consumers depend on them.",
                         )
                     },
+                    key = "excluded ${excluded.map { it.path }.sorted()}",
                 )
             }
+            if (kept.isEmpty()) {
+                warnOnce(
+                    "[UmbrellaAar] $path merges no modules, so its AAR holds its own code and nothing else.\n" +
+                        "  Add a module to it with export(project(\":feature\")) in its dependencies block.",
+                )
+            }
+            // An AAR carries the jars of an Android module, while a JVM module's jar has no room for
+            // them, and a POM has no way of naming a file.
+            kept.filterNot { it.hasAndroidPlugin() }
+                .flatMap { module -> module.fileDependencies(graph.variantOf[module.path], buildType).map { "${module.path}: $it" } }
+                .takeIf { it.isNotEmpty() }
+                ?.let { files ->
+                    warnOnce(
+                        buildString {
+                            appendLine("[UmbrellaAar] Files that JVM modules depend on ship in neither the AAR nor the POM of $path:")
+                            files.forEach { appendLine("  $it") }
+                            append(
+                                "  Consumers will not have them, as with a stock publication of these modules. " +
+                                    "Publish each one to a repository and depend on that, or move it to an Android library module, whose AAR carries it.",
+                            )
+                        },
+                    )
+                }
+            idleRules[buildType] = (umbrellaRules(rules, buildType) - rulesInUse(rules, graph, resolution, buildType)).associateWith { idleLine(it, graph, resolution) }
             logger.info("[UmbrellaAar] $path/$buildType merges ${kept.size} modules: ${kept.joinToString { it.path }}")
             graph.copy(modules = kept)
         }
@@ -285,6 +405,18 @@ class UmbrellaAar : Plugin<Project> {
     }
 
     private companion object {
+        /** What a module this plugin cannot work in is likely to be instead. */
+        val OTHER_PLUGINS = listOf(
+            "com.android.application",
+            "com.android.dynamic-feature",
+            "com.android.test",
+            "org.jetbrains.kotlin.multiplatform",
+            "org.jetbrains.kotlin.android",
+            "org.jetbrains.kotlin.jvm",
+            "java-library",
+            "java",
+        )
+
         /**
          * `com.android.kotlin.multiplatform.library` has no build types. Both publications are kept
          * for source compatibility with `com.android.library` umbrellas and share one pipeline.

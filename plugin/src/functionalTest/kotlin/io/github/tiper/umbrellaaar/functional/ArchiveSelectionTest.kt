@@ -171,7 +171,7 @@ class ArchiveSelectionTest {
         assertTrue(umbrella.mergedSources().any { it.endsWith("OnlyInDebug.kt") })
     }
 
-    /** Its sources fail the merge for now, which beats handing out debug sources for release classes. */
+    /** The variant with the classes has none, which beats handing out debug sources for release classes. */
     @Test
     fun `sources never come from another variant than the classes`() = fixture {
         val core = androidLibrary("core") {
@@ -180,7 +180,7 @@ class ArchiveSelectionTest {
         }
         val umbrella = kmpUmbrella { export(core) }
 
-        gradleFails("${umbrella.path}:mergeReleaseUmbrellaAarSources").assertLogged("Cannot query the value of this provider")
+        assertFalse(umbrella.mergedSources().any { it.endsWith("OnlyInDebug.kt") })
     }
 
     @Test

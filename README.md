@@ -259,8 +259,10 @@ pluginManagement {
 
    **What you export ships, or the build fails.** A module declared with `export(...)` that Gradle
    cannot resolve fails the build before any task runs, naming the module, how it was reached and
-   Gradle's reason. So does anything below it that does not resolve, and two local modules sharing a
-   `group:name`, of which Gradle keeps one. Use `exclude(...)` to leave one out on purpose.
+   Gradle's reason. So does anything below it that does not resolve, two local modules sharing a
+   `group:name`, of which Gradle keeps one, and an umbrella merging another umbrella without what
+   that one exports: an export is no dependency of the module declaring it, so the outer umbrella has
+   to export those too. Use `exclude(...)` to leave one out on purpose.
 
    The external dependencies written to the POM come from the same resolution, so their versions
    honour dependency constraints, platforms and resolution rules exactly as when the modules are
@@ -279,7 +281,8 @@ pluginManagement {
    on external modules are published as well, as `dependencyConstraints` in the `.module` and
    `dependencyManagement` in the POM, so they also reach a consumer that gets those modules through
    another library. A dependency an included build provides is published with the version that was
-   asked for, and fails the build if nothing gives it one.
+   asked for. One that nothing gives a version fails the build, bundling as well as publishing, and
+   so does a file in a `flatDir`, which has no coordinates a consumer could find.
 
    One published entry speaks for every module declaring that dependency, and Gradle leaves a module
    out only if every path to it does. So an exclusion is published if all declarations carry it, a
@@ -296,7 +299,7 @@ pluginManagement {
    > `merged-modules.txt` and `external-dependencies.txt` between both modes before upgrading. In
    > that diff, ignore ` excludes=` and a `kotlin-stdlib` line, which KGP adds too late for this walk
    > to always see. It publishes coordinates alone: none of what a module declares about a
-   > dependency, no constraints, and no failure on a dependency without a version.
+   > dependency, no constraints, and no failure on a dependency without a group or a version.
 
    **Keeping the AAR and the XCFramework in sync.** If the same module also builds Apple
    frameworks, it can merge every local module those frameworks export, instead of repeating the
@@ -366,7 +369,12 @@ pluginManagement {
 
    An `exclude` on any `export` line applies to the whole umbrella, not only to that line. It removes
    matching external dependencies from the POM and matching local modules from the merge, whichever
-   module pulled them in. Local modules that an excluded module depends on are still merged.
+   module pulled them in. Local modules that an excluded module depends on are still merged. A rule
+   that leaves nothing out gets a build warning: a local module has to match by its real group, and
+   a dependency that only comes in below another one stays, as consumers get it from that one. The
+   warning says which build types it went by, as a rule can do its work in one the build did not
+   resolve. A rule that reaches every configuration, as `configurations.configureEach` writes one, is
+   Gradle's to apply and gets no such warning.
 
 3. **Tasks**
 
@@ -472,8 +480,9 @@ pluginManagement {
   resolving it, because it cannot know which publication you want at those coordinates.
 - **`compileOnly` project dependencies are not merged.** `compileOnly` means "provided by the
   consumer", so those modules are left out of the AAR. Declare them with `api`/`implementation` if
-  they must ship inside the AAR. (With `umbrellaaar.legacyGraph=true`, modules reachable only
-  through `compileOnly` are also listed in a build warning, because `2.x` *did* merge them.)
+  they must ship inside the AAR. (Modules reachable only through `compileOnly` are also listed in a
+  build warning, because `2.x` *did* merge them. An `exclude(...)` of such a module on `export` says
+  it stays out on purpose, which ends the warning.)
 - **Excluded or un-exported local modules are neither merged nor declared.** A module removed with
   `exclude(...)`, or one the umbrella module depends on without exporting it, is not in the AAR and
   not in its POM. Both cases are reported in a build warning: if the merged code needs them at
@@ -500,7 +509,8 @@ pluginManagement {
   Gradle resolves the module without it, so it is not published. A stock publication lists it.
 - **A dependency is published at the version Gradle selected, with no `prefer`, attributes or
   `because`.** `strictly` and `reject` go out as a constraint on its module, so they bind consumers
-  as they do with stock. Constraints keep all of this.
+  as they do with stock. Attributes are named in a build warning, as consumers select the variant
+  themselves. Constraints keep all of this.
 - **Project isolation is not supported.** Gradle resolves which modules to merge, but each module's
   AAR and sources jar are still taken from its `bundle<Variant>Aar` / sources-jar task, which means
   reading sibling projects' tasks. AGP does not hand the published AAR to other modules through
@@ -556,11 +566,11 @@ pluginManagement {
   publications. Exported plain `com.android.library` modules are therefore also taken from one AAR
   for both, **release** unless `localDependencySelection` selects another build type. Publish only
   `release` if that distinction matters to you.
-- **Merged sources need a sources jar in the umbrella module and every merged module.** Without one,
-  `android<Variant>UmbrellaAarSourcesJar` fails with `Cannot query the value of this provider because
-  it has no value available`. Publications include the merged sources, so publishing stops too.
-  Kotlin Multiplatform modules have a sources jar by default; `com.android.library` and `java-library`
-  modules do not — see *Generating Sources JAR* under [Examples](#examples).
+- **Merged sources only hold the modules that have a sources jar.** Kotlin Multiplatform modules have
+  one by default; `com.android.library` and `java-library` modules do not. A module without one is
+  left out of the merged sources jar, its classes still ship and publishing goes on, and a build
+  warning names it with the line that adds one — see *Generating Sources JAR* under
+  [Examples](#examples).
 
 ---
 
@@ -669,7 +679,7 @@ Which outputs in:
 build/outputs/umbrellaaar/myMainLibrary-debug-sources.jar
 ```
 
-The umbrella module and every merged module need a sources jar. Kotlin Multiplatform modules have one by default. A `com.android.library` module has to enable it for each variant it contributes:
+The umbrella module and each merged module contribute their own sources jar, and a build warning names any that has none. Kotlin Multiplatform modules have one by default. A `com.android.library` module has to enable it for each variant it contributes:
 
 ```kotlin
 android {
