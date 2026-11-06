@@ -42,6 +42,28 @@ class IncrementalExtractionTest {
 
     private fun Aar.heldClasses() = classes.filter { it.startsWith("p.") }.toSet()
 
+    /** Two of these are the same bytes between them, as resource-only AARs of one namespace can be. */
+    private fun Fixture.aarHolding(name: String, asset: String) = scripted(
+        name,
+        """
+        plugins {
+            id("com.android.library")
+        }
+
+        group = "$GROUP"
+
+        android {
+            namespace = "$GROUP.shared"
+            compileSdk = $COMPILE_SDK
+            defaultConfig {
+                minSdk = $MIN_SDK
+            }
+        }
+        """,
+    ).holdingAsset(asset)
+
+    private fun Module.holdingAsset(text: String) = apply { file("src/main/assets/shared.txt", text) }
+
     @Test
     fun `a module taking on the bytes another one had loses its old class`() = fixture {
         val first = jarWith("first").holding("A")
@@ -66,6 +88,20 @@ class IncrementalExtractionTest {
         second.holding("A")
 
         gradle(umbrella.bundleTask()).assertLogged("Extracted 2 of 2 dependency archives")
+    }
+
+    /** The archives are the same files as before and so are the folders, only which holds what moved. */
+    @Test
+    fun `two AARs trading their bytes trade which asset wins`() = fixture {
+        val first = aarHolding("first", asset = "one")
+        val second = aarHolding("second", asset = "two")
+        val umbrella = androidUmbrella { export(first, second) }
+        assertEquals("one", umbrella.bundle().text("assets/shared.txt"))
+
+        first.holdingAsset("two")
+        second.holdingAsset("one")
+
+        assertEquals("two", umbrella.bundle().text("assets/shared.txt"))
     }
 
     /** Their rules are merged in module order, which is what gives away whose bytes are whose. */
