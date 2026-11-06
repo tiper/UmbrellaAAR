@@ -89,6 +89,7 @@ class UmbrellaAar : Plugin<Project> {
         val archives = archivesProvider(archiveCandidates, graph)
 
         val extractDependencies = tasks.register<ExtractDependencies>("extract${keyCapitalized}Dependencies") {
+            description = "Extracts the merged modules' archives for $key, with their R references moved to the umbrella's namespace"
             mainNamespace.convention(namespace)
             mergedModules.set(graph.map { g -> g.modules.map { "${it.path}\t${g.via[it.path].orEmpty()}" }.sorted() })
             dependencies.from(archives.map { it.files })
@@ -100,12 +101,14 @@ class UmbrellaAar : Plugin<Project> {
         }
 
         val extractMain = tasks.register<ExtractMainAar>("extract${keyCapitalized}MainClasses") {
+            description = "Unpacks the umbrella module's own AAR for $key"
             dependsOn(findAarTask(*archiveCandidates))
             mainAar.set(layout.file(findAar(*archiveCandidates)))
             unpackedAarDir.convention(layout.buildDirectory.dir("$INTERMEDIATES_PATH/$key/main"))
         }
 
         return tasks.register<MergeDependencies>("merge${keyCapitalized}UmbrellaAarDependencies") {
+            description = "Merges the extracted modules into the umbrella module's unpacked AAR for $key"
             dependencies.set(extractDependencies.flatMap { it.outputDir })
             moduleOrder.set(archives.map { it.folders.values.toList() })
             mainAarDir.set(extractMain.flatMap { it.unpackedAarDir })
@@ -151,6 +154,7 @@ class UmbrellaAar : Plugin<Project> {
         }
 
         val mergeSources = tasks.register<MergeSources>("merge${variantCapitalized}UmbrellaAarSources") {
+            description = "Merges the sources jars of all merged modules for $variant"
             // Dependency sources are streamed straight out of each module's sources jar: the
             // previous extract-to-disk-then-walk-and-re-read round trip has been removed.
             dependencySourcesJars.from(sourcesJars.map { it.merged })

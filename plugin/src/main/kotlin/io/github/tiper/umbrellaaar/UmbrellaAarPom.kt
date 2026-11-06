@@ -83,7 +83,6 @@ abstract class UmbrellaAarPom @Inject constructor(
         val variantCapitalized = variant.capitalize()
 
         val collectDeps = tasks.register<CollectExternalDependencies>("collect${variantCapitalized}ExternalDependencies") {
-            group = GROUP
             description = "Collects external dependencies from all merged modules for $variant"
             dependencies.set(publishedProvider.map { it.report })
             outputFile.convention(layout.buildDirectory.file("$REPORTS_PATH/$variant/$EXTERNAL_DEPENDENCIES_FILE"))
