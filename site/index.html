@@ -472,11 +472,11 @@ publishing {
       <p class="callout-tag">Before you publish</p>
       <h3 id="collision-title">Publish the umbrella with its own task, or give it its own coordinates</h3>
       <p>Umbrella publications set no coordinates of their own, so they default to <code>project.group:project.name:project.version</code>. In a Kotlin Multiplatform project the <code>kotlinMultiplatform</code> publication already has those coordinates, and the release and debug umbrella publications share them with each other.</p>
-      <p><code>publish</code> and <code>publishToMavenLocal</code> write all of them to the same location, and the last one wins. The umbrella <code>.aar</code> survives, but another publication's <code>.pom</code> and <code>.module</code> replace the flattened dependency list. The build still succeeds, so the corruption is silent. Your consumers then fail on internal coordinates such as <code>Could not find &lt;RootProject&gt;.&lt;path&gt;:&lt;module&gt;:unspecified</code>.</p>
-      <p>The plugin logs a warning naming the publications that collide. It does not change the coordinates or fail the build. Use one of these two fixes.</p>
+      <p>Two of them going to one repository land in the same location, and the last one wins. The umbrella <code>.aar</code> survives, but another publication's <code>.pom</code> and <code>.module</code> replace the flattened dependency list. Your consumers then fail on internal coordinates such as <code>Could not find &lt;RootProject&gt;.&lt;path&gt;:&lt;module&gt;:unspecified</code>.</p>
+      <p>So a run that would do that fails before anything is published, naming the module, the publications and the repository. By default <code>publish</code>, <code>publishToMavenLocal</code> and a plugin's <code>publishToMavenCentral</code> all would. Use one of these two fixes. If one publication is meant to replace the other, set <code>umbrellaaar.allowCoordinateClash=true</code> in the root <code>gradle.properties</code>, or pass it with <code>-P</code>. A module's own <code>gradle.properties</code> is not read.</p>
 
       <h4>Publish only the umbrella</h4>
-      <p>Run the targeted task, and leave out the <code>publish</code> and <code>publishToMavenLocal</code> lifecycle tasks while coordinates collide.</p>
+      <p>Run the targeted task, and leave out the lifecycle tasks while coordinates collide.</p>
       <figure class="snippet">
         <figcaption><span class="file">terminal</span></figcaption>
         <div class="scroll" tabindex="0" role="group" aria-label="Command that publishes only the release umbrella to Maven Local">
@@ -486,7 +486,7 @@ publishing {
       </figure>
 
       <h4>Give the publications distinct coordinates</h4>
-      <p>Rename both variants. If you rename only release, debug stays on the project coordinates and still collides.</p>
+      <p>The failure spells this out for your module. In a Kotlin Multiplatform project rename both variants: if you rename only release, debug stays on the project coordinates and still collides. On <code>com.android.library</code>, moving debug is enough.</p>
       <figure class="snippet">
         <figcaption><span class="file">build.gradle.kts</span></figcaption>
         <div class="scroll" tabindex="0" role="group" aria-label="Distinct artifact ids for both umbrella publications">
@@ -497,6 +497,16 @@ publishing {
     publications.named&lt;MavenPublication&gt;(<span class="tok-string">"androidDebugUmbrellaAar"</span>) {
         artifactId = <span class="tok-string">"your-library-umbrella-debug"</span>
     }
+}
+</code></pre>
+        </div>
+      </figure>
+      <p>A debug build has no use on Maven Central. To leave one out of a run that publishes everything, disable its tasks. <code>onlyIf</code> does not count here, as it only decides once the run is under way.</p>
+      <figure class="snippet">
+        <figcaption><span class="file">build.gradle.kts</span></figcaption>
+        <div class="scroll" tabindex="0" role="group" aria-label="Publish tasks disabled for the debug umbrella publication">
+<pre><code>tasks.withType&lt;AbstractPublishToMaven&gt;().configureEach {
+    if (publication.name == <span class="tok-string">"androidDebugUmbrellaAar"</span>) enabled = false
 }
 </code></pre>
         </div>
@@ -594,6 +604,7 @@ publishing {
     <p>3.x no longer merges modules reachable only through <code>compileOnly</code>. 2.x did. 3.x lists them in a build warning, so the change is visible. Internal task names under the Kotlin Multiplatform plugin also changed. Public task and publication names did not.</p>
 
     <h3>Moving from 3.0</h3>
+    <p>A run that would publish two publications at one set of coordinates now fails, and by default a plain <code>publish</code> or <code>publishToMavenLocal</code> does. <a href="#collision-title">Before you publish</a> has the ways out.</p>
     <p>A build script that did not change can get a different POM. A module with <code>androidTarget()</code> now publishes each dependency with exclusions for <code>kotlin-stdlib-common</code>, <code>kotlin-test-common</code> and <code>kotlin-test-annotations-common</code>, which KGP puts on its configurations, as a stock <code>.module</code> does. A dependency declared as <code>@aar</code>, or any other <code>@ext</code>, now publishes as not transitive, so consumers no longer get what it depends on from the umbrella. Set <code>isTransitive = true</code> on it to keep that. To check your own build, compare <code>external-dependencies.txt</code> with and without <code>umbrellaaar.legacyGraph=true</code>, and ignore <code> excludes=</code> and a <code>kotlin-stdlib</code> line.</p>
   </section>
 

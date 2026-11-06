@@ -17,9 +17,7 @@ The sample always builds against the plugin source in this repository. `sample-l
    ./gradlew :sample-legacy:export:publishAndroidReleaseUmbrellaAarPublicationToMavenLocal
    ```
 
-   This publishes only the umbrella. Don't use `publishToMavenLocal` here: the module's other publications share the umbrella's coordinates, so the last one to run decides the POM. The order varies between runs, and when `kotlinMultiplatform` runs last, `:sample-legacy:app` fails to compile with `Unresolved reference` errors on the merged modules. See [Configuration & Tasks](../README.md#configuration--tasks) in the main README.
-
-   The `share the coordinates` warning still appears, because it's logged on every build of this module whichever task runs.
+   This publishes only the umbrella. `publishToMavenLocal` fails here before it publishes anything, because the module's other publications share the umbrella's coordinates. See [Configuration & Tasks](../README.md#configuration--tasks) in the main README.
 
 2. **Sync the Project**:
    After publishing the `UmbrellaAAR`, sync your Gradle project to use the locally published artifact.

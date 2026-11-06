@@ -292,8 +292,8 @@ pluginManagement {
    exclusions when it becomes its `androidx` twin. One that asks for an artifact or a capability keeps its coordinates
    instead, as that artifact exists under the name it was declared with.
 
-   > Set `umbrellaaar.legacyGraph=true` in `gradle.properties` to fall back to the `3.0` graph walk,
-   > which reads each module's configurations by name. It is kept so large builds can diff
+   > Set `umbrellaaar.legacyGraph=true` in the root `gradle.properties` to fall back to the `3.0` graph
+   > walk, which reads each module's configurations by name. It is kept so large builds can diff
    > `merged-modules.txt` and `external-dependencies.txt` between both modes before upgrading. In
    > that diff, ignore ` excludes=` and a `kotlin-stdlib` line, which KGP adds too late for this walk
    > to always see. It publishes coordinates alone: none of what a module declares about a
@@ -409,20 +409,23 @@ pluginManagement {
    > The umbrella publication defaults to `project.group:project.name:project.version`, which in a KMP
    > project is *already taken* by the `kotlinMultiplatform` publication — and `androidRelease…` and
    > `androidDebug…` share it with each other. Maven publications are addressed by their coordinates,
-   > so `publish` and `publishToMavenLocal` write colliding publications to the same location and the
-   > last one wins: the umbrella `.aar` survives, but another publication's `.pom` and `.module`
-   > replace the flattened dependency list this plugin exists to produce. The build still succeeds, so
-   > the corruption is silent — consumers then fail on internal project coordinates such as
-   > `Could not find <RootProject>.<path>:<module>:unspecified`.
+   > so two of them going to one repository land in the same location and the last one wins: the
+   > umbrella `.aar` survives, but another publication's `.pom` and `.module` replace the flattened
+   > dependency list this plugin exists to produce, and consumers then fail on internal project
+   > coordinates such as `Could not find <RootProject>.<path>:<module>:unspecified`.
    >
-   > The plugin logs a warning naming every colliding publication. Either publish only the umbrella:
+   > So a run that would do that fails before anything is published, naming the module, the
+   > publications and the repository. `publish`, `publishToMavenLocal` and a plugin's
+   > `publishToMavenCentral` all would, by default. Either publish only the umbrella:
    >
    > ```bash
    > ./gradlew publishAndroidReleaseUmbrellaAarPublicationToMavenLocal
    > ```
    >
-   > …or give the publications distinct coordinates. Rename both: renaming only
-   > `androidReleaseUmbrellaAar` leaves `androidDebugUmbrellaAar` colliding with `kotlinMultiplatform`.
+   > …or give the publications distinct coordinates, which the failure spells out for your module.
+   > In a KMP project both have to move: renaming only `androidReleaseUmbrellaAar` leaves
+   > `androidDebugUmbrellaAar` colliding with `kotlinMultiplatform`. On `com.android.library`, moving
+   > debug is enough.
    >
    > ```kotlin
    > publishing {
@@ -434,6 +437,20 @@ pluginManagement {
    >     }
    > }
    > ```
+   >
+   > A debug build has no use on Maven Central. To leave one out of a run that publishes everything,
+   > disable its tasks. `onlyIf` does not count here, as it only decides once the run is under way.
+   >
+   > ```kotlin
+   > tasks.withType<AbstractPublishToMaven>().configureEach {
+   >     if (publication.name == "androidDebugUmbrellaAar") enabled = false
+   > }
+   > ```
+   >
+   > If one publication is meant to replace the other, set `umbrellaaar.allowCoordinateClash=true` in
+   > the root `gradle.properties`, or pass it with `-P`. A module's own `gradle.properties` is not read.
+   > Upgrading from `3.0`, an umbrella needs one of these for a plain `publish`, which used to leave
+   > whichever publication task order ran last.
 
 4. **Reports**
 
@@ -472,10 +489,10 @@ pluginManagement {
 
 - **The umbrella publication does not claim unique coordinates.** It defaults to
   `project.group:project.name:project.version`, so it collides with the `kotlinMultiplatform`
-  publication in a KMP project, and `androidRelease…`/`androidDebug…` collide with each other. Only
-  the targeted `publishAndroid<Variant>UmbrellaAarPublicationTo<Repo>Repository` task is safe unless
-  you give them distinct coordinates — see the warning above. The plugin reports the clash rather than
-  resolving it, because it cannot know which publication you want at those coordinates.
+  publication in a KMP project, and `androidRelease…`/`androidDebug…` collide with each other. A run
+  that would publish two of them to one repository fails before it starts — see the warning above.
+  The plugin fails rather than resolving the clash, because it cannot know which publication you
+  want at those coordinates.
 - **`compileOnly` project dependencies are not merged.** `compileOnly` means "provided by the
   consumer", so those modules are left out of the AAR. Declare them with `api`/`implementation` if
   they must ship inside the AAR. (Modules reachable only through `compileOnly` are also listed in a

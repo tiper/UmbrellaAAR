@@ -7,6 +7,7 @@ import io.github.tiper.umbrellaaar.extensions.matches
 import io.github.tiper.umbrellaaar.extensions.resolveUmbrella
 import io.github.tiper.umbrellaaar.extensions.useLegacyGraph
 import io.github.tiper.umbrellaaar.extensions.capitalize
+import io.github.tiper.umbrellaaar.extensions.checkCoordinateClashes
 import io.github.tiper.umbrellaaar.extensions.createAndroidResolutionConfig
 import io.github.tiper.umbrellaaar.extensions.createKmpResolutionConfig
 import io.github.tiper.umbrellaaar.extensions.exclude
@@ -307,49 +308,6 @@ abstract class UmbrellaAarPom @Inject constructor(
         )
     }
 
-    /**
-     * Warns when an umbrella publication shares its `group:artifact:version` with another one.
-     *
-     * Maven publications are addressed by their coordinates, so lifecycle tasks (`publish`,
-     * `publishToMavenLocal`) write colliding publications to the same location and the last writer
-     * wins. The umbrella `.aar` survives, but another publication's `.pom` — and its `.module`, which
-     * outranks the POM for Gradle consumers — replaces the flattened dependency list this plugin
-     * exists to produce. Gradle reports `BUILD SUCCESSFUL` either way, so the corruption is silent.
-     *
-     * Only the targeted `publish<Variant>UmbrellaAarPublicationTo<Repo>Repository` task is safe in
-     * that situation. This is reported rather than enforced because the plugin cannot know which
-     * publication the author wants at those coordinates.
-     */
-    private fun Project.warnOnCoordinateClashes() {
-        val publishing = extensions.findByType<PublishingExtension>() ?: return
-        if (!extensions.extraProperties.has(CLASH_CHECK_FLAG)) {
-            extensions.extraProperties[CLASH_CHECK_FLAG] = true
-        } else {
-            return
-        }
-        publishing.publications.withType<MavenPublication>()
-            .groupBy { "${it.groupId}:${it.artifactId}:${it.version}" }
-            .filterValues { it.size > 1 }
-            .forEach { (coordinates, clashing) ->
-                val umbrella = clashing.filter { it.name.isUmbrellaPublication() }
-                if (umbrella.isEmpty()) return@forEach
-
-                val names = clashing.map { it.name }.sorted()
-                val target = umbrella.first().name
-                logger.warn(
-                    buildString {
-                        appendLine("[UmbrellaAarPom] ${names.size} publications share the coordinates '$coordinates': ${names.joinToString()}.")
-                        appendLine("  'publish' and 'publishToMavenLocal' write them to the same location, so the last one wins:")
-                        appendLine("  the umbrella .aar is kept, but another publication's .pom/.module replaces the flattened")
-                        appendLine("  dependency list this plugin generates, and the build still succeeds.")
-                        appendLine("  Give each publication distinct coordinates, for example:")
-                        appendLine("    publishing { publications.named<MavenPublication>(\"$target\") { artifactId = \"...\" } }")
-                        append("  or publish the umbrella on its own with 'publish${target.capitalize()}PublicationTo<Repo>Repository'.")
-                    },
-                )
-            }
-    }
-
     override fun apply(target: Project) = with(target) {
         plugins.withId(UMBRELLA_AAR_PLUGIN) {
             val config = configurations.findByName(UMBRELLA_AAR_CONFIG) ?: return@withId
@@ -379,10 +337,7 @@ abstract class UmbrellaAarPom @Inject constructor(
             }
 
             plugins.withType<MavenPublishPlugin> {
-                // Nested so that the check runs *after* every other `afterEvaluate` block: publishing
-                // plugins commonly set the final coordinates in one of their own, and actions added
-                // while `afterEvaluate` is running are appended to the same pass.
-                afterEvaluate { afterEvaluate { warnOnCoordinateClashes() } }
+                gradle.taskGraph.whenReady { checkCoordinateClashes(allTasks) }
             }
         }
 
@@ -407,12 +362,6 @@ abstract class UmbrellaAarPom @Inject constructor(
 
     private companion object {
         val VARIANTS = listOf("release", "debug")
-
-        /** Guards against warning twice when several publishing plugins are present. */
-        const val CLASH_CHECK_FLAG = "io.github.tiper.umbrellaaar.clashChecked"
-
-        /** Matches the `android<Variant>UmbrellaAar` publications registered by [setup]. */
-        fun String.isUmbrellaPublication() = startsWith("android") && endsWith("UmbrellaAar")
     }
 }
 

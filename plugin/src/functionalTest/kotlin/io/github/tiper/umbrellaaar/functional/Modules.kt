@@ -582,8 +582,8 @@ internal sealed interface Umbrella {
         return published()
     }
 
-    /** What the repository holds at this umbrella's coordinates. */
-    fun published() = Published(fixture.umbrellaRepo.resolve("${GROUP.replace('.', '/')}/$name/$VERSION"), "$name-$VERSION")
+    /** What the repository holds at this umbrella's coordinates, or at [artifactId] if it was given that. */
+    fun published(artifactId: String = name) = Published(fixture.umbrellaRepo.resolve("${GROUP.replace('.', '/')}/$artifactId/$VERSION"), "$artifactId-$VERSION")
 
     /** `merged-modules.txt` of [variant], as `project path -> the edge that reached it`. */
     fun mergedModules(variant: String = "release"): Map<String, String> {

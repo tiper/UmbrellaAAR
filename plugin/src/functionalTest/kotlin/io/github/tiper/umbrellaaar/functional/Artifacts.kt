@@ -279,7 +279,7 @@ internal class ModuleMetadata(val file: File) {
 }
 
 /** What a [Umbrella.publish] left in the repository. */
-internal class Published(private val dir: File, private val baseName: String) {
+internal class Published(val dir: File, private val baseName: String) {
 
     val aar: Aar get() = Aar(dir.resolve("$baseName.aar"))
 

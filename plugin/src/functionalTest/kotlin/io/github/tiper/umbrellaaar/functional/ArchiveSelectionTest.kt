@@ -131,7 +131,7 @@ class ArchiveSelectionTest {
         assertTrue("com.acme.core.OnlyInRelease" in aar.classes, aar.classes.toString())
         assertFalse("com.acme.core.OnlyInDebug" in aar.classes, aar.classes.toString())
 
-        gradle(":sdk:publish").assertLogged("BUILD SUCCESSFUL")
+        umbrella.publish("staging")
         assertTrue(umbrella.mergedSources("staging").any { it.endsWith("OnlyInRelease.kt") })
     }
 
