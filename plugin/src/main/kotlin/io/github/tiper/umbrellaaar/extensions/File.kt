@@ -89,6 +89,8 @@ private fun MutableMap<String, String>.claim(entry: String, to: File) {
     }
 }
 
+internal fun File.sameBytesAs(other: File) = length() == other.length() && readBytes().contentEquals(other.readBytes())
+
 private fun File.isSameFileAs(other: File) = exists() && other.exists() && Files.isSameFile(toPath(), other.toPath())
 
 internal fun File.zip(to: File) {

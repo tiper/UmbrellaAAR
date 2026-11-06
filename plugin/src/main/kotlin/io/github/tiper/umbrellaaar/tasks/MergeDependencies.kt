@@ -1,27 +1,17 @@
 package io.github.tiper.umbrellaaar.tasks
 
-import com.android.manifmerger.ManifestMerger2
-import com.android.manifmerger.ManifestMerger2.Invoker.Feature.USES_SDK_IN_MANIFEST_LENIENT_HANDLING
-import com.android.manifmerger.ManifestMerger2.MergeType.LIBRARY
-import com.android.manifmerger.ManifestProvider
-import com.android.manifmerger.ManifestSystemProperty.Document.PACKAGE
-import com.android.manifmerger.MergingReport.MergedManifestKind.MERGED
-import com.android.manifmerger.MergingReport.Record.Severity.ERROR
-import com.android.utils.ILogger
 import io.github.tiper.umbrellaaar.extensions.AAR_METADATA_PATH
 import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
 import io.github.tiper.umbrellaaar.extensions.RClassContent
-import io.github.tiper.umbrellaaar.extensions.fieldName
-import io.github.tiper.umbrellaaar.extensions.inlineIds
 import io.github.tiper.umbrellaaar.extensions.mergeAarMetadata
 import io.github.tiper.umbrellaaar.extensions.mergeXmlChildren
 import io.github.tiper.umbrellaaar.extensions.normalizePath
 import io.github.tiper.umbrellaaar.extensions.packageName
 import io.github.tiper.umbrellaaar.extensions.parseAarMetadata
 import io.github.tiper.umbrellaaar.extensions.relocateRInRules
+import io.github.tiper.umbrellaaar.extensions.sameBytesAs
 import io.github.tiper.umbrellaaar.extensions.stripPackageAttribute
 import io.github.tiper.umbrellaaar.extensions.toAarMetadataText
-import io.github.tiper.umbrellaaar.extensions.transformClass
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -32,7 +22,6 @@ import java.util.zip.ZipOutputStream
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.logging.Logger
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
@@ -43,6 +32,10 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.RELATIVE
 import org.gradle.api.tasks.TaskAction
+
+/** The owner of what the umbrella module brings itself. */
+internal const val MAIN = "<main module>"
+internal const val PROGUARD_TXT = "proguard.txt"
 
 @CacheableTask
 abstract class MergeDependencies : DefaultTask() {
@@ -77,14 +70,8 @@ abstract class MergeDependencies : DefaultTask() {
     /** `entry path -> module folder that contributed it`, so duplicates can name *both* sides. */
     private val contributors = mutableMapOf<String, String>()
 
-    /** `res/values*` folder + resource name, or an [overlayKey] -> module folders that shipped it. */
+    /** `res/values*` folder + resource name, or a key of [MergedOverlays] -> module folders that shipped it. */
     private val resourceNames = mutableMapOf<String, MutableList<String>>()
-
-    /** [overlayKey] -> the entry kept for it. */
-    private val overlays = mutableMapOf<String, String>()
-
-    /** Module folder -> what the files it lost declare with `@+id/` and the files kept do not. */
-    private val overriddenIds = mutableMapOf<String, MutableSet<String>>()
 
     /** The fields merged classes read from the umbrella's `R`. */
     private val rFieldReads = mutableListOf<RFieldRead>()
@@ -107,8 +94,6 @@ abstract class MergeDependencies : DefaultTask() {
     fun execute() {
         contributors.clear()
         resourceNames.clear()
-        overlays.clear()
-        overriddenIds.clear()
         rFieldReads.clear()
         seenKeys.clear()
         modulesWithResources.clear()
@@ -122,6 +107,7 @@ abstract class MergeDependencies : DefaultTask() {
         }
 
         val values = MergedValues(resourceNames, ::conflict)
+        val overlays = MergedOverlays(resourceNames, logger)
         val symbolTables = linkedMapOf(MAIN to File(src, R_TXT))
 
         src.copyRecursively(out, overwrite = true)
@@ -132,7 +118,7 @@ abstract class MergeDependencies : DefaultTask() {
             // Recorded first, so the umbrella's own declaration of a resource always wins.
             when {
                 relativePath.startsWith("res/values") -> values.add(MAIN, relativePath, File(out, relativePath))
-                relativePath.isOverlay() -> isOverridden(MAIN, relativePath, it, out)
+                relativePath.isOverlay() -> overlays.isOverridden(MAIN, relativePath, it, out)
             }
             if (relativePath == PUBLIC_TXT) modulesDeclaringPublicResources += MAIN
         }
@@ -180,7 +166,7 @@ abstract class MergeDependencies : DefaultTask() {
 
                         // A consumer layers its modules, and what one ships replaces the same
                         // resource or asset of anything below it. One AAR has no layers.
-                        relativePath.isOverlay() && isOverridden(owner, relativePath, srcFile, out) -> Unit
+                        relativePath.isOverlay() && overlays.isOverridden(owner, relativePath, srcFile, out) -> Unit
 
                         relativePath.endsWith(".kotlin_module") -> srcFile.copyTo(destFile.ofModule(owner), overwrite = true)
 
@@ -224,7 +210,7 @@ abstract class MergeDependencies : DefaultTask() {
                     filesProcessed++
                 }
 
-            overriddenIds.remove(owner)?.let { ids ->
+            overlays.takeOverriddenIds(owner)?.let { ids ->
                 val name = "res/values/$owner-overridden-ids.xml"
                 File(out, name).apply { parentFile.mkdirs() }.writeText(ids.joinToString("", "<resources>", "</resources>\n") { "<item name=\"$it\" type=\"id\"/>" })
                 values.add(owner, name, File(out, name))
@@ -233,7 +219,7 @@ abstract class MergeDependencies : DefaultTask() {
 
         val lost = values.merge().let { if (it.isEmpty()) it else it - out.inlineIdSymbols() }
 
-        mergeManifests(into = manifest, libraries = libraryManifests, packageOverride = packageOverride)
+        mergeManifests(into = manifest, libraries = libraryManifests, packageOverride = packageOverride, logger = logger)
 
         mergeAarMetadata(into = File(out, AAR_METADATA_PATH), modules = aarMetadata)
 
@@ -258,7 +244,15 @@ abstract class MergeDependencies : DefaultTask() {
         val namespaces = libraryManifests.mapNotNull { (owner, file) -> file.readText().packageName()?.let { owner to it.replace('.', '/') } }.toMap()
         val umbrellaNamespace = (mainNamespace.orNull ?: packageOverride).replace('.', '/')
         val rClasses by lazy { (namespaces + (MAIN to umbrellaNamespace)).rClasses(symbolTables, symbols) }
-        buildClassesJar(out, classEntries, umbrellaNamespace, namespaces.values.toSet()) { it.relocateRInRules(umbrellaNamespace, rClasses) }
+        buildClassesJar(
+            out,
+            classEntries,
+            umbrellaNamespace,
+            namespaces.values.toSet(),
+            onDuplicate = ::onDuplicate,
+            onRField = { field, reader -> rFieldReads += RFieldRead(field, reader, MAIN) },
+            relocateRules = { it.relocateRInRules(umbrellaNamespace, rClasses) },
+        )
         File(out, PROGUARD_TXT).takeIf { it.isFile }?.let { it.writeText(it.readText().relocateRInRules(umbrellaNamespace, rClasses)) }
         failOnMissingFields(symbols)
         logger.lifecycle("Merged dependencies into main AAR (processed $filesProcessed files)")
@@ -446,108 +440,9 @@ abstract class MergeDependencies : DefaultTask() {
         )
     }
 
-    /** `classes/<path>` -> the jar entry name, applying the `.kotlin_module` per-module rename. */
-    private fun classEntry(owner: String, relativePath: String, srcFile: File): Triple<String, String, File> {
-        val entryName = relativePath.removePrefix("classes/")
-        val renamed = when {
-            entryName.endsWith(".kotlin_module") -> {
-                val dir = entryName.substringBeforeLast('/', missingDelimiterValue = "")
-                val file = entryName.substringAfterLast('/')
-                if (dir.isEmpty()) "$owner-$file" else "$dir/$owner-$file"
-            }
-
-            else -> entryName
-        }
-        return Triple(renamed, owner, srcFile)
-    }
-
-    /**
-     * Writes `classes.jar` from the main module's exploded tree plus every dependency's class files,
-     * read directly from where `ExtractDependencies` left them.
-     *
-     * - The umbrella's own classes get their `R` references relocated here (see [execute]).
-     * - Service provider files (`META-INF/services/<interface>`) contributed by several modules are merged, because each lists
-     *   implementations that exist in the merged jar. Any other duplicate entry is a conflict.
-     */
-    private fun buildClassesJar(
-        out: File,
-        dependencyEntries: List<Triple<String, String, File>>,
-        umbrellaNamespace: String,
-        mergedNamespaces: Set<String>,
-        relocateRules: (String) -> String,
-    ) {
-        val classes = File(out, "classes")
-        val entries = linkedMapOf<String, Pair<String, File>>()
-        val serviceFiles = mutableMapOf<String, MutableList<File>>()
-
-        if (classes.isDirectory) {
-            classes.walk().filter { it.isFile }.forEach {
-                val entryName = it.relativeTo(classes).path.normalizePath()
-                entries[entryName] = MAIN to it
-                if (entryName.isServiceFile()) serviceFiles.getOrPut(entryName) { mutableListOf() } += it
-            }
-        }
-
-        dependencyEntries.forEach { (entryName, owner, file) ->
-            if (entryName.isServiceFile()) {
-                serviceFiles.getOrPut(entryName) { mutableListOf() } += file
-                entries.putIfAbsent(entryName, owner to file)
-                return@forEach
-            }
-            val existing = entries.putIfAbsent(entryName, owner to file)
-            if (existing != null) onDuplicate(owner, "classes/$entryName", file, existing.second, existing.first)
-        }
-
-        // A consumer that finds targeted rules in an AAR's classes reads no other rules of that AAR.
-        val rules = File(out, PROGUARD_TXT)
-        if (rules.isFile && entries.keys.any { it.startsWith(TARGETED_RULES) }) entries[TARGETED_RULES + MERGED_RULES] = MAIN to rules
-
-        val relocate = umbrellaNamespace.isNotEmpty() && mergedNamespaces.isNotEmpty()
-        val jar = File(out, "classes.jar").apply { if (exists()) delete() }
-        ZipOutputStream(BufferedOutputStream(FileOutputStream(jar), IO_BUFFER_SIZE)).use { zos ->
-            // Rules last: they go by what reads an `R`, and that takes the umbrella's own classes too.
-            entries.entries.sortedWith(compareBy({ it.key.startsWith(TARGETED_RULES) }, { it.key })).forEach { (entryName, source) ->
-                val (owner, file) = source
-                zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
-                val services = serviceFiles[entryName]
-                when {
-                    services != null && services.size > 1 -> zos.write(services.mergeServiceFiles())
-                    relocate && owner == MAIN && entryName.endsWith(".class") ->
-                        zos.write(file.readBytes().transformClass(umbrellaNamespace, mergedNamespaces) { field, reader -> rFieldReads += RFieldRead(field, reader, MAIN) })
-                    relocate && entryName.startsWith(TARGETED_RULES) ->
-                        zos.write(relocateRules(file.readText()).encodeToByteArray())
-                    else -> file.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
-                }
-                zos.closeEntry()
-            }
-        }
-        classes.deleteRecursively()
-    }
-
-    private fun String.isServiceFile() = startsWith(SERVICES_DIR) && length > SERVICES_DIR.length
-
     private fun String.isModuleDescriptor() = MODULE_DESCRIPTOR.matches(this)
 
     private fun String.isRootProFile() = endsWith(".pro") && '/' !in this
-
-    private fun String.isOverlay() = startsWith("res/") || startsWith("assets/")
-
-    /**
-     * What a consumer tells one resource or asset from another by. A resource has no extension
-     * there, so `res/drawable/a.xml` overrides `res/drawable/a.png`, and `a.9.png` is `a`.
-     */
-    private fun String.overlayKey() = if (startsWith("res/")) "${substringBeforeLast('/')}/${substringAfterLast('/').substringBefore('.')}" else this
-
-    private fun File.sameBytesAs(other: File) = length() == other.length() && readBytes().contentEquals(other.readBytes())
-
-    /** Union of the providers listed by each module, in contribution order, comments dropped. */
-    private fun List<File>.mergeServiceFiles(): ByteArray = asSequence()
-        .flatMap { it.readLines().asSequence() }
-        .map { it.substringBefore('#').trim() }
-        .filter { it.isNotEmpty() }
-        .distinct()
-        .joinToString(separator = "\n", postfix = "\n")
-        .encodeToByteArray()
 
     /**
      * Two modules contributed the same entry. Identical bytes are harmless (the same generated file
@@ -600,37 +495,6 @@ abstract class MergeDependencies : DefaultTask() {
         },
     )
 
-    /**
-     * Whether a module ahead of [owner] already shipped this resource or asset, which then stays,
-     * as values do. The same bytes are one file shipped twice, and not worth a word.
-     */
-    private fun isOverridden(owner: String, relativePath: String, srcFile: File, out: File): Boolean {
-        val key = relativePath.overlayKey()
-        val kept = overlays.putIfAbsent(key, relativePath)
-        if (kept == null) {
-            resourceNames[key] = mutableListOf(owner)
-            return false
-        }
-        if (srcFile.sameBytesAs(File(out, kept))) {
-            logger.info("[UmbrellaAar] Duplicate but identical '$relativePath' from '$owner' — keeping one copy.")
-        } else {
-            resourceNames.getValue(key) += owner
-            // A consumer links every module's compiled files, so their ids stay where a file goes.
-            val ids = if (relativePath.mayDeclareIds()) srcFile.inlineIds() - File(out, kept).inlineIds() else emptySet()
-            if (ids.isNotEmpty()) overriddenIds.getOrPut(owner) { sortedSetOf() } += ids
-        }
-        return true
-    }
-
-    private fun String.mayDeclareIds() = startsWith("res/") && !startsWith("res/values") && !startsWith("res/raw")
-
-    private fun File.inlineIds() = if (extension == "xml") readText().inlineIds() else emptySet()
-
-    /** What the files of this merged AAR declare with `@+id/`, each as `id/<field>`. */
-    private fun File.inlineIdSymbols() = walk()
-        .filter { it.isFile && it.relativeTo(this).path.normalizePath().mayDeclareIds() }
-        .flatMapTo(mutableSetOf()) { file -> file.inlineIds().map { "id/${it.fieldName()}" } }
-
     private fun reportDuplicateResources() {
         val duplicates = resourceNames.filterValues { it.size > 1 }
         if (duplicates.isEmpty()) return
@@ -658,77 +522,6 @@ abstract class MergeDependencies : DefaultTask() {
         val (cleanedXml, pkgName) = readText().stripPackageAttribute()
         writeText(cleanedXml)
         return pkgName.orEmpty()
-    }
-
-    /**
-     * Merges every library manifest in a **single** [ManifestMerger2] invocation.
-     *
-     * Merging them one at a time re-parsed the accumulating result from disk and re-ran the whole
-     * merge algorithm for each of N libraries — quadratic in manifest size, and ~23% of the merge
-     * step at 95 modules. `addManifestProviders` takes a collection precisely so this can be done
-     * in one pass, which is also how AGP itself merges library manifests. With no library to merge,
-     * as with only JVM modules, this still restores the package, without which a consumer crashes.
-     */
-    private fun mergeManifests(into: File, libraries: List<Pair<String, File>>, packageOverride: String) {
-        if (!into.exists()) {
-            if (libraries.isEmpty()) return
-            // No main manifest: seed with the first library's, then merge the rest into it.
-            libraries.first().second.copyTo(into, overwrite = true)
-            return mergeManifests(into, libraries.drop(1), packageOverride)
-        }
-
-        try {
-            val report = ManifestMerger2.newMerger(into, GradleILogger(logger), LIBRARY)
-                .addManifestProviders(libraries.map { (owner, file) -> manifestProvider(owner, file) })
-                .withFeatures(USES_SDK_IN_MANIFEST_LENIENT_HANDLING)
-                .apply {
-                    if (packageOverride.isNotEmpty()) {
-                        setOverride(PACKAGE, packageOverride)
-                        setNamespace(packageOverride)
-                    }
-                }
-                .merge()
-
-            when {
-                report.result.isError -> {
-                    val errors = report.loggingRecords
-                        .filter { it.severity == ERROR }
-                        .joinToString("\n") { it.message }
-                    throw GradleException("Manifest merge failed:\n$errors")
-                }
-
-                else -> {
-                    val mergedXml = report.getMergedDocument(MERGED)
-                        ?: throw GradleException("Manifest merge succeeded but produced no output")
-                    into.writeText(mergedXml)
-                }
-            }
-        } catch (e: GradleException) {
-            throw e
-        } catch (e: Exception) {
-            throw GradleException("Failed to merge manifests: ${e.message}", e)
-        }
-    }
-
-    /** [owner] is the module folder, so merge conflicts name the module rather than 95 identical file names. */
-    private fun manifestProvider(owner: String, file: File) = object : ManifestProvider {
-        override fun getName(): String = owner
-        override fun getManifest(): File = file
-    }
-
-    private class GradleILogger(private val logger: Logger) : ILogger {
-        override fun error(t: Throwable?, msgFormat: String?, vararg args: Any?) {
-            logger.error(msgFormat?.format(*args), t)
-        }
-        override fun warning(msgFormat: String?, vararg args: Any?) {
-            logger.warn(msgFormat?.format(*args))
-        }
-        override fun info(msgFormat: String?, vararg args: Any?) {
-            logger.info(msgFormat?.format(*args))
-        }
-        override fun verbose(msgFormat: String?, vararg args: Any?) {
-            logger.debug(msgFormat?.format(*args))
-        }
     }
 
     /** Where a file every module may ship goes, under a module-prefixed name. */
@@ -772,17 +565,12 @@ abstract class MergeDependencies : DefaultTask() {
     private data class RFieldRead(val field: String, val reader: String, val owner: String)
 
     private companion object {
-        const val MAIN = "<main module>"
         const val ANDROID_MANIFEST = "AndroidManifest.xml"
         const val R_TXT = "R.txt"
-        const val PROGUARD_TXT = "proguard.txt"
         const val PUBLIC_TXT = "public.txt"
         const val BASELINE_PROFILE = "baseline-prof.txt"
         const val ANNOTATIONS_ZIP = "annotations.zip"
         const val LINT_JAR = "lint.jar"
-        const val SERVICES_DIR = "META-INF/services/"
-        const val TARGETED_RULES = "META-INF/com.android.tools/"
-        const val MERGED_RULES = "r8/umbrella-merged.pro"
         const val MAX_REPORTED = 20
         val MODULE_DESCRIPTOR = Regex("""classes/(?:META-INF/versions/\d+/)?module-info\.class""")
         val APPEND = arrayOf(java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)
