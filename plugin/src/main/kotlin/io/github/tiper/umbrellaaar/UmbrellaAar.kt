@@ -96,7 +96,7 @@ class UmbrellaAar : Plugin<Project> {
             archiveModules.set(archives.map { it.modules })
             outputDir.convention(layout.buildDirectory.dir("$INTERMEDIATES_PATH/$key/dependencies"))
             extractionState.convention(layout.buildDirectory.file("$INTERMEDIATES_PATH/$key/extraction-state"))
-            reportFile.convention(layout.buildDirectory.file("$REPORTS_PATH/$key/$MERGED_MODULES_FILE"))
+            reportFile.convention(mergedModulesReport(key))
         }
 
         val extractMain = tasks.register<ExtractMainAar>("extract${keyCapitalized}MainClasses") {
@@ -113,6 +113,8 @@ class UmbrellaAar : Plugin<Project> {
             mergedAarDir.convention(layout.buildDirectory.dir("$INTERMEDIATES_PATH/$key/merged-aar"))
         }
     }
+
+    private fun Project.mergedModulesReport(key: String) = layout.buildDirectory.file("$REPORTS_PATH/$key/$MERGED_MODULES_FILE")
 
     /** Memoised, as it reaches into other projects, which a read at execution time must not do. */
     private fun Project.archivesProvider(archiveCandidates: Array<String>, graph: Provider<ProjectGraph>): Provider<Archives> {
@@ -134,6 +136,7 @@ class UmbrellaAar : Plugin<Project> {
     /** Registers the cheap, per-publication tail of the pipeline. */
     private fun Project.registerVariant(
         variant: String,
+        key: String,
         sourcesJars: Provider<SourcesJars>,
         mergeDependencies: TaskProvider<MergeDependencies>,
     ) {
@@ -144,6 +147,7 @@ class UmbrellaAar : Plugin<Project> {
             description = "Bundles all merged dependencies into a single AAR for $variant"
             unpackedMainAar.set(mergeDependencies.flatMap { it.mergedAarDir })
             umbrellaAarOutput.convention(layout.buildDirectory.file("$OUTPUTS_PATH/${project.name}-$variant.aar"))
+            reports.from(mergedModulesReport(key))
         }
 
         val mergeSources = tasks.register<MergeSources>("merge${variantCapitalized}UmbrellaAarSources") {
@@ -175,7 +179,7 @@ class UmbrellaAar : Plugin<Project> {
         val archiveCandidates = (listOf(aarBuildType) + variants).distinct().map { it.capitalize() }.toTypedArray()
         val mergeDependencies = registerSharedPipeline(key, archiveCandidates, namespace, graph)
         val sourcesJars = sourcesJarsProvider(archiveCandidates, graph)
-        variants.forEach { registerVariant(it, sourcesJars, mergeDependencies) }
+        variants.forEach { registerVariant(it, key, sourcesJars, mergeDependencies) }
     }
 
     /**

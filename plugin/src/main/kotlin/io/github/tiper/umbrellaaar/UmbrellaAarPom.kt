@@ -89,7 +89,8 @@ abstract class UmbrellaAarPom @Inject constructor(
             outputFile.convention(layout.buildDirectory.file("$REPORTS_PATH/$variant/$EXTERNAL_DEPENDENCIES_FILE"))
         }
 
-        tasks.named("bundle${variantCapitalized}UmbrellaAar").configure {
+        tasks.named<BundleUmbrellaAar>("bundle${variantCapitalized}UmbrellaAar").configure {
+            reports.from(collectDeps.flatMap { it.outputFile })
             // Through the provider, so what it refuses fails the task graph, like all that fails before
             // a task runs, and not as the configuration cache or the collect task gets to it.
             dependsOn(publishedProvider.map { collectDeps })
