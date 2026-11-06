@@ -11,7 +11,52 @@ permissions:
   packages: write
 
 jobs:
+  # A version that reached a repository cannot be taken back, so this stands between the tag and the
+  # upload. A manual run from a branch has no tag to answer to, and fails too.
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Java
+        uses: actions/setup-java@v4.6.0
+        with:
+          distribution: "jetbrains"
+          java-version: 17
+          cache: "gradle"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.konan
+            /usr/local/lib/android/sdk/ndk
+          key: ${{ runner.os }}-kotlin-native-ndk-${{ hashFiles(
+            'gradle/libs.versions.toml',
+            'gradle.properties'
+            ) }}
+          restore-keys: |
+            ${{ runner.os }}-kotlin-native-ndk-
+
+      # What goes out is named by the build, whatever the tag says.
+      - name: Compare the tag with the project version
+        run: |
+          version="$(./gradlew :plugin:properties --property version --quiet --no-daemon | sed -n 's/^version: //p')"
+          if [ "$GITHUB_REF_TYPE" != tag ] || [ "$GITHUB_REF_NAME" != "$version" ]; then
+            echo "::error::Not publishing: $GITHUB_REF_TYPE '$GITHUB_REF_NAME' is not the version of :plugin, '$version'. Set version in plugin/build.gradle.kts and tag that commit."
+            exit 1
+          fi
+
+      - name: Run unit tests
+        run: ./gradlew :plugin:test --no-daemon --build-cache --parallel
+
   publish:
+    needs: guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
