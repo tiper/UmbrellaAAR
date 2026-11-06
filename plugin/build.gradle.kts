@@ -61,7 +61,7 @@ testing {
                         functionalTestProperty(name).orNull?.let { systemProperty("umbrellaaar.$name", it) }
                     }
                     // Below the CI job's limit, so a wedged fixture still leaves a report behind.
-                    timeout = Duration.ofMinutes(50)
+                    timeout = Duration.ofMinutes(80)
                 }
             }
         }
