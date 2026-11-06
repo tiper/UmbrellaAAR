@@ -20,12 +20,16 @@ class MergeDependenciesTest {
     private val depsDir = File(root, "deps").apply { mkdirs() }
     private val outDir = File(root, "out")
 
+    /** Modules in the order they are declared, which a test can take as the merge order. */
+    private val moduleOrder = linkedSetOf<String>()
+
     private fun mainAar(vararg files: Pair<String, String>) {
         write(mainDir, "AndroidManifest.xml", manifest("com.example.umbrella"))
         files.forEach { (path, content) -> write(mainDir, path, content) }
     }
 
     private fun module(name: String, namespace: String, vararg files: Pair<String, String>) {
+        moduleOrder += name
         val dir = File(depsDir, name).apply { mkdirs() }
         write(dir, "AndroidManifest.xml", manifest(namespace))
         files.forEach { (path, content) -> write(dir, path, content) }
@@ -34,6 +38,7 @@ class MergeDependenciesTest {
     private fun merge(): File {
         val task = project.tasks.register<MergeDependencies>("merge${counter++}").get()
         task.dependencies.set(depsDir)
+        task.moduleOrder.set(moduleOrder)
         task.mainAarDir.set(mainDir)
 
         task.mergedAarDir.set(outDir)
@@ -121,14 +126,41 @@ class MergeDependenciesTest {
     @Test
     fun `conflicting duplicate files name both contributors`() {
         mainAar()
-        module("moduleA", "com.example.a", "assets/config.json" to """{"owner":"a"}""")
-        module("moduleB", "com.example.b", "assets/config.json" to """{"owner":"b"}""")
+        module("moduleA", "com.example.a", "libs/config.jar" to """{"owner":"a"}""")
+        module("moduleB", "com.example.b", "libs/config.jar" to """{"owner":"b"}""")
 
         val error = assertFailsWith<GradleException> { merge() }
 
-        assertTrue("assets/config.json" in error.message.orEmpty())
+        assertTrue("libs/config.jar" in error.message.orEmpty())
         assertTrue("First contributor : moduleA" in error.message.orEmpty(), error.message.orEmpty())
         assertTrue("Second contributor: moduleB" in error.message.orEmpty(), error.message.orEmpty())
+    }
+
+    @Test
+    fun `a clash of any other file says what can be done about it`() {
+        mainAar()
+        module("moduleA", "com.example.a", "data/config.json" to "a")
+        module("moduleB", "com.example.b", "data/config.json" to "b")
+
+        val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("exclude(...) one of them from export" in error, error)
+        assertFalse("umbrellaAar configuration" in error, error)
+    }
+
+    @Test
+    fun `a clash of names that differ by case names the first contributor too`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/Note.txt" to "a")
+        module("moduleB", "com.example.b", "assets/note.txt" to "b")
+        val diskIgnoresCase = File(depsDir, "moduleA/ASSETS/note.TXT").exists()
+
+        if (diskIgnoresCase) {
+            val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+            assertTrue("First contributor : moduleA" in error, error)
+        } else {
+            assertEquals(setOf("Note.txt", "note.txt"), File(merge(), "assets").list()!!.toSet())
+        }
     }
 
     @Test
@@ -136,10 +168,84 @@ class MergeDependenciesTest {
         mainAar()
         module("moduleA", "com.example.a", "assets/shared.json" to """{"shared":true}""")
         module("moduleB", "com.example.b", "assets/shared.json" to """{"shared":true}""")
+        module("moduleC", "com.example.c", "libs/shared.jar" to "same")
+        module("moduleD", "com.example.d", "libs/shared.jar" to "same")
 
         val out = merge()
 
         assertEquals("""{"shared":true}""", File(out, "assets/shared.json").readText())
+        assertEquals("same", File(out, "libs/shared.jar").readText())
+    }
+
+    @Test
+    fun `the first module keeps a file resource under any extension`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/drawable/ic.9.png" to "nine patch")
+        module("moduleB", "com.example.b", "res/drawable/ic.xml" to "<shape/>")
+        module("moduleC", "com.example.c", "res/drawable-hdpi/ic.xml" to "<shape/>")
+
+        val out = merge()
+
+        assertEquals(listOf("ic.9.png"), File(out, "res/drawable").list()!!.toList())
+        assertEquals(listOf("ic.xml"), File(out, "res/drawable-hdpi").list()!!.toList())
+    }
+
+    @Test
+    fun `the first module keeps an asset`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/config.json" to "a")
+        module("moduleB", "com.example.b", "assets/config.json" to "b", "assets/config.txt" to "b")
+
+        val out = merge()
+
+        assertEquals("a", File(out, "assets/config.json").readText())
+        assertEquals("b", File(out, "assets/config.txt").readText())
+    }
+
+    @Test
+    fun `two modules with deep links are told that renaming is no way out`() {
+        mainAar()
+        module("moduleA", "com.example.a", "navigation.json" to "[a]")
+        module("moduleB", "com.example.b", "navigation.json" to "[b]")
+
+        val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("generates" in error && "deep links" in error, error)
+        assertFalse("Rename" in error, error)
+    }
+
+    @Test
+    fun `two modules with prefab are told that renaming is no way out`() {
+        mainAar()
+        module("moduleA", "com.example.a", "prefab/prefab.json" to "{a}")
+        module("moduleB", "com.example.b", "prefab/prefab.json" to "{b}")
+
+        val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("generates" in error && "prefab" in error, error)
+        assertFalse("Rename" in error, error)
+    }
+
+    @Test
+    fun `a file in the classes of two modules is not called a class`() {
+        mainAar()
+        module("moduleA", "com.example.a", "classes/config/shared.properties" to "a")
+        module("moduleB", "com.example.b", "classes/config/shared.properties" to "b")
+
+        val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertFalse("same class" in error, error)
+    }
+
+    @Test
+    fun `a native library of two modules still fails`() {
+        mainAar()
+        module("moduleA", "com.example.a", "jni/arm64-v8a/libshared.so" to "a")
+        module("moduleB", "com.example.b", "jni/arm64-v8a/libshared.so" to "b")
+
+        val error = assertFailsWith<GradleException> { merge() }
+
+        assertTrue("native library" in error.message.orEmpty(), error.message.orEmpty())
     }
 
     // ── classes.jar is streamed straight from the extracted module folders ────────────────────
@@ -484,6 +590,7 @@ class MergeDependenciesTest {
 
     /** Lays [name] out with the real extraction, from an AAR made of [entries]. */
     private fun extractedModule(name: String, namespace: String, vararg entries: Pair<String, ByteArray>) {
+        moduleOrder += name
         val aar = writeBytes(root, "$name.aar", zipOf(listOf("AndroidManifest.xml" to manifest(namespace).encodeToByteArray()) + entries))
         val extraction = project.objects.newInstance(ExtractDependencies.ExtractParameters::class.java).apply {
             archive.set(aar)

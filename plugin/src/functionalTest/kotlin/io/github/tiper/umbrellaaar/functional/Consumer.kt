@@ -28,6 +28,9 @@ internal class Consumer(
     /** Runs R8 on the release variant, keeping only what this app reaches. */
     var minifyRelease = false
 
+    /** Removes the resources R8 left unreachable from the release variant, along with [minifyRelease]. */
+    var shrinkResources = false
+
     /** Paths several of the app's libraries ship, of which an Android build has to be told to take one. */
     var pickFirsts = emptyList<String>()
 
@@ -133,6 +136,7 @@ internal class Consumer(
         |    buildTypes {
         |        release {
         |            isMinifyEnabled = $minifyRelease
+        |            isShrinkResources = $shrinkResources
         |            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "keep.pro")
         |        }
         |    }

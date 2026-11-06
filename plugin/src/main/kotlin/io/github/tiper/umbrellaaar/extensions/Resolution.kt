@@ -180,6 +180,7 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
     val modules = linkedSetOf<Project>()
     val components = mutableListOf(root)
     val via = linkedMapOf<String, String>()
+    val dependents = mutableMapOf<String, MutableList<String>>()
     val variantOf = linkedMapOf<String, String>()
     // Only an export reaches a local module, so the umbrella module's own line on one is no path to it.
     val declarations = mutableMapOf(root.id to Declarations(hostDeclarations(buildType), externalOnly = true))
@@ -218,15 +219,18 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
             }
             when {
                 selected.id == root.id -> if (selfInclusionVia == null) selfInclusionVia = labels.getValue(current.id)
-                module != null -> if (modules.add(module)) {
-                    via[module.path] = labels.getValue(current.id)
-                    variantOf[module.path] = edge.resolvedVariant.displayName
-                    declarations[selected.id] = Declarations(module.configurations.getByName(edge.resolvedVariant.displayName).hierarchy)
-                    labels[selected.id] = "${module.path} -> ${edge.resolvedVariant.displayName}"
-                    queue += selected
-                    components += selected
-                    if (selected.variants.size > 1 && !isExcluded(module.path)) {
-                        conflicts["${module.path} (via ${labels.getValue(current.id)})"] = variantsMessage(selected)
+                module != null -> {
+                    (current.id as? ProjectComponentIdentifier)?.takeIf { current != root }?.let { dependents.getOrPut(module.path) { mutableListOf() } += it.projectPath }
+                    if (modules.add(module)) {
+                        via[module.path] = labels.getValue(current.id)
+                        variantOf[module.path] = edge.resolvedVariant.displayName
+                        declarations[selected.id] = Declarations(module.configurations.getByName(edge.resolvedVariant.displayName).hierarchy)
+                        labels[selected.id] = "${module.path} -> ${edge.resolvedVariant.displayName}"
+                        queue += selected
+                        components += selected
+                        if (selected.variants.size > 1 && !isExcluded(module.path)) {
+                            conflicts["${module.path} (via ${labels.getValue(current.id)})"] = variantsMessage(selected)
+                        }
                     }
                 }
                 // External modules, and projects of included builds, which are published as such.
@@ -258,6 +262,7 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
             selfInclusionVia = selfInclusionVia,
             compileOnlyOnly = compileOnlyModules(runtimeSides, reached = hostProjectDependencies + modules.map { it.path } + path),
             variantOf = variantOf,
+            mergeOrder = consumersFirst(modules.map { it.path }, dependents),
         ),
         externalsOf = owners.mapValues { (_, owner) ->
             externalEdges[owner.id].orEmpty().flatMap { it.declaredBy(declarations.getValue(owner.id), inForce[owner.id].orEmpty()) }

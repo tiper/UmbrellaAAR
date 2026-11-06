@@ -36,6 +36,8 @@ import org.gradle.api.attributes.java.TargetJvmEnvironment.TARGET_JVM_ENVIRONMEN
  *   previous deny-list traversal did merge them, so they are reported rather than silently dropped.
  * @param variantOf `project path -> the variant Gradle selected in it`, for example
  *   `paidReleaseRuntimeElements`. Empty on the legacy graph, which resolves nothing.
+ * @param mergeOrder the project paths of [modules] in the order a consumer of them ranks them, see
+ *   [consumersFirst].
  */
 internal data class ProjectGraph(
     val modules: Set<Project>,
@@ -43,7 +45,26 @@ internal data class ProjectGraph(
     val selfInclusionVia: String?,
     val compileOnlyOnly: Map<String, String> = emptyMap(),
     val variantOf: Map<String, String> = emptyMap(),
+    val mergeOrder: List<String> = emptyList(),
 )
+
+/**
+ * [reached], with whatever depends on a module moved ahead of it. That is Gradle's `CONSUMER_FIRST`,
+ * which AGP asks for and merges manifests, resources and assets in, and this walks the modules the
+ * way Gradle does, so unrelated ones land where they would in a consumer as well. An edge back to a
+ * module still being walked is left out, which is all a cycle takes.
+ */
+internal fun consumersFirst(reached: Iterable<String>, dependents: Map<String, List<String>>): List<String> {
+    val visited = mutableSetOf<String>()
+    return buildList {
+        fun visit(module: String) {
+            if (!visited.add(module)) return
+            dependents[module].orEmpty().forEach(::visit)
+            add(module)
+        }
+        reached.forEach(::visit)
+    }
+}
 
 internal fun Project.findAllProjectDependencies(
     config: Configuration,
@@ -66,9 +87,11 @@ internal fun Project.resolveProjectGraph(config: Configuration, buildType: Strin
     val host = this
     val result = linkedSetOf<Project>()
     val via = linkedMapOf<String, String>()
+    val dependents = mutableMapOf<String, MutableList<String>>()
     val queue = ArrayDeque<Project>()
 
     fun enqueue(owner: String, from: String, project: Project) {
+        if (owner != host.path) dependents.getOrPut(project.path) { mutableListOf() } += owner
         if (result.add(project)) {
             via[project.path] = "$owner -> $from"
             queue.add(project)
@@ -107,6 +130,7 @@ internal fun Project.resolveProjectGraph(config: Configuration, buildType: Strin
         via = via - host.path,
         selfInclusionVia = selfInclusionVia,
         compileOnlyOnly = compileOnlyOnly.filterKeys { path -> result.none { it.path == path } && path != host.path },
+        mergeOrder = consumersFirst(result.map { it.path }, dependents),
     )
 }
 

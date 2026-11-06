@@ -16,6 +16,9 @@ internal sealed class Module(val fixture: Fixture, val name: String, parent: Mod
 
     val namespace = "$GROUP.${name.filter(Char::isLetterOrDigit)}"
 
+    /** Where the module lives, relative to the project. Gradle puts it at its path by default. */
+    var location: String = path.removePrefix(":").replace(':', '/')
+
     /** Kotlin expressions a consumer can compile against, proving the code reached it. */
     val calls = mutableListOf<String>()
 
@@ -35,12 +38,18 @@ internal sealed class Module(val fixture: Fixture, val name: String, parent: Mod
     protected open val visibleModules: List<Module> get() = emptyList()
 
     private val files = linkedMapOf<String, String>()
+    private val binaries = linkedMapOf<String, ByteArray>()
     private val jars = mutableListOf<String>()
     private val extraScript = mutableListOf<String>()
 
     /** Adds [content] at [path], relative to the module. */
     fun file(path: String, content: String) {
         files[path] = content
+    }
+
+    /** Adds [content] at [path], relative to the module. */
+    fun binary(path: String, content: ByteArray) {
+        binaries[path] = content
     }
 
     /** Adds a real jar at [path], relative to the module, for a `files(...)` dependency to point at. */
@@ -54,10 +63,11 @@ internal sealed class Module(val fixture: Fixture, val name: String, parent: Mod
     }
 
     internal fun write() {
-        val dir = fixture.projectDir.resolve(path.removePrefix(":").replace(':', '/')).apply { mkdirs() }
+        val dir = fixture.projectDir.resolve(location).apply { mkdirs() }
         (generatedFiles() + files).forEach { (path, content) ->
             dir.resolve(path).apply { parentFile.mkdirs() }.writeText(content)
         }
+        binaries.forEach { (path, content) -> dir.resolve(path).apply { parentFile.mkdirs() }.writeBytes(content) }
         jars.forEach { path ->
             ZipOutputStream(dir.resolve(path).apply { parentFile.mkdirs() }.outputStream()).use { jar ->
                 jar.putNextEntry(ZipEntry("local.txt"))

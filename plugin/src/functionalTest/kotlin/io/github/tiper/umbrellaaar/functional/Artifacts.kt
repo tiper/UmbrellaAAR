@@ -46,6 +46,11 @@ internal class Aar(val file: File) {
 
     val proguardRules: String by lazy { text("proguard.txt").orEmpty() }
 
+    /** The name of every string left in the merged `res/values`, however many files hold them. */
+    val declaredStrings: List<String> by lazy {
+        entries.filter { it.startsWith("res/values/") }.flatMap { STRING_NAME.findAll(text(it).orEmpty()).map { match -> match.groupValues[1] } }
+    }
+
     val manifest: Manifest by lazy { Manifest(checkNotNull(text("AndroidManifest.xml")) { "$file has no AndroidManifest.xml" }) }
 
     private val classEntries: Map<String, ByteArray> by lazy {
@@ -67,6 +72,10 @@ internal class Aar(val file: File) {
         val bytes = checkNotNull(classEntries["${name.replace('.', '/')}.class"]) { "$file has no class $name" }
         return text in String(bytes, Charsets.ISO_8859_1)
     }
+
+    private companion object {
+        val STRING_NAME = Regex("<string name=\"([^\"]+)\"")
+    }
 }
 
 /** An `AndroidManifest.xml` from an AAR. */
@@ -77,6 +86,11 @@ internal class Manifest(val text: String) {
     val packageName: String? = root.getAttribute("package").ifEmpty { null }
 
     val permissions: Set<String> = root.childElements("uses-permission").mapTo(sortedSetOf()) { it.getAttribute("android:name") }
+
+    /** Permissions listed to take them away from what ranks below, which a consumer's merge acts on. */
+    val removedPermissions: Set<String> = root.childElements("uses-permission").filter { it.getAttribute("tools:node") == "remove" }.mapTo(sortedSetOf()) { it.getAttribute("android:name") }
+
+    val grantedPermissions: Set<String> get() = permissions - removedPermissions
 }
 
 /** One `<dependency>` of a [Pom]. */
@@ -238,6 +252,17 @@ internal class Apk(val file: File) {
         }
     }
 
+    /** The attributes of every manifest element, as a set: merging need not keep their order. */
+    val manifest: Set<String> by lazy {
+        aapt2("dump", "xmltree", "--file", "AndroidManifest.xml").lineSequence().mapTo(sortedSetOf()) { it.replace(LINE_NUMBER, "").trim() } - ""
+    }
+
+    /** Entry [name] of the APK, as packaged. */
+    fun text(name: String): String? = ZipFile(file).use { it.textOf(name) }
+
+    /** Compiled XML [name] of the APK, in text. */
+    fun xml(name: String): String = aapt2("dump", "xmltree", "--file", name)
+
     private fun aapt2(vararg arguments: String): String {
         val process = ProcessBuilder(listOf(AAPT2.path) + arguments + file.path).redirectErrorStream(true).start()
         val output = process.inputStream.bufferedReader().use { it.readText() }
@@ -250,6 +275,7 @@ internal class Apk(val file: File) {
         val SIGNATURE_ENTRY = Regex("META-INF/[^/]+\\.(SF|RSA|DSA|EC|MF)")
         val RESOURCE_LINE = Regex("^\\s+resource 0x[0-9a-f]+ (\\S+)")
         val RESOURCE_ID = Regex("0x7f[0-9a-f]{6}")
+        val LINE_NUMBER = Regex("\\(line=\\d+\\)")
         val AAPT2: File by lazy {
             ANDROID_SDK.resolve("build-tools").listFiles().orEmpty().sortedBy { it.name }.lastOrNull { it.resolve("aapt2").canExecute() }?.resolve("aapt2")
                 ?: error("No build-tools with aapt2 in $ANDROID_SDK")

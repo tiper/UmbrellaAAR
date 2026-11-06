@@ -13,6 +13,7 @@ import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
 import org.gradle.api.provider.SetProperty
@@ -59,19 +60,16 @@ abstract class ExtractDependencies : DefaultTask() {
     @get:OutputFile
     abstract val reportFile: RegularFileProperty
 
-    @get:Internal
-    abstract val rootDir: DirectoryProperty
-
     /**
-     * Output folder names are derived from [rootDir], which is `@Internal`. Declaring the derived
-     * names as an input stops a relocated build directory from producing a stale-but-up-to-date
-     * result.
+     * `archive -> the folder it extracts to`, see [folderNames]. An archive's path belongs to this
+     * machine, so only the names of the folders are an input.
      */
+    @get:Internal
+    abstract val archiveFolders: MapProperty<File, String>
+
     @get:Input
     internal val folderNames: Provider<List<String>>
-        get() = dependencies.elements.map { archives ->
-            archives.map { it.asFile }.folderNames(rootDir.get().asFile).values.sorted()
-        }
+        get() = archiveFolders.map { it.values.sorted() }
 
     @get:Inject
     abstract val workers: WorkerExecutor
@@ -90,7 +88,7 @@ abstract class ExtractDependencies : DefaultTask() {
         writeReport()
 
         val archives = dependencies.files.toList()
-        val folders = archives.folderNames(rootDir.get().asFile)
+        val folders = archiveFolders.get()
 
         // Pass 1 (cheap, parallel): learn which namespaces are actually being merged, so R-class
         // relocation only ever touches those and never a third-party AAR that ships its own R.
@@ -105,7 +103,8 @@ abstract class ExtractDependencies : DefaultTask() {
         val state = buildString {
             appendLine(mainNamespace.get())
             namespaces.sorted().forEach(::appendLine)
-            folders.entries.map { (file, folder) -> "${file.invariantSeparatorsPath} -> $folder" }.sorted().forEach(::appendLine)
+            // Not the archive's path: this file is part of what merging takes in, on any machine.
+            folders.entries.map { (file, folder) -> "${file.name} -> $folder" }.sorted().forEach(::appendLine)
         }
         val incremental = inputChanges.isIncremental && stateFile.isFile && stateFile.readText() == state
         // Only rewritten once every archive is extracted: an interrupted run must never look complete.
@@ -209,25 +208,22 @@ abstract class ExtractDependencies : DefaultTask() {
 }
 
 /**
- * Stable, readable output folder per archive, keyed off the owning module directory
- * (`sample/jni/sample1/build/outputs/aar/sample1-release.aar` -> `sample_jni_sample1`) rather than
- * the full artifact path. These names end up in the published AAR as `res/values*` file prefixes.
+ * A folder per archive of `archive -> the project path of its module`, keeping this map's order:
+ * `:sample:jni:sample1` -> `sample_jni_sample1`.
+ *
+ * These names end up in the published AAR as `res/values*` and `.kotlin_module` file prefixes, so
+ * they come from the project path and leave out where a checkout, a module or its build directory
+ * is. No two may differ by case alone, as they are folders on a disk that may not tell them apart.
  */
-internal fun List<File>.folderNames(root: File): Map<File, String> {
-    val used = mutableMapOf<String, Int>()
-    return sortedBy { it.invariantSeparatorsPath }.associateWith { file ->
-        val base = file.moduleFolderName(root)
-        val seen = used.merge(base, 1, Int::plus) ?: 1
-        if (seen == 1) base else "$base-$seen"
+internal fun Map<File, String>.folderNames(): Map<File, String> {
+    val used = mutableSetOf<String>()
+    val names = entries.sortedWith(compareBy({ it.value }, { it.key.name })).associate { (file, path) ->
+        val base = path.moduleFolderName()
+        file to generateSequence(1, Int::inc).map { if (it == 1) base else "$base-$it" }.first { used.add(it.lowercase()) }
     }
+    return mapValues { (file) -> names.getValue(file) }
 }
 
-private fun File.moduleFolderName(root: File): String {
-    val relative = runCatching { relativeTo(root).invariantSeparatorsPath }.getOrNull() ?: nameWithoutExtension
-    val moduleDir = relative.substringBefore("/build/", missingDelimiterValue = "")
-    return moduleDir.ifEmpty { relative.removeSuffix(".$extension") }
-        .replace(Regex("[^A-Za-z0-9._-]"), "_")
-        .trim('_')
-        .ifEmpty { nameWithoutExtension }
-}
+/** Not a leading dot, which a consumer's resource merge takes for a hidden file and skips in silence. */
+private fun String.moduleFolderName(): String = replace(Regex("[^A-Za-z0-9._-]"), "_").trim('_', '.').ifEmpty { "module" }
 

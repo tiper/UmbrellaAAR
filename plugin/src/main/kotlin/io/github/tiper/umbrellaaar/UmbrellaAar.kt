@@ -33,6 +33,8 @@ import io.github.tiper.umbrellaaar.tasks.ExtractDependencies
 import io.github.tiper.umbrellaaar.tasks.ExtractMainAar
 import io.github.tiper.umbrellaaar.tasks.MergeDependencies
 import io.github.tiper.umbrellaaar.tasks.MergeSources
+import io.github.tiper.umbrellaaar.tasks.folderNames
+import java.io.File
 import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -63,6 +65,9 @@ class UmbrellaAar : Plugin<Project> {
     /** The sources jars of one pipeline. A module without one adds nothing to them. */
     private class SourcesJars(val main: List<FileCollection>, val merged: List<FileCollection>)
 
+    /** The archives of one pipeline, by module, and the folder each one extracts to. */
+    private class Archives(val files: List<FileCollection>, val folders: Map<File, String>)
+
     /**
      * Registers the expensive part of the pipeline exactly once per [key].
      *
@@ -77,18 +82,13 @@ class UmbrellaAar : Plugin<Project> {
         graph: Provider<ProjectGraph>,
     ): TaskProvider<MergeDependencies> {
         val keyCapitalized = key.capitalize()
+        val archives = archivesProvider(archiveCandidates, graph)
 
         val extractDependencies = tasks.register<ExtractDependencies>("extract${keyCapitalized}Dependencies") {
             mainNamespace.convention(namespace)
-            rootDir.convention(project.rootProject.layout.projectDirectory)
             mergedModules.set(graph.map { g -> g.modules.map { "${it.path}\t${g.via[it.path].orEmpty()}" }.sorted() })
-            dependencies.from(
-                graph.map { g ->
-                    g.modules.map { module ->
-                        module.findAarTask(*g.archiveVariant(module, archiveCandidates)).map { it.outputs.files }
-                    }
-                },
-            )
+            dependencies.from(archives.map { it.files })
+            archiveFolders.set(archives.map { it.folders })
             outputDir.convention(layout.buildDirectory.dir("$INTERMEDIATES_PATH/$key/dependencies"))
             reportFile.convention(layout.buildDirectory.file("$REPORTS_PATH/$key/$MERGED_MODULES_FILE"))
         }
@@ -101,10 +101,28 @@ class UmbrellaAar : Plugin<Project> {
 
         return tasks.register<MergeDependencies>("merge${keyCapitalized}UmbrellaAarDependencies") {
             dependencies.set(extractDependencies.flatMap { it.outputDir })
+            moduleOrder.set(archives.map { it.folders.values.toList() })
             mainAarDir.set(extractMain.flatMap { it.unpackedAarDir })
             mainNamespace.convention(namespace)
             mergedAarDir.convention(layout.buildDirectory.dir("$INTERMEDIATES_PATH/$key/merged-aar"))
         }
+    }
+
+    /** Memoised, as it reaches into other projects, which a read at execution time must not do. */
+    private fun Project.archivesProvider(archiveCandidates: Array<String>, graph: Provider<ProjectGraph>): Provider<Archives> {
+        val memo = lazy {
+            val g = graph.get()
+            val modules = g.modules.associateBy { it.path }
+            val archives = g.mergeOrder.associateWith { path ->
+                val module = modules.getValue(path)
+                module.findAarTask(*g.archiveVariant(module, archiveCandidates)).get().outputs.files
+            }
+            Archives(
+                files = archives.values.toList(),
+                folders = archives.entries.flatMap { (path, files) -> files.map { it to path } }.toMap().folderNames(),
+            )
+        }
+        return provider { memo.value }
     }
 
     /** Registers the cheap, per-publication tail of the pipeline. */
@@ -403,7 +421,8 @@ class UmbrellaAar : Plugin<Project> {
             val kept = graph.modules.filterNot { it.isExcluded(rules) }.toSet()
             reportGraph(graph, kept, resolution, rules, buildType)
             logger.info("[UmbrellaAar] $path/$buildType merges ${kept.size} modules: ${kept.joinToString { it.path }}")
-            graph.copy(modules = kept)
+            val keptPaths = kept.mapTo(hashSetOf()) { it.path }
+            graph.copy(modules = kept, mergeOrder = graph.mergeOrder.filter(keptPaths::contains))
         }
         return provider { memo.value }
     }

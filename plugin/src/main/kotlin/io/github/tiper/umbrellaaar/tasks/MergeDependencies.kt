@@ -31,6 +31,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.logging.Logger
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
@@ -47,6 +48,13 @@ abstract class MergeDependencies : DefaultTask() {
     @get:InputDirectory
     @get:PathSensitive(RELATIVE)
     abstract val dependencies: DirectoryProperty
+
+    /**
+     * The module folders of [dependencies] in the order a consumer of those modules ranks them. Where
+     * two modules ship one thing the first to come here keeps it, as it would in that consumer.
+     */
+    @get:Input
+    abstract val moduleOrder: ListProperty<String>
 
     @get:InputDirectory
     @get:PathSensitive(RELATIVE)
@@ -67,8 +75,11 @@ abstract class MergeDependencies : DefaultTask() {
     /** `entry path -> module folder that contributed it`, so duplicates can name *both* sides. */
     private val contributors = mutableMapOf<String, String>()
 
-    /** `res/values*` folder + resource name -> module folders that declared it. */
+    /** `res/values*` folder + resource name, or an [overlayKey] -> module folders that shipped it. */
     private val resourceNames = mutableMapOf<String, MutableList<String>>()
+
+    /** [overlayKey] -> the entry kept for it. */
+    private val overlays = mutableMapOf<String, String>()
 
     /**
      * Keys already written to each de-duplicated file (`R.txt`, `public.txt`, `baseline-prof.txt`).
@@ -88,6 +99,7 @@ abstract class MergeDependencies : DefaultTask() {
     fun execute() {
         contributors.clear()
         resourceNames.clear()
+        overlays.clear()
         seenKeys.clear()
         modulesWithResources.clear()
         modulesDeclaringPublicResources.clear()
@@ -105,7 +117,10 @@ abstract class MergeDependencies : DefaultTask() {
             contributors[relativePath] = MAIN
             if (relativePath.startsWith("res/")) modulesWithResources += MAIN
             // Recorded first, so the umbrella's own declaration of a resource always wins.
-            if (relativePath.startsWith("res/values")) recordResourceNames(MAIN, relativePath, it)
+            when {
+                relativePath.startsWith("res/values") -> recordResourceNames(MAIN, relativePath, it)
+                relativePath.isOverlay() -> isOverridden(MAIN, relativePath, it, out)
+            }
             if (relativePath == PUBLIC_TXT) modulesDeclaringPublicResources += MAIN
         }
 
@@ -119,9 +134,8 @@ abstract class MergeDependencies : DefaultTask() {
         val appendedFiles = mutableSetOf<File>()
         var filesProcessed = 0
 
-        dependencies.get().asFile.listFiles()?.sortedBy { it.name }?.forEach { subLibFolder ->
-            if (!subLibFolder.isDirectory) return@forEach
-            val owner = subLibFolder.name
+        moduleOrder.get().forEach { owner ->
+            val subLibFolder = dependencies.get().dir(owner).asFile
 
             subLibFolder.walk()
                 .filter { it.isFile }
@@ -145,6 +159,10 @@ abstract class MergeDependencies : DefaultTask() {
                             val alreadyDeclared = recordResourceNames(owner, relativePath, srcFile)
                             srcFile.copyValues(owner = owner, to = destFile, dropping = alreadyDeclared)
                         }
+
+                        // A consumer layers its modules, and what one ships replaces the same
+                        // resource or asset of anything below it. One AAR has no layers.
+                        relativePath.isOverlay() && isOverridden(owner, relativePath, srcFile, out) -> Unit
 
                         relativePath.endsWith(".kotlin_module") -> srcFile.copyValues(owner = owner, to = destFile)
 
@@ -424,6 +442,16 @@ abstract class MergeDependencies : DefaultTask() {
 
     private fun String.isRootProFile() = endsWith(".pro") && '/' !in this
 
+    private fun String.isOverlay() = startsWith("res/") || startsWith("assets/")
+
+    /**
+     * What a consumer tells one resource or asset from another by. A resource has no extension
+     * there, so `res/drawable/a.xml` overrides `res/drawable/a.png`, and `a.9.png` is `a`.
+     */
+    private fun String.overlayKey() = if (startsWith("res/")) "${substringBeforeLast('/')}/${substringAfterLast('/').substringBefore('.')}" else this
+
+    private fun File.sameBytesAs(other: File) = length() == other.length() && readBytes().contentEquals(other.readBytes())
+
     /** Union of the providers listed by each module, in contribution order, comments dropped. */
     private fun List<File>.mergeServiceFiles(): ByteArray = asSequence()
         .flatMap { it.readLines().asSequence() }
@@ -443,9 +471,9 @@ abstract class MergeDependencies : DefaultTask() {
         relativePath: String,
         srcFile: File,
         destFile: File,
-        firstContributor: String = contributors[relativePath] ?: "unknown",
+        firstContributor: String = contributors[relativePath] ?: contributors.entries.find { it.key.equals(relativePath, ignoreCase = true) }?.value ?: "unknown",
     ) {
-        if (srcFile.length() == destFile.length() && srcFile.readBytes().contentEquals(destFile.readBytes())) {
+        if (srcFile.sameBytesAs(destFile)) {
             logger.info("[UmbrellaAar] Duplicate but identical '$relativePath' from '$owner' — keeping one copy.")
             return
         }
@@ -454,12 +482,23 @@ abstract class MergeDependencies : DefaultTask() {
             firstContributor,
             owner,
             when {
-                relativePath.startsWith("assets/") -> "  Rename the asset in one of the modules, or move it to a module-specific sub-folder."
                 relativePath.startsWith("jni/") -> "  Two modules ship a native library with the same name — rename one of them."
+
                 relativePath.startsWith("libs/") -> "  Two modules embed a local jar with the same name — rename one of them."
-                relativePath.startsWith("classes/") -> "  Two modules declare the same class. If one of them is the umbrella module itself, " +
-                    "check build/reports/umbrellaaar for the merged module list."
-                else -> "  Rename the file in one of the modules, or exclude the module from the umbrellaAar configuration."
+
+                relativePath.startsWith("classes/") && relativePath.endsWith(".class") ->
+                    "  Two modules declare the same class. If one of them is the umbrella module itself, " +
+                        "check build/reports/umbrellaaar for the merged module list."
+
+                relativePath == "navigation.json" ->
+                    "  AGP generates this file, so it cannot be renamed, and two modules with deep links cannot be merged. " +
+                        "Move the deep links to one module, or exclude(...) one of them from export and publish it on its own."
+
+                relativePath.startsWith("prefab/") ->
+                    "  AGP generates this file, so it cannot be renamed, and two modules with prefab cannot be merged. " +
+                        "Move the native libraries to one module, or exclude(...) one of them from export and publish it on its own."
+
+                else -> "  Rename the file in one of the modules, or exclude(...) one of them from export and publish it on its own."
             },
         )
     }
@@ -484,6 +523,25 @@ abstract class MergeDependencies : DefaultTask() {
         }
     }
 
+    /**
+     * Whether a module ahead of [owner] already shipped this resource or asset, which then stays,
+     * as values do. The same bytes are one file shipped twice, and not worth a word.
+     */
+    private fun isOverridden(owner: String, relativePath: String, srcFile: File, out: File): Boolean {
+        val key = relativePath.overlayKey()
+        val kept = overlays.putIfAbsent(key, relativePath)
+        if (kept == null) {
+            resourceNames[key] = mutableListOf(owner)
+            return false
+        }
+        if (srcFile.sameBytesAs(File(out, kept))) {
+            logger.info("[UmbrellaAar] Duplicate but identical '$relativePath' from '$owner' — keeping one copy.")
+        } else {
+            resourceNames.getValue(key) += owner
+        }
+        return true
+    }
+
     private fun reportDuplicateResources() {
         val duplicates = resourceNames.filterValues { it.size > 1 }
         if (duplicates.isEmpty()) return
@@ -491,13 +549,14 @@ abstract class MergeDependencies : DefaultTask() {
         logger.warn(
             buildString {
                 appendLine(
-                    "UmbrellaAar found ${duplicates.size} duplicate resource name(s) across merged modules; the first declaration was kept " +
-                        "(the umbrella module's own, otherwise the first module listed):",
+                    "UmbrellaAar found ${duplicates.size} duplicate resource or asset name(s) across merged modules; the first was kept " +
+                        "(the umbrella module's own, otherwise the first module listed), as it would be in a consumer of those modules:",
                 )
                 duplicates.entries.sortedBy { it.key }.take(MAX_REPORTED).forEach { (key, owners) ->
                     appendLine("  $key <- ${owners.joinToString()}")
                 }
-                if (duplicates.size > MAX_REPORTED) append("  … and ${duplicates.size - MAX_REPORTED} more")
+                if (duplicates.size > MAX_REPORTED) appendLine("  … and ${duplicates.size - MAX_REPORTED} more")
+                append("  Rename it in one of the modules if each is meant to ship.")
             }.trimEnd(),
         )
     }

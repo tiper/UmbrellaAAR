@@ -3,6 +3,7 @@ package io.github.tiper.umbrellaaar.extensions
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.InputStream
+import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -17,6 +18,7 @@ internal fun File.unzip(
     predicate: ZipFile.(ZipEntry) -> Boolean = { true },
 ): File {
     val canonicalTo = to.canonicalFile
+    val written = mutableMapOf<String, String>()
     ZipFile(this).use { zip ->
         zip.entries().asSequence()
             .filter { zip.predicate(it) }
@@ -29,6 +31,7 @@ internal fun File.unzip(
                     outFile.mkdirs()
                     return@forEach
                 }
+                written.claim(entry.name, to)
                 zip.getInputStream(entry).use { input ->
                     outFile.apply { parentFile.mkdirs() }.outputStream().buffered(IO_BUFFER_SIZE).use {
                         if (entry.name.endsWith(".class")) it.write(transformer(input.readBytes()))
@@ -52,6 +55,7 @@ internal fun InputStream.unzipStream(
     transformer: (ByteArray) -> ByteArray = { it },
 ) {
     val canonicalTo = to.canonicalFile
+    val written = mutableMapOf<String, String>()
     java.util.zip.ZipInputStream(this.buffered(IO_BUFFER_SIZE)).use { zis ->
         while (true) {
             val entry = zis.nextEntry ?: break
@@ -60,6 +64,7 @@ internal fun InputStream.unzipStream(
             require(outFile.path.startsWith(canonicalTo.path + File.separator)) {
                 "Zip Slip attempt blocked: '${entry.name}' resolves outside destination"
             }
+            written.claim(entry.name, to)
             outFile.parentFile.mkdirs()
             if (entry.name.endsWith(".class")) {
                 outFile.writeBytes(transformer(zis.readBytes()))
@@ -69,6 +74,22 @@ internal fun InputStream.unzipStream(
         }
     }
 }
+
+/**
+ * On a disk that ignores case the second of two entries overwrites the first, without a word, and
+ * the second of two folders moves its files into the first. What is on the disk under [to] says
+ * whether those are one.
+ */
+private fun MutableMap<String, String>.claim(entry: String, to: File) {
+    generateSequence(entry) { it.substringBeforeLast('/', "").ifEmpty { null } }.forEach { path ->
+        val first = putIfAbsent(path.lowercase(), path)
+        require(first == null || first == path || !File(to, path).isSameFileAs(File(to, first))) {
+            "'$first' and '$path' differ by case alone, and this disk has one path for both. Rename one in its module, or build on a case-sensitive disk."
+        }
+    }
+}
+
+private fun File.isSameFileAs(other: File) = exists() && other.exists() && Files.isSameFile(toPath(), other.toPath())
 
 internal fun File.zip(to: File) {
     val canonicalRoot = canonicalFile

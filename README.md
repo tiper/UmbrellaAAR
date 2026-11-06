@@ -529,11 +529,16 @@ pluginManagement {
 - **`R.txt` is merged, not regenerated.** Symbols are de-duplicated by type and name — the same
   resource in two modules carries a different placeholder ID in each, and the first is kept. IDs are
   not re-numbered: AAPT2 in the consumer assigns the final IDs.
-- **Duplicate resource *names*** across merged modules keep their first declaration — the
-  umbrella module's own, otherwise the first module in path order — and are reported in a warning.
+- **Duplicate resources and assets** across merged modules keep their first declaration — the
+  umbrella module's own, otherwise the first module in merge order — and are reported in a warning.
+  Modules merge the way a consumer of them ranks them, dependents before what they depend on, then
+  in the order they are reached from `export(...)`. Folder names play no part.
   Every merged module's resources end up in one AAR, where AGP rejects a resource declared twice
   with "Duplicate resources", so the later declarations are left out. The same name in different
-  qualifier folders (`values` vs `values-pt`) is not a duplicate.
+  qualifier folders (`values` vs `values-pt`) is not a duplicate. Other `res/` folders go by folder
+  and name without extension, so `res/drawable/a.xml` and `res/drawable/a.png` are one resource, and
+  `assets/**` by path: the first stays, the same way a consumer of those modules overrides one with
+  the other. Identical bytes keep one copy, quietly.
 - **Files that cannot be merged fail the build.** These are merged:
   - `R.txt` (by symbol), `public.txt` and `baseline-prof.txt` (by line) are de-duplicated.
   - `proguard.txt` (and `.pro` files at the AAR root) are concatenated.
@@ -545,11 +550,11 @@ pluginManagement {
   - `lint.jar`: an AAR carries only one, so the umbrella's own — or else the first module's — is
     kept, and a warning names the modules whose lint checks are not shipped.
 
-  Anything else contributed by two modules at the same path — `assets/**`, resources outside
-  `res/values*` such as `res/drawable/*`, `libs/*.jar`, `jni/<abi>/*.so`, `navigation.json`,
-  `prefab/**` — is an error naming both contributors, unless the bytes are identical, in which
+  Anything else contributed by two modules at the same path — `libs/*.jar`, `jni/<abi>/*.so`,
+  `navigation.json`, `prefab/**` — is an error naming both contributors, unless the bytes are identical, in which
   case one copy is kept. Rename the file in one of the modules, or move it under a
-  module-specific sub-folder.
+  module-specific sub-folder. AGP generates `navigation.json` and `prefab/**`, so those two cannot be
+  renamed, and two modules with deep links or prefab cannot be merged.
 - **`public.txt` is only published when every module declares one.** In an AAR, `public.txt` is the
   whitelist of public resources: if it is present, everything *not* listed becomes private. A module
   that ships no `public.txt` is saying "all my resources are public". So if only some of the merged

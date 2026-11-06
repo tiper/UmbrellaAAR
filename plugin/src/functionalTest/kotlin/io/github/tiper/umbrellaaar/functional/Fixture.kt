@@ -140,7 +140,7 @@ internal class Fixture(val dir: File) {
             |
             |rootProject.name = "fixture"
             |${includedBuilds.joinToString("\n") { "includeBuild(\"../$it\")" }}
-            |${modules.values.joinToString("\n") { "include(\"${it.path}\")" }}
+            |${modules.values.joinToString("\n") { "include(\"${it.path}\")\nproject(\"${it.path}\").projectDir = file(\"${it.location}\")" }}
             |
             """.trimMargin(),
         )

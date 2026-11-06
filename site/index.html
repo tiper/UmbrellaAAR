@@ -355,8 +355,8 @@ kotlin {
 
   <section id="whats-in-the-aar" class="col" aria-labelledby="whats-in-the-aar-title">
     <h2 id="whats-in-the-aar-title">What goes into the AAR</h2>
-    <p>The merge starts from your umbrella module's own AAR, unpacked in full and kept as it is. Each dependency module is then applied on top, in module-folder name order, and in relative-path order within a module. <code>classes.jar</code> and the final AAR are written with sorted entries and timestamp 0.</p>
-    <p>One rule covers everything that is not merged, renamed or dropped. If two modules ship the same path, identical bytes keep one copy. Different bytes fail <code>merge&lt;Pipeline&gt;UmbrellaAarDependencies</code> with an error naming both contributors. <code>&lt;Pipeline&gt;</code> is <code>AndroidMain</code> on a Kotlin Multiplatform umbrella and the build type on <code>com.android.library</code>.</p>
+    <p>The merge starts from your umbrella module's own AAR, unpacked in full and kept as it is. Each dependency module is then applied on top, in the order a consumer of those modules would rank them, and in relative-path order within a module. That puts a module ahead of what it depends on, then follows the order modules are reached from <code>export(...)</code>. Folder names play no part. <code>classes.jar</code> and the final AAR are written with sorted entries and timestamp 0.</p>
+    <p>One rule covers everything that is not merged, renamed, overridden or dropped. If two modules ship the same path, identical bytes keep one copy. Different bytes fail <code>merge&lt;Pipeline&gt;UmbrellaAarDependencies</code> with an error naming both contributors. <code>&lt;Pipeline&gt;</code> is <code>AndroidMain</code> on a Kotlin Multiplatform umbrella and the build type on <code>com.android.library</code>.</p>
 
     <div class="scroll table-scroll" tabindex="0" role="group" aria-labelledby="content-caption">
       <table class="table-content">
@@ -374,13 +374,16 @@ kotlin {
         </tbody>
         <tbody>
           <tr class="group-row"><th colspan="2" scope="rowgroup">Kept side by side, renamed per module</th></tr>
-          <tr><th scope="row"><code>res/values*</code></th><td>Not merged. Each dependency's file becomes <code>&lt;module&gt;-&lt;file&gt;</code> in the same qualifier folder, for example <code>res/values/feature-a-values.xml</code>. <code>&lt;module&gt;</code> is the module's folder path, so <code>libs/feature-a</code> gives <code>libs_feature-a</code>. A resource name declared twice logs a warning here and <a href="#before-you-adopt">fails the consumer's build</a>.</td></tr>
+          <tr><th scope="row"><code>res/values*</code></th><td>Not merged. Each dependency's file becomes <code>&lt;module&gt;-&lt;file&gt;</code> in the same qualifier folder, for example <code>res/values/feature-a-values.xml</code>. <code>&lt;module&gt;</code> is the module's project path, so <code>:libs:feature-a</code> gives <code>libs_feature-a</code>, wherever its folder is. A resource name declared twice logs a warning here and <a href="#before-you-adopt">fails the consumer's build</a>.</td></tr>
           <tr><th scope="row"><code>.kotlin_module</code></th><td>Renamed to <code>&lt;module&gt;-&lt;file&gt;</code>, inside and outside <code>classes.jar</code>, so these never collide.</td></tr>
         </tbody>
         <tbody>
+          <tr class="group-row"><th colspan="2" scope="rowgroup">Overridden, as in a consumer<span>The umbrella's own file stays, otherwise the first module's in merge order, and a warning names the rest. Identical bytes stay quiet.</span></th></tr>
+          <tr><th scope="row">Other <code>res/</code> folders</th><td><code>layout</code>, <code>drawable</code>, <code>raw</code>, <code>xml</code>, <code>navigation</code> and the rest. A resource is a folder and a name, so <code>res/drawable/a.png</code> and <code>res/drawable/a.xml</code> are one resource.</td></tr>
+          <tr><th scope="row"><code>assets/</code></th><td>By path.</td></tr>
+        </tbody>
+        <tbody>
           <tr class="group-row"><th colspan="2" scope="rowgroup">Kept at the same path<span>Identical bytes keep one copy. Different bytes fail the build.</span></th></tr>
-          <tr><th scope="row">Other <code>res/</code> folders</th><td><code>layout</code>, <code>drawable</code>, <code>raw</code>, <code>xml</code>, <code>navigation</code> and the rest. A clash across paths, such as <code>res/drawable/a.png</code> and <code>res/drawable/a.xml</code>, is not detected here.</td></tr>
-          <tr><th scope="row"><code>assets/</code></th><td>Kept as they are.</td></tr>
           <tr><th scope="row"><code>jni/</code></th><td>Kept per ABI. A clash reports that two modules ship a native library with the same name.</td></tr>
           <tr><th scope="row"><code>libs/*.jar</code></th><td>Copied as opaque files. Classes inside these jars are not rewritten.</td></tr>
           <tr><th scope="row"><code>aidl/</code></th><td>Kept as they are.</td></tr>

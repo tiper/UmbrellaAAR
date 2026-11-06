@@ -76,6 +76,7 @@ class MergeDependenciesBenchmark {
     private fun runMerge(mainDir: File, depsDir: File, outDir: File) {
         val task = project.tasks.register<MergeDependencies>("benchMerge${counter++}").get()
         task.dependencies.set(depsDir)
+        task.moduleOrder.set(depsDir.list()!!.sorted())
         task.mainAarDir.set(mainDir)
         task.mergedAarDir.set(outDir)
         task.execute()
