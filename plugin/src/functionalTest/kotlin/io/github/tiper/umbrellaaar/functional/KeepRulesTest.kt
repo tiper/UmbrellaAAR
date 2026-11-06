@@ -157,6 +157,87 @@ class KeepRulesTest {
     }
 
     @Test
+    fun `an if whose block opens on the next line goes along, as in stock`() = fixture {
+        val feature = androidLibrary("feature") {
+            keptString("not_kept")
+            androidKotlin("Unreached", "package $namespace\n\nclass Unreached")
+            consumerRule("-if class $namespace.Unreached\n{\n    <init>();\n}\n-keep class $namespace.* { *; }")
+        }
+        val other = androidLibrary("other") { keptString("other_string") }
+        val umbrella = androidUmbrella { export(feature, other) }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+        assertFalse(parity.umbrella.release.apk.fields.any { "not_kept" in it }, "The rule held no longer went by its -if: ${parity.umbrella.release.apk.fields}")
+    }
+
+    @Test
+    fun `a rule that waits for a class keeps its if whatever line its block opens on, as in stock`() = fixture {
+        val feature = androidLibrary("feature") {
+            keptString("not_kept")
+            reads("string.not_kept")
+            androidKotlin("Unreached", "package $namespace\n\nclass Unreached")
+            consumerRule("-if class $namespace.Unreached\n{\n    <init>();\n}\n-keepclassmembers class $namespace.R\$string { *; }")
+        }
+        val umbrella = androidUmbrella { export(feature) }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+    }
+
+    @Test
+    fun `a rule that waits for a class keeps an if wherever that starts, as in stock`() = fixture {
+        val conditions = mapOf(
+            "comment" to { ns: String -> "-if#why\nclass $ns.Unreached\n" },
+            "option" to { ns: String -> "-dontwarn $ns.Missing -if class $ns.Unreached\n" },
+            "rule" to { ns: String -> "-keep class $ns.Missing { *; } -if class $ns.Unreached\n" },
+        )
+        val modules = conditions.map { (spelling, condition) ->
+            androidLibrary(spelling) {
+                keptString("not_kept_$spelling")
+                reads("string.not_kept_$spelling")
+                androidKotlin("Unreached", "package $namespace\n\nclass Unreached")
+                consumerRule("${condition(namespace)}-keepclassmembers class $namespace.R\$string { *; }")
+            }
+        }
+        val umbrella = androidUmbrella { export(*modules.toTypedArray()) }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+    }
+
+    @Test
+    fun `a comment in the start of a rule leaves the other modules out of it, as in stock`() = fixture {
+        val feature = androidLibrary("feature") {
+            keptString("a_string")
+            consumerRule("-keep # why\nclass $namespace.R\$string { *; }")
+        }
+        val other = androidLibrary("other") { keptString("other_string") }
+        val umbrella = androidUmbrella { export(feature, other) }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+        parity.assertKept(feature.namespace, "R\$string.a_string")
+        assertFalse(parity.umbrella.release.apk.fields.any { "other_string" in it }, "A rule of one module kept the shared R: ${parity.umbrella.release.apk.fields}")
+    }
+
+    @Test
     fun `a wildcard past the class a rule keeps stays as it is, as in stock`() = fixture {
         val feature = androidLibrary("feature") {
             androidKotlin("Base", "package $namespace\n\nopen class Base\n\ninterface Api\n\nannotation class Marker")

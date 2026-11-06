@@ -2,6 +2,9 @@ package io.github.tiper.umbrellaaar.extensions
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.measureTime
 
 class KeepRulesExtensionsTest {
 
@@ -123,6 +126,156 @@ class KeepRulesExtensionsTest {
             "$condition-keepclassmembers class com.acme.feature.a.R\$* { *; }".relocated(),
         )
         assertEquals("-if class a.B { int c; }\n-keep class com.acme.sdk.R", "-if class a.B { int c; }\n-keep class com.acme.feature.R".relocated())
+    }
+
+    @Test
+    fun `an if goes along however it is spelled`() {
+        listOf(
+            "-if class a.B\n{\n    int c;\n}\n",
+            "-if class a.B\n{ int c; }\n",
+            "-if class a.B\n\n{ int c; }\n",
+            "-if class a.B # why\n{ int c; }\n",
+            "-if class a.B\n# why\n{ int c; }\n",
+            "-if class a.B\r\n{\r\n    int c;\r\n}\r\n",
+            "-if class a.B { # a } in a comment\n    int c;\n}\n",
+            "-if class a.B # a { in a comment\n",
+            "-if class a.B,\n    a.C\n",
+            "-if\n\nclass a.B\n",
+            "-if @a.Marker\nclass a.B\n",
+            "-if class a.B\n    extends a.C\n{ int c; }\n",
+            "-if class a.B ",
+            "-if class a.B { int c; } ",
+            "-if class a.B { int c; }",
+            "-if#why\nclass a.B\n",
+            "-ifclass a.B\n",
+            "-if@a.Marker class a.B\n",
+            "-if!interface a.B\n",
+        ).forEach { condition ->
+            assertEquals(
+                "$condition-keep class com.acme.feature.a.* { *; }\n$condition-keep class com.acme.sdk.R\$string { *** label; }",
+                "$condition-keep class com.acme.feature.a.* { *; }".relocated(),
+            )
+            assertEquals(
+                "$condition-keepclassmembers class com.acme.sdk.R\$string { *** label; }",
+                "$condition-keepclassmembers class com.acme.feature.a.R\$* { *; }".relocated(),
+            )
+            assertEquals("-keep class a.C", "$condition-keep class com.acme.silent.R\$string { *; }\n-keep class a.C".relocated().trim())
+        }
+    }
+
+    @Test
+    fun `an option starts wherever the last one ended, on its line or not`() {
+        val condition = "-if class a.B\n"
+        listOf("    ", "-dontwarn x.y ", "-keep class a.C { *; } ", "-keep class a.C { *; }", "-keep class a.C ", "-dontwarn x.y # why\n").forEach { before ->
+            assertEquals(
+                "$before$condition-keep class com.acme.feature.a.* { *; }\n$condition-keep class com.acme.sdk.R\$string { *** label; }",
+                "$before$condition-keep class com.acme.feature.a.* { *; }".relocated(),
+            )
+            assertEquals(
+                "$before$condition-keepclassmembers class com.acme.sdk.R\$string { *** label; }",
+                "$before$condition-keepclassmembers class com.acme.feature.a.R\$* { *; }".relocated(),
+            )
+            assertEquals(
+                "$before-keep class com.acme.feature.a.* { *; }\n-keep class com.acme.sdk.R\$string { *** label; }",
+                "$before-keep class com.acme.feature.a.* { *; }".relocated(),
+            )
+        }
+    }
+
+    @Test
+    fun `an option is not one in a comment or inside a name`() {
+        val whileRead = "-if class com.acme.feature.a.Label,com.acme.feature.a.Other\n"
+        listOf("# -if class a.B\n", "-dontwarn x.y # -if class a.B\n", "-include rules-if.pro\n").forEach { before ->
+            assertEquals(
+                "$before$whileRead-keepclassmembers class com.acme.sdk.R\$string { *** label; }",
+                "$before-keepclassmembers class com.acme.feature.a.R\$* { *; }".relocated(),
+            )
+        }
+        listOf("-dontwarn x.y # -keep class com.acme.feature.a.* { *; }", "-include rules-keep class com.acme.feature.a.* { *; }").forEach { assertEquals(it, it.relocated()) }
+    }
+
+    @Test
+    fun `a comment can sit between any two words of the start of a rule`() {
+        listOf(
+            "-keep # why\nclass ",
+            "-keep\n# why\nclass ",
+            "-keep,allowshrinking # why\n    class ",
+            "-keep, # why\n    allowshrinking class ",
+            "-keep # why\n    , allowshrinking # why\n    , allowobfuscation class ",
+            "-keep public # why\n    class ",
+            "-keep public # why\n    final # why\n    class ",
+            "-keep ! # why\n    abstract class ",
+            "-keep ! abstract class ",
+            "-keep class # why\n    ",
+            "-keep class\n    # why\n    ",
+            "-keep !interface # why\n    ",
+            "-keep !enum # why\n    ",
+        ).forEach { head ->
+            assertEquals(
+                "${head}com.acme.feature.a.* { *; }\n${head}com.acme.sdk.R\$string { *** label; }",
+                "${head}com.acme.feature.a.* { *; }".relocated(),
+            )
+        }
+        assertEquals(
+            "-if class com.acme.feature.a.Label,com.acme.feature.a.Other\n-keepclassmembers # why\n    class com.acme.sdk.R\$string { *** label; }",
+            "-keepclassmembers # why\n    class com.acme.feature.a.R\$* { *; }".relocated(),
+        )
+        assertEquals(
+            "-if class a.B\n-keep # why\n    class com.acme.sdk.R\$string { *** label; }",
+            "-if class a.B\n-keep # why\n    class com.acme.feature.a.R\$* { *; }".relocated(),
+        )
+    }
+
+    @Test
+    fun `members are found wherever their block opens, and comments are not members`() {
+        listOf(
+            " # why\n{ *; }",
+            "\n# why\n{ *; }",
+            " {\n    # why\n    *;\n}",
+            " { # why\n    public static <fields>;\n}",
+            " { # a } in a comment\n    *;\n}",
+        ).forEach { members ->
+            assertEquals(
+                "-keep class com.acme.feature.a.*$members\n-keep class com.acme.sdk.R\$string { *** label; }",
+                "-keep class com.acme.feature.a.*$members".relocated(),
+            )
+        }
+        assertEquals(
+            "-keep class com.acme.feature.a.*,com.acme.sdk.R\$string { int label; # no; *;\n}",
+            "-keep class com.acme.feature.a.* { int label; # no; *;\n}".relocated(),
+        )
+    }
+
+    @Test
+    fun `a comment can sit anywhere in a list of classes, and before what ends a rule`() {
+        assertEquals(
+            "-keep class a.B { *; }\n-keep class com.acme.sdk.R\$string { *** label; }",
+            "-keep class a.B, # why\n    com.acme.feature.a.R\$* { *; }".relocated(),
+        )
+        assertEquals("-keep class com.acme.feature.** # why\n    extends a.B { *; }", "-keep class com.acme.feature.** # why\n    extends a.B { *; }".relocated())
+    }
+
+    @Test
+    fun `no rule file is too long to read`() {
+        val many = 100_000
+        listOf(
+            (0 until many).joinToString("\n") { "-keep class a.B$it { *; }" },
+            (0 until many).joinToString("\n") { "-if class a.B$it\n{\n    int c;\n}\n-keep class a.D$it" },
+            (0 until many).joinToString("\n") { "-if class a.B$it" },
+            (0 until many).joinToString("\n") { "-if class a.B$it {" },
+            (0 until many).joinToString("\n", "-if class a.B\n", "\n-keep class a.D") { "# $it" },
+            (0 until many).joinToString("\n", "-if class a.B {\n", "\n}\n-keep class a.D") { "    int c$it;" },
+            (0 until many).joinToString("\n", "-keep class a.D\n") { "# $it" },
+            (0 until many).joinToString("\n", "-keep\n", "\nclass a.D") { "# $it" },
+            (0 until many).joinToString(" ") { "-keep class a.B$it { *; }" },
+            (0 until many).joinToString("\n") { "-dontwarn a.B$it # -if class a.C" },
+        ).forEach { rules ->
+            var relocated = ""
+            val took = measureTime { relocated = rules.relocated() }
+            assertEquals(rules, relocated)
+            // Far above what one pass takes and far below what a pass from every line would.
+            assertTrue(took < 60.seconds, "Took $took")
+        }
     }
 
     @Test
