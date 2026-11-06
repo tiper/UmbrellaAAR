@@ -19,6 +19,8 @@ internal fun Map<String, String>.toAarMetadataText(): String = entries.joinToStr
  * module: a consumer must satisfy each of them, because each module's code is in the AAR.
  *
  * - `minCompileSdk`, `minCompileSdkExtension`: highest wins.
+ * - `minCompileMinorSdk`: the one of the module with the highest compile SDK and minor. A minor only
+ *   means something with its SDK, so 36.1 and 37.0 merge to 37.0, and never to 37.1.
  * - `minAndroidGradlePluginVersion`, `aarFormatVersion`, `aarMetadataVersion`: highest version wins.
  * - `coreLibraryDesugaringEnabled`: enabled if any module needs it.
  * - `desugarJdkLib`: the coordinate with the highest version wins.
@@ -29,7 +31,8 @@ internal fun MutableMap<String, String>.mergeAarMetadata(
     other: Map<String, String>,
     onConflict: (key: String, kept: String, dropped: String) -> Unit = { _, _, _ -> },
 ) {
-    other.forEach { (key, value) ->
+    val minor = maxOf(this, other, COMPILE_SDK_AND_MINOR)[MIN_COMPILE_MINOR_SDK]
+    (other - MIN_COMPILE_MINOR_SDK).forEach { (key, value) ->
         val current = this[key]
         this[key] = when {
             current == null || current == value -> value
@@ -40,6 +43,7 @@ internal fun MutableMap<String, String>.mergeAarMetadata(
             else -> current.also { onConflict(key, current, value) }
         }
     }
+    if (minor != null) this[MIN_COMPILE_MINOR_SDK] = minor else remove(MIN_COMPILE_MINOR_SDK)
 }
 
 /**
@@ -63,7 +67,10 @@ internal fun compareVersions(a: String, b: String): Int {
     }
 }
 
-private val MAX_INT_KEYS = setOf("minCompileSdk", "minCompileSdkExtension")
+private const val MIN_COMPILE_SDK = "minCompileSdk"
+private const val MIN_COMPILE_MINOR_SDK = "minCompileMinorSdk"
+private val COMPILE_SDK_AND_MINOR = compareBy<Map<String, String>>({ it[MIN_COMPILE_SDK]?.toIntOrNull() ?: -1 }, { it[MIN_COMPILE_MINOR_SDK]?.toIntOrNull() ?: -1 })
+private val MAX_INT_KEYS = setOf(MIN_COMPILE_SDK, "minCompileSdkExtension")
 private val MAX_VERSION_KEYS = setOf("minAndroidGradlePluginVersion", "aarFormatVersion", "aarMetadataVersion")
 private const val DESUGARING_ENABLED = "coreLibraryDesugaringEnabled"
 private const val DESUGAR_JDK_LIB = "desugarJdkLib"

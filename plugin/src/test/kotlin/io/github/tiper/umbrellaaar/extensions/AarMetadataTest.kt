@@ -23,6 +23,46 @@ class AarMetadataTest {
     }
 
     @Test
+    fun `a compile SDK and its minor come from one module`() {
+        val higherSdk = linkedMapOf("minCompileSdk" to "36", "minCompileMinorSdk" to "1")
+        higherSdk.mergeAarMetadata(mapOf("minCompileSdk" to "37", "minCompileMinorSdk" to "0"))
+        assertEquals(("37" to "0"), higherSdk["minCompileSdk"] to higherSdk["minCompileMinorSdk"])
+
+        val lowerSdk = linkedMapOf("minCompileSdk" to "37", "minCompileMinorSdk" to "0")
+        lowerSdk.mergeAarMetadata(mapOf("minCompileSdk" to "36", "minCompileMinorSdk" to "1"))
+        assertEquals(("37" to "0"), lowerSdk["minCompileSdk"] to lowerSdk["minCompileMinorSdk"])
+    }
+
+    @Test
+    fun `the highest minor of one compile SDK wins, wherever it comes from`() {
+        val merged = linkedMapOf("minCompileSdk" to "36", "minCompileMinorSdk" to "0")
+        merged.mergeAarMetadata(mapOf("minCompileSdk" to "36", "minCompileMinorSdk" to "1"))
+        merged.mergeAarMetadata(mapOf("minCompileSdk" to "36", "minCompileMinorSdk" to "0"))
+
+        assertEquals("1", merged["minCompileMinorSdk"])
+    }
+
+    @Test
+    fun `a minor is more than no minor, and goes with the compile SDK that beat it`() {
+        val minorWins = linkedMapOf("minCompileSdk" to "36")
+        minorWins.mergeAarMetadata(mapOf("minCompileSdk" to "36", "minCompileMinorSdk" to "1"))
+        assertEquals("1", minorWins["minCompileMinorSdk"])
+
+        val minorGoes = linkedMapOf("minCompileSdk" to "36", "minCompileMinorSdk" to "1")
+        minorGoes.mergeAarMetadata(mapOf("minCompileSdk" to "37"))
+        assertEquals(linkedMapOf("minCompileSdk" to "37"), minorGoes)
+    }
+
+    @Test
+    fun `a minor is never a conflict`() {
+        val conflicts = mutableListOf<String>()
+        val merged = linkedMapOf("minCompileSdk" to "36", "minCompileMinorSdk" to "0")
+        merged.mergeAarMetadata(mapOf("minCompileSdk" to "36", "minCompileMinorSdk" to "1")) { key, _, _ -> conflicts += key }
+
+        assertEquals(emptyList(), conflicts)
+    }
+
+    @Test
     fun `highest minimum AGP version wins, numerically`() {
         val merged = linkedMapOf("minAndroidGradlePluginVersion" to "8.10.0")
         merged.mergeAarMetadata(mapOf("minAndroidGradlePluginVersion" to "8.9.1"))

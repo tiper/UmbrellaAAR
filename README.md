@@ -596,7 +596,8 @@ pluginManagement {
     module, and an AAR's classes run from the class path, which reads none.
   - `annotations.zip` (typedef annotations) is combined, including two modules sharing a package.
   - `aar-metadata.properties` keeps the strictest requirement of every module: the highest
-    `minCompileSdk` and minimum AGP version, and core library desugaring if any module needs it.
+    `minCompileSdk` with that module's minor and minimum AGP version, and core library desugaring
+    if any module needs it.
   - `lint.jar`: an AAR carries only one, so the umbrella's own — or else the first module's — is
     kept, and a warning names the modules whose lint checks are not shipped.
 
