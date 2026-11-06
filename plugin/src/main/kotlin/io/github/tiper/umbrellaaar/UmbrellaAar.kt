@@ -90,6 +90,7 @@ class UmbrellaAar : Plugin<Project> {
             dependencies.from(archives.map { it.files })
             archiveFolders.set(archives.map { it.folders })
             outputDir.convention(layout.buildDirectory.dir("$INTERMEDIATES_PATH/$key/dependencies"))
+            extractionState.convention(layout.buildDirectory.file("$INTERMEDIATES_PATH/$key/extraction-state"))
             reportFile.convention(layout.buildDirectory.file("$REPORTS_PATH/$key/$MERGED_MODULES_FILE"))
         }
 

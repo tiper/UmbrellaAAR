@@ -2,6 +2,8 @@ package io.github.tiper.umbrellaaar.functional
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import org.gradle.testkit.runner.TaskOutcome.SUCCESS
+import org.gradle.testkit.runner.TaskOutcome.UP_TO_DATE
 
 /** A build on top of an earlier one ends up where a clean one would, whatever moved in between. */
 class IncrementalExtractionTest {
@@ -81,5 +83,19 @@ class IncrementalExtractionTest {
         b.location = "one"
 
         assertEquals("-keep class two.Kept\n-keep class one.Kept\n", umbrella.bundle("release", "--no-parallel").proguardRules)
+    }
+
+    /** A jar's manifest stays behind, so what merging takes in has not changed. */
+    @Test
+    fun `an archive that extracts to the same files leaves the merge alone`() = fixture {
+        val core = javaLibrary("core")
+        val umbrella = androidUmbrella { export(core) }
+        umbrella.bundle()
+
+        core.buildScript("tasks.jar { manifest { attributes(\"Built-By\" to \"someone\") } }")
+        val build = gradle(umbrella.bundleTask())
+
+        assertEquals(SUCCESS, build.outcome(":sdk:extractReleaseDependencies"))
+        assertEquals(UP_TO_DATE, build.outcome(":sdk:mergeReleaseUmbrellaAarDependencies"))
     }
 }

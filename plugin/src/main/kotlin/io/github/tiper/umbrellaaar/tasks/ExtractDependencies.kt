@@ -64,6 +64,14 @@ abstract class ExtractDependencies : DefaultTask() {
     abstract val reportFile: RegularFileProperty
 
     /**
+     * What the folders were extracted from: a difference in what they all go by forces a full
+     * extraction, and a hash that differs extracts that folder again. Outside [outputDir], which is
+     * what merging takes in, as this changes with every archive and extracted files do not always.
+     */
+    @get:OutputFile
+    abstract val extractionState: RegularFileProperty
+
+    /**
      * `archive -> the folder it extracts to`, see [folderNames], in the order of [dependencies]. An
      * archive's path belongs to this machine, so only the names of the folders are an input.
      */
@@ -104,7 +112,7 @@ abstract class ExtractDependencies : DefaultTask() {
             .collect(java.util.stream.Collectors.toSet())
         logger.info("[UmbrellaAar] Relocating R classes for ${namespaces.size} merged namespaces")
 
-        val stateFile = File(baseDir, STATE_FILE)
+        val stateFile = extractionState.get().asFile
         val shared = listOf(mainNamespace.get()) + namespaces.sorted() + folders.values.sorted()
         val extracted = folders.mapValues { (archive, folder) -> "$folder\t${archive.contentHash()}" }
         val previous = if (inputChanges.isIncremental && stateFile.isFile) stateFile.readLines() else emptyList()
@@ -154,8 +162,6 @@ abstract class ExtractDependencies : DefaultTask() {
     }.getOrNull()
 
     private companion object {
-        /** What the extracted folders were derived from; a different value forces a full extraction. */
-        const val STATE_FILE = ".extraction-state"
         const val TARGETED_RULES = "META-INF/com.android.tools/"
 
         /** What AGP reads from a jar: any file right in there, whatever its extension. */
