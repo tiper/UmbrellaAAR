@@ -376,6 +376,7 @@ kotlin {
           <tr class="group-row"><th colspan="2" scope="rowgroup">Kept side by side, renamed per module</th></tr>
           <tr><th scope="row"><code>res/values*</code></th><td>Each dependency's file becomes <code>&lt;module&gt;-&lt;file&gt;</code> in the same qualifier folder, for example <code>res/values/feature-a-values.xml</code>. <code>&lt;module&gt;</code> is the module's project path, so <code>:libs:feature-a</code> gives <code>libs_feature-a</code>, wherever its folder is. A resource declared twice stays in the first file only, with a warning. Styleables of one name become one, and an attr defined twice is left defined once. Definitions a consumer rejects <a href="#before-you-adopt">fail the build</a>.</td></tr>
           <tr><th scope="row"><code>.kotlin_module</code></th><td>Renamed to <code>&lt;module&gt;-&lt;file&gt;</code>, inside and outside <code>classes.jar</code>, so these never collide.</td></tr>
+          <tr><th scope="row">Rules in <code>META-INF/com.android.tools/</code></th><td>Stay in <code>classes.jar</code>, renamed to <code>&lt;module&gt;-&lt;file&gt;</code> in the folder that says which R8 reads them, so that two modules can ship one name. A consumer that finds them reads no other rules of the AAR, so a copy of <code>proguard.txt</code> joins them.</td></tr>
         </tbody>
         <tbody>
           <tr class="group-row"><th colspan="2" scope="rowgroup">Overridden, as in a consumer<span>The umbrella's own file stays, otherwise the first module's in merge order, and a warning names the rest. Identical bytes stay quiet.</span></th></tr>
@@ -387,7 +388,7 @@ kotlin {
           <tr><th scope="row"><code>jni/</code></th><td>Kept per ABI. A clash reports that two modules ship a native library with the same name.</td></tr>
           <tr><th scope="row"><code>libs/*.jar</code></th><td>Copied as opaque files. Classes inside these jars are not rewritten.</td></tr>
           <tr><th scope="row"><code>aidl/</code></th><td>Kept as they are.</td></tr>
-          <tr><th scope="row"><code>META-INF/</code></th><td>Not merged, at the AAR root or inside <code>classes.jar</code>, apart from <code>META-INF/services/&lt;interface&gt;</code> files, whose providers are combined. Rules in <code>META-INF/com.android.tools/</code> stay in <code>classes.jar</code>, and a consumer that finds them reads no other rules of the AAR, so a copy of <code>proguard.txt</code> joins them.</td></tr>
+          <tr><th scope="row"><code>META-INF/</code></th><td>Not merged, at the AAR root or inside <code>classes.jar</code>, apart from <code>META-INF/services/&lt;interface&gt;</code> files, whose providers are combined, and the rule files above.</td></tr>
           <tr><th scope="row">Anything else</th><td>Same rule, for example data-binding folders.</td></tr>
         </tbody>
         <tbody>

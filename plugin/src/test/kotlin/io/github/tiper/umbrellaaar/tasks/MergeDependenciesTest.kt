@@ -1044,8 +1044,67 @@ class MergeDependenciesTest {
 
         val classes = File(merge(), "classes.jar")
 
-        assertEquals("-keep class com.example.b.B", jarEntry(classes, "META-INF/com.android.tools/r8/b.pro").decodeToString())
+        assertEquals("-keep class com.example.b.B", jarEntry(classes, "META-INF/com.android.tools/r8/moduleB-b.pro").decodeToString())
         assertEquals("-keep class com.example.umbrella.R\$string\n", jarEntry(classes, "META-INF/com.android.tools/r8/umbrella-merged.pro").decodeToString())
+    }
+
+    @Test
+    fun `a targeted rule file gets a name of its module's, in the folder that targets it`() {
+        mainAar("classes/META-INF/com.android.tools/r8/rules.pro" to "-keep class com.example.umbrella.U")
+        module(
+            "moduleA",
+            "com.example.a",
+            "classes/META-INF/com.android.tools/r8/rules.pro" to "-keep class com.example.a.A",
+            "classes/META-INF/com.android.tools/r8-from-1.0.0/rules.pro" to "-keep class com.example.a.From",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "classes/META-INF/com.android.tools/r8/rules.pro" to "-keep class com.example.b.B",
+            "classes/META-INF/com.android.tools/r8-from-1.0.0-upto-9.0.0/rules.pro" to "-keep class com.example.b.Range",
+        )
+
+        val classes = File(merge(), "classes.jar")
+
+        assertEquals(
+            mapOf(
+                "r8/rules.pro" to "-keep class com.example.umbrella.U",
+                "r8/moduleA-rules.pro" to "-keep class com.example.a.A",
+                "r8/moduleB-rules.pro" to "-keep class com.example.b.B",
+                "r8-from-1.0.0/moduleA-rules.pro" to "-keep class com.example.a.From",
+                "r8-from-1.0.0-upto-9.0.0/moduleB-rules.pro" to "-keep class com.example.b.Range",
+            ),
+            jarEntries(classes).associate { it.removePrefix("META-INF/com.android.tools/") to jarEntry(classes, it).decodeToString() },
+        )
+    }
+
+    @Test
+    fun `targeted rules two modules share word for word are read from either`() {
+        val shared = "classes/META-INF/com.android.tools/r8/rules.pro" to "-keep class com.example.Shared"
+        mainAar()
+        module("moduleA", "com.example.a", shared)
+        module("moduleB", "com.example.b", shared)
+
+        val classes = File(merge(), "classes.jar")
+
+        assertEquals(
+            listOf("META-INF/com.android.tools/r8/moduleA-rules.pro", "META-INF/com.android.tools/r8/moduleB-rules.pro"),
+            jarEntries(classes),
+        )
+        jarEntries(classes).forEach { assertEquals("-keep class com.example.Shared", jarEntry(classes, it).decodeToString()) }
+    }
+
+    @Test
+    fun `a targeted rule on a merged R follows it under the module's name too`() {
+        val rules = "classes/META-INF/com.android.tools/r8/rules.pro"
+        mainAar()
+        module("moduleA", "com.example.a", rules to "-keep class com.example.a.R\$string")
+        module("moduleB", "com.example.b", rules to "-keep class com.example.a.R\$id")
+
+        val classes = File(merge(), "classes.jar")
+
+        assertEquals("-keep class com.example.umbrella.R\$string", jarEntry(classes, "META-INF/com.android.tools/r8/moduleA-rules.pro").decodeToString())
+        assertEquals("-keep class com.example.umbrella.R\$id", jarEntry(classes, "META-INF/com.android.tools/r8/moduleB-rules.pro").decodeToString())
     }
 
     @Test

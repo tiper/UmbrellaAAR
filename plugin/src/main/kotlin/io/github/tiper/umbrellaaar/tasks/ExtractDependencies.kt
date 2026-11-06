@@ -234,9 +234,10 @@ abstract class ExtractDependencies : DefaultTask() {
  * A folder per archive of `archive -> the project path of its module`, keeping this map's order:
  * `:sample:jni:sample1` -> `sample_jni_sample1`.
  *
- * These names end up in the published AAR as `res/values*` and `.kotlin_module` file prefixes, so
- * they come from the project path and leave out where a checkout, a module or its build directory
- * is. No two may differ by case alone, as they are folders on a disk that may not tell them apart.
+ * These names end up in the published AAR as prefixes of `res/values*` files, of `.kotlin_module`
+ * files and of rule files under `META-INF/com.android.tools/`, so they come from the project path
+ * and leave out where a checkout, a module or its build directory is. No two may differ by case
+ * alone, as they are folders on a disk that may not tell them apart.
  */
 internal fun Map<File, String>.folderNames(): Map<File, String> {
     val used = mutableSetOf<String>()

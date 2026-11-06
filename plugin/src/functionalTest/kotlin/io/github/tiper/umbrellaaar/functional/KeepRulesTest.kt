@@ -381,6 +381,38 @@ class KeepRulesTest {
     }
 
     @Test
+    fun `two JVM modules can embed different targeted rules at the same path, as in stock`() = fixture {
+        val feature = androidLibrary("feature") {
+            keptString("a_first")
+            keptString("a_second")
+        }
+        fun JavaLibrary.targeted(field: String, shared: String) {
+            listOf("ByTools", "ByFrom", "ByRange", "ByUpto", "ByBoth").forEach { reflected(it) }
+            embedded("com.android.tools/r8/rules.pro", "-keep class $namespace.ByTools\n-keep class ${feature.namespace}.R\$string { public static int $field; }")
+            embedded("com.android.tools/r8-from-1.0.0/rules.pro", "-keep class $namespace.ByFrom")
+            embedded("com.android.tools/r8-from-1.0.0-upto-99.0.0/rules.pro", "-keep class $namespace.ByRange")
+            embedded("com.android.tools/r8-upto-1.0.0/rules.pro", "-keep class $namespace.ByUpto")
+            embedded("com.android.tools/r8/same.pro", "-keep class $shared.ByBoth")
+        }
+        val first = javaLibrary("first") { targeted("a_first", "com.acme.first") }
+        val second = javaLibrary("second") { targeted("a_second", "com.acme.first") }
+        val umbrella = androidUmbrella { export(feature, first, second) }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+        parity.assertKept(feature.namespace, "R\$string.a_first")
+        parity.assertKept(feature.namespace, "R\$string.a_second")
+        assertEquals(
+            setOf("ByTools", "ByFrom", "ByRange").flatMap { listOf("com.acme.first.$it", "com.acme.second.$it") }.toSet() + "com.acme.first.ByBoth",
+            parity.umbrella.release.apk.classes.filter { it.startsWith("com.acme.first") || it.startsWith("com.acme.second") }.toSet(),
+        )
+    }
+
+    @Test
     fun `a jar's targeted rules stand in for its legacy ones, as in stock`() = fixture {
         val util = javaLibrary("util") {
             keeping("com.android.tools/r8/tools.pro", "ByTools")

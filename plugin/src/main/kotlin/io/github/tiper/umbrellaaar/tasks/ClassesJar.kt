@@ -13,11 +13,15 @@ private const val SERVICES_DIR = "META-INF/services/"
 private const val TARGETED_RULES = "META-INF/com.android.tools/"
 private const val MERGED_RULES = "r8/umbrella-merged.pro"
 
-/** `classes/<path>` -> the jar entry name, applying the `.kotlin_module` per-module rename. */
+/**
+ * `classes/<path>` -> the jar entry name, applying the per-module rename of what every module can
+ * ship under one name: a `.kotlin_module`, and a targeted rule file, each read from a jar of its own
+ * in a consumer of those modules, and whose folder says which R8 reads it.
+ */
 internal fun classEntry(owner: String, relativePath: String, srcFile: File): Triple<String, String, File> {
     val entryName = relativePath.removePrefix("classes/")
     val renamed = when {
-        entryName.endsWith(".kotlin_module") -> {
+        entryName.endsWith(".kotlin_module") || entryName.startsWith(TARGETED_RULES) -> {
             val dir = entryName.substringBeforeLast('/', missingDelimiterValue = "")
             val file = entryName.substringAfterLast('/')
             if (dir.isEmpty()) "$owner-$file" else "$dir/$owner-$file"

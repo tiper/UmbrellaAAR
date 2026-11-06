@@ -557,7 +557,8 @@ pluginManagement {
     out of it. A JVM module with `META-INF/com.android.tools/` rules loses its legacy ones to them, as
     in any consumer, and those stay in `classes.jar`, where a copy of the merged rules joins them
     because a consumer that finds them reads no other rules of the AAR.
-  - `res/values*` and `.kotlin_module` files are namespaced per module.
+  - `res/values*`, `.kotlin_module` and `META-INF/com.android.tools/` rule files are namespaced per
+    module, the last in the folder that says which R8 reads them.
   - `META-INF/services/*` provider files inside `classes.jar` are combined.
   - `module-info.class` is left out, at the root and under `META-INF/versions/`: one jar is no one JVM
     module, and an AAR's classes run from the class path, which reads none.
