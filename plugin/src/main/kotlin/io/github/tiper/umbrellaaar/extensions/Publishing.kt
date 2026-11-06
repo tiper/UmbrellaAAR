@@ -19,7 +19,7 @@ private const val MAVEN_LOCAL = "mavenLocal"
 private const val RELEASE = "release"
 
 /** One publication on its way to one repository. */
-private class Upload(task: AbstractPublishToMaven) {
+private class Upload(val task: AbstractPublishToMaven) {
     private val repository = (task as? PublishToMavenRepository)?.repository
 
     val publication: MavenPublication = task.publication
@@ -39,6 +39,9 @@ private class Upload(task: AbstractPublishToMaven) {
         ?.removePrefix("android")?.removeSuffix("UmbrellaAar")?.replaceFirstChar(Char::lowercaseChar)
 }
 
+/** What is really on its way out in a run. A disabled task stays in the graph, for what it depends on. */
+private fun List<Task>.uploads() = filterIsInstance<AbstractPublishToMaven>().filter { it.enabled && it.publication != null }.map(::Upload)
+
 /**
  * Maven addresses a publication by its coordinates, so of two going to one repository the second
  * replaces the first, or a part of it: the umbrella's `.aar` next to another publication's `.pom`
@@ -53,12 +56,7 @@ internal fun Project.checkCoordinateClashes(tasks: List<Task>) {
 
     fun List<Upload>.clash() = size > 1 && any { it.isUmbrella() }
 
-    val clashes = tasks.filterIsInstance<AbstractPublishToMaven>()
-        .filter { it.enabled && it.publication != null }
-        .map(::Upload)
-        .groupBy { it.coordinates }
-        .values.filter { it.clash() }
-        .flatMap { uploads -> uploads.groupBy { it.destination }.values.filter { it.clash() } }
+    val clashes = tasks.uploads().groupBy { it.coordinates }.values.filter { it.clash() }.flatMap { uploads -> uploads.groupBy { it.destination }.values.filter { it.clash() } }
     if (clashes.isEmpty()) return
 
     val renames = clashes.flatMap { uploads -> renames(uploads.filter { it.isUmbrella() }, alone = uploads.all { it.isUmbrella() }) }.distinct().sorted()
@@ -93,4 +91,17 @@ internal fun Project.checkCoordinateClashes(tasks: List<Task>) {
 private fun renames(umbrellas: List<Upload>, alone: Boolean) = umbrellas.sortedBy { it.variant != RELEASE }.drop(if (alone) 1 else 0).map { upload ->
     val artifactId = listOfNotNull(upload.publication.artifactId, "umbrella".takeUnless { alone }, upload.variant.takeUnless { it == RELEASE })
     "publications.named<MavenPublication>(\"${upload.publication.name}\") { artifactId = \"${artifactId.joinToString("-")}\" }"
+}
+
+/**
+ * Maven takes `unspecified` for a version like any other. This goes on a task of the run, as what a
+ * task graph reports does not come back when the configuration cache reuses it, and on one of them
+ * alone, which speaks for all that this umbrella publishes.
+ */
+internal fun Project.warnIfUnversioned(tasks: List<Task>) {
+    val unversioned = tasks.uploads().filter { it.variant != null && it.module == path && it.publication.version == Project.DEFAULT_VERSION }
+    val publications = unversioned.map { it.publication.name }.distinct().sorted().joinToString()
+    val message = "[UmbrellaAarPom] $path publishes $publications with no version, so consumers would have to ask for '${Project.DEFAULT_VERSION}'.\n" +
+        "  Set version in the build script of $path."
+    unversioned.firstOrNull()?.task?.doFirst { logger.warn(message) }
 }

@@ -343,7 +343,7 @@ pluginManagement {
    }
    ```
 
-   Without `group` and `version`, the publication's version is `unspecified`.
+   Without `group` and `version`, the publication's version is `unspecified`, and publishing it warns.
 
    The UmbrellaAarPom plugin will automatically:
    - Create a Maven publication for each variant, from a software component

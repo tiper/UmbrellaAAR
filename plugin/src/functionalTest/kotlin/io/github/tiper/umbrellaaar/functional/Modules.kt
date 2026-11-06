@@ -41,6 +41,12 @@ internal sealed class Module(val fixture: Fixture, val name: String, parent: Mod
     private val binaries = linkedMapOf<String, ByteArray>()
     private val jars = mutableListOf<String>()
     private val extraScript = mutableListOf<String>()
+    private var versioned = true
+
+    /** Leaves the module with no version, which is what a build script does by saying nothing. */
+    fun withoutVersion() {
+        versioned = false
+    }
 
     /** Adds [content] at [path], relative to the module. */
     fun file(path: String, content: String) {
@@ -81,7 +87,7 @@ internal sealed class Module(val fixture: Fixture, val name: String, parent: Mod
 
     protected open fun generatedFiles(): Map<String, String> = emptyMap()
 
-    protected fun coordinatesBlock() = "group = \"$GROUP\"\nversion = \"$VERSION\""
+    protected fun coordinatesBlock() = listOfNotNull("group = \"$GROUP\"", "version = \"$VERSION\"".takeIf { versioned }).joinToString("\n")
 
     protected fun stockPublishing(component: String? = null): String {
         val publication = component?.let {

@@ -6,6 +6,7 @@ import io.github.tiper.umbrellaaar.extensions.allExcludeRules
 import io.github.tiper.umbrellaaar.extensions.matches
 import io.github.tiper.umbrellaaar.extensions.resolveUmbrella
 import io.github.tiper.umbrellaaar.extensions.useLegacyGraph
+import io.github.tiper.umbrellaaar.extensions.warnIfUnversioned
 import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.checkCoordinateClashes
 import io.github.tiper.umbrellaaar.extensions.createAndroidResolutionConfig
@@ -340,7 +341,10 @@ abstract class UmbrellaAarPom @Inject constructor(
             }
 
             plugins.withType<MavenPublishPlugin> {
-                gradle.taskGraph.whenReady { checkCoordinateClashes(allTasks) }
+                gradle.taskGraph.whenReady {
+                    checkCoordinateClashes(allTasks)
+                    warnIfUnversioned(allTasks)
+                }
             }
         }
 
