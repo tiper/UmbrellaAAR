@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "io.github.tiper"
-version = "3.0.0"
+version = "3.1.0"
 
 // Fixtures resolve the plugin from here by version, as a real build would. TestKit's
 // withPluginClasspath would load it apart from the AGP and KGP the fixture applies.
