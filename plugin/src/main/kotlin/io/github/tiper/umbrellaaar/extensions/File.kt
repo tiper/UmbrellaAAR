@@ -106,7 +106,7 @@ internal fun File.contentHash(): String {
     return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
-internal fun File.sameBytesAs(other: File) = length() == other.length() && readBytes().contentEquals(other.readBytes())
+internal fun File.sameBytesAs(other: File) = other.isFile && Files.mismatch(toPath(), other.toPath()) == -1L
 
 private fun File.isSameFileAs(other: File) = exists() && other.exists() && Files.isSameFile(toPath(), other.toPath())
 

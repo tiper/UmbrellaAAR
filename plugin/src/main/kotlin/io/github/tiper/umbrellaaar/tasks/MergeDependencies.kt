@@ -447,8 +447,7 @@ abstract class MergeDependencies : DefaultTask() {
      * is kept, and the others are reported rather than failing the whole merge.
      */
     private fun keepFirstLintJar(owner: String, srcFile: File, destFile: File) {
-        if (srcFile.length() == destFile.length() && srcFile.readBytes().contentEquals(destFile.readBytes())) return
-        droppedLintJars += owner
+        if (!srcFile.sameBytesAs(destFile)) droppedLintJars += owner
     }
 
     private fun reportDroppedLintJars() {
