@@ -1,6 +1,7 @@
 package io.github.tiper.umbrellaaar
 
 import com.android.build.api.dsl.LibraryExtension
+import io.github.tiper.umbrellaaar.extensions.COMPILE_SCOPE
 import io.github.tiper.umbrellaaar.extensions.PRODUCT_SCOPES
 import io.github.tiper.umbrellaaar.extensions.UmbrellaResolution
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
@@ -12,22 +13,27 @@ import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.cleanPlatformSuffixes
 import io.github.tiper.umbrellaaar.extensions.createAndroidResolutionConfig
 import io.github.tiper.umbrellaaar.extensions.createKmpResolutionConfig
+import io.github.tiper.umbrellaaar.extensions.exclude
 import io.github.tiper.umbrellaaar.extensions.isExcluded
 import io.github.tiper.umbrellaaar.extensions.isPlatform
 import io.github.tiper.umbrellaaar.extensions.localProject
 import io.github.tiper.umbrellaaar.extensions.productConfigurationNames
+import io.github.tiper.umbrellaaar.extensions.publishedCoordinates
 import io.github.tiper.umbrellaaar.extensions.resolveProjectGraph
 import io.github.tiper.umbrellaaar.pom.Collector
 import io.github.tiper.umbrellaaar.pom.Collector.Dependency
-import io.github.tiper.umbrellaaar.pom.Collector.Dependency.Companion.fromCoordinate
+import io.github.tiper.umbrellaaar.pom.Collector.Exclusion
 import io.github.tiper.umbrellaaar.tasks.BundleUmbrellaAar
 import io.github.tiper.umbrellaaar.tasks.CollectExternalDependencies
 import io.github.tiper.umbrellaaar.tasks.MergeSources
 import javax.inject.Inject
+import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.DependencyConstraint
 import org.gradle.api.artifacts.ExcludeRule
+import org.gradle.api.artifacts.ModuleDependency
 import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
@@ -57,16 +63,32 @@ abstract class UmbrellaAarPom @Inject constructor(
     private val softwareComponentFactory: SoftwareComponentFactory,
 ) : Plugin<Project> {
 
+    /**
+     * What a publication says about what lives outside it. [constraints] are the ones the modules
+     * declared, kept as declared: nothing but a version or a reason is left to carry over.
+     */
+    private class Published(val dependencies: List<Dependency>, val constraints: List<DependencyConstraint> = emptyList()) {
+        val report get() = dependencies.map { it.toCoordinate() } + constraints.map { it.toCoordinate() }
+
+        /** Its line in `external-dependencies.txt`, in the form [Dependency.toCoordinate] writes. */
+        private fun DependencyConstraint.toCoordinate() = buildList {
+            add("$group:$name:${versionConstraint.requiredVersion}:constraint")
+            versionConstraint.strictVersion.takeIf(String::isNotEmpty)?.let { add("strictly=$it") }
+            versionConstraint.preferredVersion.takeIf(String::isNotEmpty)?.let { add("prefer=$it") }
+            versionConstraint.rejectedVersions.takeIf(List<String>::isNotEmpty)?.let { add("reject=${it.joinToString(",")}") }
+        }.joinToString(" ")
+    }
+
     private fun Project.setup(
         variant: String,
-        allDependenciesProvider: Provider<List<String>>,
+        publishedProvider: Provider<Published>,
     ) {
         val variantCapitalized = variant.capitalize()
 
         val collectDeps = tasks.register<CollectExternalDependencies>("collect${variantCapitalized}ExternalDependencies") {
             group = GROUP
             description = "Collects external dependencies from all merged modules for $variant"
-            dependencies.set(allDependenciesProvider)
+            dependencies.set(publishedProvider.map { it.report })
             outputFile.convention(layout.buildDirectory.file("$REPORTS_PATH/$variant/$EXTERNAL_DEPENDENCIES_FILE"))
         }
 
@@ -76,7 +98,7 @@ abstract class UmbrellaAarPom @Inject constructor(
 
         plugins.withType<MavenPublishPlugin> {
             val publicationName = "android${variantCapitalized}UmbrellaAar"
-            val component = createComponent(publicationName, variantCapitalized, allDependenciesProvider)
+            val component = createComponent(publicationName, variantCapitalized, publishedProvider)
             extensions.configure<PublishingExtension> {
                 publications.register<MavenPublication>(publicationName) {
                     from(component)
@@ -103,13 +125,11 @@ abstract class UmbrellaAarPom @Inject constructor(
     private fun Project.createComponent(
         name: String,
         variantCapitalized: String,
-        allDependenciesProvider: Provider<List<String>>,
+        publishedProvider: Provider<Published>,
     ): SoftwareComponent {
         val aar = tasks.named<BundleUmbrellaAar>("bundle${variantCapitalized}UmbrellaAar").flatMap { it.umbrellaAarOutput }
         val sourcesJar = tasks.named<MergeSources>("merge${variantCapitalized}UmbrellaAarSources").flatMap { it.mergedSourcesJar }
-        val externalDependencies = allDependenciesProvider.map { coordinates ->
-            coordinates.filter { it.isNotBlank() }.mapNotNull(::fromCoordinate).map { dependencies.create("${it.group}:${it.name}:${it.version}") }
-        }
+        val externalDependencies = publishedProvider.map { published -> published.dependencies.map { toModuleDependency(it) } }
 
         fun publicationOnly(configurationName: String, configure: Configuration.() -> Unit) = configurations.create(configurationName) {
             isCanBeConsumed = false
@@ -120,6 +140,7 @@ abstract class UmbrellaAarPom @Inject constructor(
         val api = publicationOnly("${name}ApiPublication") {
             attributes.androidLibrary(this@createComponent, Usage.JAVA_API)
             dependencies.addAllLater(externalDependencies)
+            dependencyConstraints.addAllLater(publishedProvider.map { it.constraints })
         }
         val aarArtifact = artifacts.add(api.name, aar) {
             type = "aar"
@@ -149,6 +170,24 @@ abstract class UmbrellaAarPom @Inject constructor(
         }
     }
 
+    /** [dependency] as stock would write it, so `isTransitive = false` stays one and ends up as `*:*`. */
+    private fun Project.toModuleDependency(dependency: Dependency): ModuleDependency = (dependencies.create("${dependency.group}:${dependency.name}:${dependency.version}") as ModuleDependency).apply {
+        if (Exclusion.EVERYTHING in dependency.exclusions) {
+            isTransitive = false
+        } else {
+            dependency.exclusions.forEach(::exclude)
+        }
+        dependency.artifact?.let { wanted ->
+            artifact {
+                name = wanted.name
+                type = wanted.type
+                extension = wanted.extension
+                classifier = wanted.classifier
+            }
+        }
+        if (dependency.capabilities.isNotEmpty()) capabilities { requireCapabilities(*dependency.capabilities.toTypedArray()) }
+    }
+
     private fun AttributeContainer.androidLibrary(project: Project, usage: String) = with(project.objects) {
         attribute(Usage.USAGE_ATTRIBUTE, named(usage))
         attribute(Category.CATEGORY_ATTRIBUTE, named(Category.LIBRARY))
@@ -163,7 +202,7 @@ abstract class UmbrellaAarPom @Inject constructor(
         modules: Set<Project>,
         excludeRules: List<ExcludeRule>,
         resolutionConfigFactory: () -> Configuration,
-    ): List<String> {
+    ): List<Dependency> {
         // `compileOnly` is deliberately *not* collected: every coordinate written here gets
         // `<scope>compile</scope>`, so publishing compileOnly dependencies would hand consumers, at
         // runtime, exactly the dependencies the author marked as non-transitive.
@@ -225,9 +264,12 @@ abstract class UmbrellaAarPom @Inject constructor(
         val direct = resolution.root.dependencies
             .filterIsInstance<ResolvedDependencyResult>()
             .filterNot { it.isPlatform || (it.selected.id as? ProjectComponentIdentifier)?.let(::localProject) != null }
-            .mapNotNull { it.selected.moduleVersion }
+            .mapNotNull { it.publishedCoordinates }
             .filter { "${it.group}:${it.name}" in declaredKeys }
-        return (direct + resolution.pinnedBy(listOf(resolution.root)).filterNot { id -> excludeRules.any { it.matches(id.group, id.name) } })
+        val pinned = resolution.pinnedBy(listOf(resolution.root)).mapNotNull { it.moduleVersion }
+            .filterNot { id -> excludeRules.any { it.matches(id.group, id.name) } }
+            .map { Dependency(it.group, it.name, it.version, COMPILE_SCOPE) }
+        return (direct + pinned)
             .map { resolveToAndroidx(it, androidxMap) }
             .also { logger.debug("[UmbrellaAarPom] Resolved ${it.size} direct dependencies") }
     }
@@ -236,33 +278,37 @@ abstract class UmbrellaAarPom @Inject constructor(
         incoming.artifactView { isLenient = true }.artifacts.mapNotNull { it.id.componentIdentifier as? ModuleComponentIdentifier },
     )
 
+    /**
+     * What the declaration said about the module carries over, except for an artifact or a
+     * capability, which exist under the name they were declared with: those keep that name.
+     */
     private fun Project.resolveToAndroidx(
-        moduleVersion: org.gradle.api.artifacts.ModuleVersionIdentifier,
+        dependency: Dependency,
         androidxMap: Map<String, ModuleComponentIdentifier>,
     ): Dependency {
-        val shouldMap = moduleVersion.group.startsWith("org.jetbrains.compose.") ||
-            moduleVersion.group.startsWith("org.jetbrains.androidx.")
+        val shouldMap = dependency.group.startsWith("org.jetbrains.compose.") ||
+            dependency.group.startsWith("org.jetbrains.androidx.")
 
-        if (!shouldMap) {
-            return Dependency(moduleVersion.group, moduleVersion.name, moduleVersion.version, "compile")
+        if (!shouldMap || dependency.artifact != null || dependency.capabilities.isNotEmpty()) {
+            return dependency
         }
 
-        val searchNames = generateSearchNames(moduleVersion.name)
+        val searchNames = generateSearchNames(dependency.name)
         val androidxId = searchNames.firstNotNullOfOrNull { androidxMap[it] }
 
         return if (androidxId != null) {
             val cleanName = androidxId.module.cleanPlatformSuffixes()
             logger.debug(
-                "[UmbrellaAarPom] Mapped ${moduleVersion.group}:${moduleVersion.name}:${moduleVersion.version} -> ${androidxId.group}:$cleanName:${androidxId.version}",
+                "[UmbrellaAarPom] Mapped ${dependency.group}:${dependency.name}:${dependency.version} -> ${androidxId.group}:$cleanName:${androidxId.version}",
             )
-            Dependency(androidxId.group, cleanName, androidxId.version, "compile")
+            dependency.copy(group = androidxId.group, name = cleanName, version = androidxId.version)
         } else {
             // Plenty of Compose Multiplatform artifacts have no androidx twin by design
             // (`org.jetbrains.compose.ui:ui-backhandler`, …), so this is normal, not a problem.
             logger.info(
-                "[UmbrellaAarPom] Keeping multiplatform coordinate ${moduleVersion.group}:${moduleVersion.name} (no androidx equivalent)",
+                "[UmbrellaAarPom] Keeping multiplatform coordinate ${dependency.group}:${dependency.name} (no androidx equivalent)",
             )
-            Dependency(moduleVersion.group, moduleVersion.name, moduleVersion.version, "compile")
+            dependency
         }
     }
 
@@ -289,16 +335,18 @@ abstract class UmbrellaAarPom @Inject constructor(
         config: Configuration,
         buildType: String,
         resolutionConfigFactory: () -> Configuration,
-    ): Provider<List<String>> {
+    ): Provider<Published> {
         val memo = lazy {
             val rules = config.allExcludeRules()
             if (useLegacyGraph()) {
                 val graph = resolveProjectGraph(config, buildType)
-                collectExternalDependencies(
-                    buildType = buildType,
-                    modules = graph.modules.filterNot { it.isExcluded(rules) }.toSet(),
-                    excludeRules = rules,
-                    resolutionConfigFactory = resolutionConfigFactory,
+                Published(
+                    collectExternalDependencies(
+                        buildType = buildType,
+                        modules = graph.modules.filterNot { it.isExcluded(rules) }.toSet(),
+                        excludeRules = rules,
+                        resolutionConfigFactory = resolutionConfigFactory,
+                    ),
                 )
             } else {
                 val resolution = resolveUmbrella(config, buildType)
@@ -316,26 +364,56 @@ abstract class UmbrellaAarPom @Inject constructor(
      * The external dependencies to publish: the direct ones of the umbrella module and of every merged
      * module, at the versions Gradle selected for the whole umbrella graph, and the transitive ones
      * that would lose their version otherwise — so constraints, platforms and resolution rules apply
-     * exactly as they do when the modules are built.
+     * exactly as they do when the modules are built. Everything the modules declared about them comes
+     * along, and so do their constraints on external modules, for the consumers that reach those
+     * through another library.
      */
     private fun Project.collectResolvedDependencies(
         resolution: UmbrellaResolution,
         modules: Collection<Project>,
         excludeRules: List<ExcludeRule>,
-    ): List<String> {
-        val direct = (resolution.hostExternals + modules.flatMap { resolution.externalsOf[it.path].orEmpty() } + resolution.pinned)
-            .filterNot { id -> excludeRules.any { it.matches(id.group, id.name) } }
+    ): Published {
+        fun isExcluded(group: String?, name: String) = excludeRules.any { it.matches(group, name) }
+
+        val owners = listOf(path) + modules.map { it.path }
+        val declared = owners.associateWith { owner -> resolution.externalsOf[owner].orEmpty().filterNot { isExcluded(it.group, it.name) } }
+        checkVersions(declared)
 
         val androidxMap = androidxArtifactMap(resolution.moduleIds)
         val collector = Collector()
-        direct.forEach { collector.add(resolveToAndroidx(it, androidxMap)) }
+        val entries = declared.values.flatten()
+        // A declaration is at the selected version already, and a plain entry next to one that names
+        // an artifact or a capability would ship that module a second time.
+        val named = entries.mapTo(hashSetOf()) { "${it.group}:${it.name}" }
+        val pins = resolution.pinned.filterNot { isExcluded(it.group, it.name) || "${it.group}:${it.name}" in named }
+        (entries + pins).forEach { collector.add(resolveToAndroidx(it, androidxMap)) }
         reportConflicts(collector)
+
+        val local = rootProject.allprojects.mapTo(hashSetOf()) { "${it.group}:${it.name}" }
+        val constraints = owners.flatMap { resolution.constraintsOf[it].orEmpty() }
+            .filterNot { isExcluded(it.group, it.name) || "${it.group}:${it.name}" in local }
+            .distinctBy { Triple(it.group, it.name, it.versionConstraint) }
 
         logger.lifecycle(
             "[UmbrellaAarPom] POM will include ${collector.getStatistics().totalCount} dependencies from ${modules.size + 1} modules" +
                 if (excludeRules.isNotEmpty()) " (${excludeRules.size} exclusion rules applied)" else "",
         )
-        return collector.getDependencies()
+        return Published(collector.getDependencies(), constraints)
+    }
+
+    /** A project of an included build can have no version, and a consumer cannot resolve that. */
+    private fun Project.checkVersions(declared: Map<String, List<Dependency>>) {
+        val unversioned = declared.flatMap { (owner, dependencies) ->
+            dependencies.filter { it.version.isEmpty() || it.version == Project.DEFAULT_VERSION }.map { "${it.group}:${it.name} (declared by $owner)" }
+        }.distinct()
+        if (unversioned.isEmpty()) return
+        throw GradleException(
+            buildString {
+                appendLine("[UmbrellaAarPom] $path would publish dependencies that have no version, so no consumer could resolve them:")
+                unversioned.forEach { appendLine("  $it") }
+                append("  Declare a version on each of them, or give the project in the included build that provides it one.")
+            },
+        )
     }
 
     private fun Project.reportConflicts(collector: Collector) = collector.getConflicts().takeIf { it.isNotEmpty() }?.let { conflicts ->
@@ -402,7 +480,7 @@ abstract class UmbrellaAarPom @Inject constructor(
                     val buildType = this
                     setup(
                         variant = buildType.name,
-                        allDependenciesProvider = dependenciesProvider(config, buildType.name) {
+                        publishedProvider = dependenciesProvider(config, buildType.name) {
                             createAndroidResolutionConfig(buildType.name)
                         },
                     )
@@ -413,7 +491,7 @@ abstract class UmbrellaAarPom @Inject constructor(
             // `release` and `debug` publications share one resolution.
             plugins.withId("com.android.kotlin.multiplatform.library") {
                 val shared = dependenciesProvider(config, VARIANTS.first()) { createKmpResolutionConfig() }
-                VARIANTS.forEach { setup(variant = it, allDependenciesProvider = shared) }
+                VARIANTS.forEach { setup(variant = it, publishedProvider = shared) }
             }
 
             plugins.withType<MavenPublishPlugin> {

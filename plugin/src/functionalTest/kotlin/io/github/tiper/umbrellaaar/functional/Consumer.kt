@@ -28,8 +28,17 @@ internal class Consumer(
     /** Runs R8 on the release variant, keeping only what this app reaches. */
     var minifyRelease = false
 
+    /** Paths several of the app's libraries ship, of which an Android build has to be told to take one. */
+    var pickFirsts = emptyList<String>()
+
     private val calls = mutableListOf<String>()
     private val links = mutableListOf<String>()
+    private val libraries = mutableListOf<String>()
+
+    /** Also depends on a library, which can bring what the umbrella only constrains. */
+    fun alsoDependsOn(coordinates: String) {
+        libraries += coordinates
+    }
 
     /** Compiles Kotlin [expressions] into the app, for example `com.acme.core.Core()`. */
     fun uses(vararg expressions: String) {
@@ -65,6 +74,7 @@ internal class Consumer(
     private fun snapshot(variant: String) = ConsumerBuild(
         apk = Apk(checkNotNull(dir.resolve("app/build/outputs/apk/$variant").listFiles { file -> file.extension == "apk" }?.singleOrNull()) { "$variant has no single APK in $dir" }),
         runtimeClasspath = dir.resolve("app/build/resolved/$variant.txt").readLines().toSet(),
+        runtimeArtifacts = dir.resolve("app/build/resolved/$variant-artifacts.txt").readLines().toSet(),
     )
 
     private fun write() {
@@ -126,18 +136,28 @@ internal class Consumer(
         |            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "keep.pro")
         |        }
         |    }
+        |    packaging {
+        |        resources {
+        |${pickFirsts.joinToString("\n") { "            pickFirsts += \"$it\"" }}
+        |        }
+        |    }
         |}
         |
         |dependencies {
-        |${dependencies.joinToString("\n") { "    implementation(\"$it\")" }}
+        |${(dependencies + libraries).joinToString("\n") { "    implementation(\"$it\")" }}
         |}
         |
         |// Written for the harness to read, so it never parses a report meant for people.
         |listOf("debug", "release").forEach { variant ->
         |    tasks.register("write${'$'}{variant.replaceFirstChar(Char::uppercaseChar)}RuntimeClasspath") {
-        |        val root = configurations.named("${'$'}{variant}RuntimeClasspath").flatMap { it.incoming.resolutionResult.rootComponent }
+        |        val classpath = configurations.named("${'$'}{variant}RuntimeClasspath")
+        |        val root = classpath.flatMap { it.incoming.resolutionResult.rootComponent }
+        |        val artifacts = classpath.flatMap { it.incoming.artifacts.resolvedArtifacts }.map { all ->
+        |            all.map { "${'$'}{it.id.componentIdentifier.displayName} ${'$'}{it.file.name}" }
+        |        }
         |        val output = layout.buildDirectory.file("resolved/${'$'}variant.txt")
-        |        outputs.file(output)
+        |        val artifactsOutput = layout.buildDirectory.file("resolved/${'$'}variant-artifacts.txt")
+        |        outputs.files(output, artifactsOutput)
         |        doLast {
         |            val seen = linkedSetOf(root.get())
         |            val queue = ArrayDeque(seen)
@@ -150,6 +170,7 @@ internal class Consumer(
         |            }
         |            val coordinates = seen.drop(1).mapNotNull { it.moduleVersion }.map { "${'$'}{it.group}:${'$'}{it.name}:${'$'}{it.version}" }
         |            output.get().asFile.writeText(coordinates.sorted().joinToString("\n"))
+        |            artifactsOutput.get().asFile.writeText(artifacts.get().sorted().joinToString("\n"))
         |        }
         |    }
         |}
@@ -171,5 +192,8 @@ internal class ConsumerBuilds(val build: Build, private val variants: Map<String
     val release: ConsumerBuild get() = variants.getValue("release")
 }
 
-/** One variant of a consumer: what it packaged and what it resolved to run. */
-internal class ConsumerBuild(val apk: Apk, val runtimeClasspath: Set<String>)
+/**
+ * One variant of a consumer: what it packaged and what it resolved to run, as coordinates and as
+ * `<coordinates> <file>` of each artifact, which is where a classifier shows.
+ */
+internal class ConsumerBuild(val apk: Apk, val runtimeClasspath: Set<String>, val runtimeArtifacts: Set<String>)

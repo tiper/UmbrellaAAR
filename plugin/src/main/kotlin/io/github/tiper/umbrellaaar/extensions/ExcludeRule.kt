@@ -1,6 +1,8 @@
 package io.github.tiper.umbrellaaar.extensions
 
+import io.github.tiper.umbrellaaar.pom.Collector.Exclusion
 import org.gradle.api.artifacts.ExcludeRule
+import org.gradle.api.artifacts.ModuleDependency
 
 @Suppress("UselessCallOnNotNull")
 internal val ExcludeRule.groupOrEmpty: String get() = try {
@@ -15,3 +17,7 @@ internal val ExcludeRule.moduleOrEmpty: String get() = try {
 } catch (_: Exception) {
     ""
 }
+
+internal fun ExcludeRule.toExclusion() = Exclusion(groupOrEmpty.ifEmpty { Exclusion.ANY }, moduleOrEmpty.ifEmpty { Exclusion.ANY })
+
+internal fun ModuleDependency.exclude(exclusion: Exclusion): ModuleDependency = exclude(mapOf("group" to exclusion.group, "module" to exclusion.module).filterValues { it != Exclusion.ANY })

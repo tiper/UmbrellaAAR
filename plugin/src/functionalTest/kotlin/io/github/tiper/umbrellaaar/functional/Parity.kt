@@ -49,6 +49,7 @@ internal class Parity(val umbrella: ConsumerBuilds, val stock: ConsumerBuilds) {
         diff("permission", umbrella.apk.permissions, stock.apk.permissions)
         diff("APK entry", umbrella.apk.otherEntries, stock.apk.otherEntries)
         diff("runtime dependency", umbrella.runtimeClasspath.externals(), stock.runtimeClasspath.externals())
+        diff("runtime artifact", umbrella.runtimeArtifacts.externals(), stock.runtimeArtifacts.externals())
 
         (umbrella.apk.resources.keys intersect stock.apk.resources.keys)
             .filter { umbrella.apk.resources[it] != stock.apk.resources[it] }

@@ -50,6 +50,8 @@ internal class Fixture(val dir: File) {
 
     internal val modules = linkedMapOf<String, Module>()
 
+    private val includedBuilds = mutableListOf<String>()
+
     fun androidLibrary(name: String, parent: Module? = null, configure: AndroidLibrary.() -> Unit = {}) = add(AndroidLibrary(this, name, parent), configure)
 
     fun kmpLibrary(name: String, configure: KmpLibrary.() -> Unit = {}) = add(KmpLibrary(this, name), configure)
@@ -67,11 +69,39 @@ internal class Fixture(val dir: File) {
     /** A project with no plugins, as a directory holding other modules usually is. */
     fun container(name: String, configure: Container.() -> Unit = {}) = add(Container(this, name), configure)
 
+    /** A module with [script] as its whole build script, for what no other kind of module can be. */
+    fun scripted(name: String, script: String) = add(ScriptedModule(this, name, script)) {}
+
     /** An umbrella on `com.android.kotlin.multiplatform.library`. */
     fun kmpUmbrella(name: String = "sdk", configure: KmpUmbrella.() -> Unit = {}) = add(KmpUmbrella(this, name), configure)
 
     /** An umbrella on `com.android.library`. */
     fun androidUmbrella(name: String = "sdk", configure: AndroidUmbrella.() -> Unit = {}) = add(AndroidUmbrella(this, name), configure)
+
+    /**
+     * A build of its own holding a Java library, which Gradle puts in the place of `[group]:[name]`
+     * wherever a project asks for that module. It only has a version if it is given one.
+     */
+    fun includedBuild(group: String, name: String, version: String? = null) {
+        val root = dir.resolve(name).apply { mkdirs() }
+        root.resolve("settings.gradle.kts").writeText("rootProject.name = \"$name\"\n")
+        root.resolve("build.gradle.kts").writeText(
+            """
+            |plugins {
+            |    `java-library`
+            |}
+            |
+            |group = "$group"
+            |${version?.let { "version = \"$it\"" }.orEmpty()}
+            |
+            """.trimMargin(),
+        )
+        root.resolve("src/main/java/Included.java").apply { parentFile.mkdirs() }.writeText("public class Included {}\n")
+        includedBuilds += name
+    }
+
+    /** What [artifact] was last published as an ordinary library. See [parity]. */
+    fun stockPublished(artifact: String) = Published(stockRepo.resolve("${GROUP.replace('.', '/')}/$artifact/$VERSION"), "$artifact-$VERSION")
 
     /** A consumer of [umbrella], resolving it from [umbrellaRepo] by its coordinates alone. */
     fun consumerOf(umbrella: Umbrella, name: String = "consumer", configure: Consumer.() -> Unit = {}): Consumer = Consumer(
@@ -108,6 +138,7 @@ internal class Fixture(val dir: File) {
             |}
             |
             |rootProject.name = "fixture"
+            |${includedBuilds.joinToString("\n") { "includeBuild(\"../$it\")" }}
             |${modules.values.joinToString("\n") { "include(\"${it.path}\")" }}
             |
             """.trimMargin(),

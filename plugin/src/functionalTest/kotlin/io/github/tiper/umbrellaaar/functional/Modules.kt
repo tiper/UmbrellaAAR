@@ -98,11 +98,17 @@ internal sealed class DependentModule(fixture: Fixture, name: String, parent: Mo
         declare("api", module.notation)
     }
 
-    fun api(coordinates: String) = declare("api", coordinates.quoted)
+    /** [block] is the body of the dependency's own configuration block, as a build script spells it. */
+    fun api(module: Module, block: String) {
+        apiModules += module
+        declare("api", module.notation, block)
+    }
+
+    fun api(coordinates: String, block: String? = null) = declare("api", coordinates.quoted, block)
 
     fun implementation(module: Module) = declare("implementation", module.notation)
 
-    fun implementation(coordinates: String) = declare("implementation", coordinates.quoted)
+    fun implementation(coordinates: String, block: String? = null) = declare("implementation", coordinates.quoted, block)
 
     fun runtimeOnly(module: Module) = declare("runtimeOnly", module.notation)
 
@@ -125,8 +131,8 @@ internal sealed class DependentModule(fixture: Fixture, name: String, parent: Mo
 
     protected fun dependenciesBlock(lines: List<String> = dependencies) = lines.joinToString("\n", prefix = "dependencies {\n", postfix = "\n}") { "    $it" }
 
-    private fun declare(scope: String, notation: String) {
-        dependencies += "$scope($notation)"
+    private fun declare(scope: String, notation: String, block: String? = null) {
+        dependencies += "$scope($notation)${block?.let { " { $it }" }.orEmpty()}"
     }
 
     private val Module.notation get() = "project(\"$path\")"
@@ -432,6 +438,14 @@ internal class IosLibrary(fixture: Fixture, name: String) : Module(fixture, name
     override fun generatedFiles() = mapOf("src/commonMain/kotlin/$packageDir/$defaultClass.kt" to "package $namespace\n\nclass $defaultClass\n")
 }
 
+/** A module that is what its script says, plugins and all. */
+internal class ScriptedModule(fixture: Fixture, name: String, private val script: String) : Module(fixture, name) {
+
+    override val stockPublishTasks get() = emptyList<String>()
+
+    override fun scriptBlocks() = listOf(script.trimIndent())
+}
+
 /** A project without plugins, which Gradle offers no variant of. */
 internal class Container(fixture: Fixture, name: String) : Module(fixture, name) {
 
@@ -515,6 +529,9 @@ internal sealed interface Umbrella {
 
     /** What the last build left as the AAR of [variant]. */
     fun bundled(variant: String = "release") = Aar(fixture.projectDir.resolve("$name/build/outputs/umbrellaaar/$name-$variant.aar"))
+
+    /** `external-dependencies.txt` of [variant], as written. */
+    fun externalDependencies(variant: String = "release"): List<String> = fixture.projectDir.resolve("$name/build/reports/umbrellaaar/$variant/external-dependencies.txt").readLines()
 
     /** Merges the sources of [variant] and lists the jar's entries. */
     fun mergedSources(variant: String = "release", vararg arguments: String): Set<String> {

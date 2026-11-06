@@ -268,11 +268,35 @@ pluginManagement {
    neither merged nor written to the POM, local `java-platform` projects included. A transitive
    module they moved is written as a direct dependency, because consumers would otherwise get the
    version the library asked for. Gradle consumers still pick the highest version they see, so a pin
-   below that does not carry over.
+   below that does not carry over. What a platform says about a module the umbrella does not reach
+   is lost, so a consumer that gets that module some other way gets the version it asked for. A
+   module's own constraint is published, so declare one where that has to carry over.
+
+   What a module declares about an external dependency ships with it, in the POM and the `.module`,
+   as a stock publication of that module writes it: `exclude(...)` on the dependency or on a
+   configuration behind the variant Gradle selected, `isTransitive = false`, classifiers and artifact
+   types, and requested capabilities, which only the `.module` can express. A module's own constraints
+   on external modules are published as well, as `dependencyConstraints` in the `.module` and
+   `dependencyManagement` in the POM, so they also reach a consumer that gets those modules through
+   another library. A dependency an included build provides is published with the version that was
+   asked for, and fails the build if nothing gives it one.
+
+   One published entry speaks for every module declaring that dependency, and Gradle leaves a module
+   out only if every path to it does. So an exclusion is published if all declarations carry it, a
+   plain declaration next to `isTransitive = false` stays transitive, and each artifact any of them
+   asks for gets an entry of its own. An `exclude` on a dependency on a local module carries over to
+   the external dependencies below it, the same way. Only an export reaches a local module, so the
+   umbrella module's own line on a module it exports binds nothing, and a rule on one of its own
+   configurations binds what the umbrella module declares and no more. A Compose dependency keeps its
+   exclusions when it becomes its `androidx` twin. One that asks for an artifact or a capability keeps its coordinates
+   instead, as that artifact exists under the name it was declared with.
 
    > Set `umbrellaaar.legacyGraph=true` in `gradle.properties` to fall back to the `3.0` graph walk,
    > which reads each module's configurations by name. It is kept so large builds can diff
-   > `merged-modules.txt` and `external-dependencies.txt` between both modes before upgrading.
+   > `merged-modules.txt` and `external-dependencies.txt` between both modes before upgrading. In
+   > that diff, ignore ` excludes=` and a `kotlin-stdlib` line, which KGP adds too late for this walk
+   > to always see. It publishes coordinates alone: none of what a module declares about a
+   > dependency, no constraints, and no failure on a dependency without a version.
 
    **Keeping the AAR and the XCFramework in sync.** If the same module also builds Apple
    frameworks, it can merge every local module those frameworks export, instead of repeating the
@@ -421,6 +445,23 @@ pluginManagement {
    between two builds. The edge names the module that pulled each one in and the variant it was
    reached through, e.g. `:feature -> androidRuntimeElements`.
 
+   `external-dependencies.txt` is sorted, with one line per published entry. A plain dependency is
+   `group:name:version:scope`. Whatever else was declared follows that, separated by spaces, and a
+   constraint has `constraint` for a scope:
+
+   ```
+   com.squareup.okhttp3:okhttp:4.12.0:compile excludes=*:annotations,com.squareup.okio:*
+   com.squareup.okio:okio:3.9.1:constraint
+   io.netty:netty-transport-native-epoll:4.1.115.Final:compile artifact=netty-transport-native-epoll:jar:jar:linux-x86_64
+   org.jetbrains.kotlin:kotlin-stdlib:2.3.0:compile
+   org.jetbrains.kotlin:kotlin-test:2.3.0:compile capabilities=org.jetbrains.kotlin:kotlin-test-framework-junit
+   ```
+
+   `artifact=` is `name:type:extension:classifier`, always with four fields, and an empty one for
+   what the artifact does not set. `excludes=` is `group:module`, with `*` for either. `*:*` is
+   `isTransitive = false`. A constraint's version field is empty if it gives none, and `strictly=`,
+   `prefer=` and `reject=` follow it for what else it says of the version.
+
 ### Known limitations
 
 - **The umbrella publication does not claim unique coordinates.** It defaults to
@@ -443,6 +484,23 @@ pluginManagement {
 - **`compileOnly` dependencies are not written to the POM** either: every coordinate in the
   generated POM carries `<scope>compile</scope>`, so publishing them would hand consumers, at
   runtime, exactly the dependencies you marked as non-transitive.
+- **The published exclusions are those of the runtime variant, in both variants and the POM.** Every
+  dependency is published to both, so a rule on `implementation` also binds an `api` dependency, as
+  in the `.module` of a stock library but not in its POM.
+- **An `androidTarget()` module publishes three exclusions nobody wrote.** KGP puts rules for
+  `kotlin-stdlib-common`, `kotlin-test-common` and `kotlin-test-annotations-common` on the
+  configurations behind the variant Gradle selects, so each dependency of that module carries them,
+  as in the `.module` of a stock library. `3.0` published none, so a build script that did not change
+  gets a longer POM.
+- **An artifact on its own is not transitive.** Gradle takes `@aar`, or any other `@ext`, to mean
+  that file and nothing it depends on, so that dependency publishes with `excludes=*:*`, and
+  consumers no longer get what it depends on from the umbrella, as `3.0` gave them. Set
+  `isTransitive = true` on the dependency to keep that.
+- **A rule on a configuration that matches a dependency declared on it removes that dependency.**
+  Gradle resolves the module without it, so it is not published. A stock publication lists it.
+- **A dependency is published at the version Gradle selected, with no `prefer`, attributes or
+  `because`.** `strictly` and `reject` go out as a constraint on its module, so they bind consumers
+  as they do with stock. Constraints keep all of this.
 - **Project isolation is not supported.** Gradle resolves which modules to merge, but each module's
   AAR and sources jar are still taken from its `bundle<Variant>Aar` / sources-jar task, which means
   reading sibling projects' tasks. AGP does not hand the published AAR to other modules through

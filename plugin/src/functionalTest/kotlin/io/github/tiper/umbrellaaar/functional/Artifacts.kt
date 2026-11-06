@@ -102,6 +102,11 @@ internal class Pom(val file: File) {
     val version = root.childText("version")
     val packaging = root.childText("packaging")
 
+    /** `group:artifact:version` of everything under `dependencyManagement`. */
+    val managed: Set<String> = root.child("dependencyManagement")?.child("dependencies")?.childElements("dependency").orEmpty().mapTo(sortedSetOf()) {
+        "${it.childText("groupId")}:${it.childText("artifactId")}:${it.childText("version")}"
+    }
+
     val dependencies: List<PomDependency> = root.child("dependencies")?.childElements("dependency").orEmpty().map { dependency ->
         PomDependency(
             group = checkNotNull(dependency.childText("groupId")),
@@ -117,13 +122,24 @@ internal class Pom(val file: File) {
     }
 }
 
+/** One entry of a [ModuleVariant]'s dependencies, with all it says beyond its coordinates. */
+internal data class ModuleDependencyEntry(
+    val coordinates: String,
+    val excludes: Set<String>,
+    val artifactSelector: Map<String, String>?,
+    val capabilities: Set<String>,
+)
+
 /** One variant of a [ModuleMetadata]. */
 internal class ModuleVariant(
     val name: String,
     val attributes: Map<String, Any>,
-    val dependencies: List<String>,
+    val entries: List<ModuleDependencyEntry>,
+    val constraints: List<String>,
     val files: List<String>,
-)
+) {
+    val dependencies: List<String> get() = entries.map { it.coordinates }
+}
 
 /** A parsed Gradle Module Metadata `.module` file. */
 internal class ModuleMetadata(val file: File) {
@@ -134,16 +150,24 @@ internal class ModuleMetadata(val file: File) {
     fun libraryVariant(usage: String) = variants.single { it.attributes["org.gradle.usage"] == usage && it.attributes["org.gradle.category"] == "library" }
 
     @Suppress("UNCHECKED_CAST")
+    private fun coordinates(entry: Map<String, Any>) = "${entry["group"]}:${entry["module"]}:${(entry["version"] as Map<String, String>?)?.get("requires")}"
+
+    @Suppress("UNCHECKED_CAST")
     private fun parse(): List<ModuleVariant> {
         val root = JsonSlurper().parse(file) as Map<String, Any>
         return (root["variants"] as List<Map<String, Any>>).map { variant ->
             ModuleVariant(
                 name = variant["name"] as String,
                 attributes = variant["attributes"] as Map<String, Any>,
-                dependencies = (variant["dependencies"] as List<Map<String, Any>>?).orEmpty().map { dependency ->
-                    val version = (dependency["version"] as Map<String, String>?)?.get("requires")
-                    "${dependency["group"]}:${dependency["module"]}:$version"
+                entries = (variant["dependencies"] as List<Map<String, Any>>?).orEmpty().map { dependency ->
+                    ModuleDependencyEntry(
+                        coordinates = coordinates(dependency),
+                        excludes = (dependency["excludes"] as List<Map<String, String>>?).orEmpty().mapTo(sortedSetOf()) { "${it["group"]}:${it["module"]}" },
+                        artifactSelector = (dependency["thirdPartyCompatibility"] as Map<String, Map<String, String>>?)?.get("artifactSelector"),
+                        capabilities = (dependency["requestedCapabilities"] as List<Map<String, String>>?).orEmpty().mapTo(sortedSetOf()) { "${it["group"]}:${it["name"]}" },
+                    )
                 },
+                constraints = (variant["dependencyConstraints"] as List<Map<String, Any>>?).orEmpty().map(::coordinates),
                 files = (variant["files"] as List<Map<String, Any>>?).orEmpty().map { it["name"] as String },
             )
         }
