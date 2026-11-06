@@ -39,6 +39,11 @@ internal class SymbolTable {
     /** Whether the table has [field], as `<type>/<name>`. */
     operator fun contains(field: String) = field in fields
 
+    /** What this table has of [other]'s, as `<type>` -> its fields. */
+    fun fieldsIn(other: SymbolTable) = symbols.values.flatten().map { it.symbol }.filter { it in other }
+        .groupBy({ it.substringBefore('/') }, { it.substringAfter('/') })
+        .mapValues { (_, fields) -> fields.toSet() }
+
     fun write(to: File) = to.bufferedWriter().use { writer -> symbols.values.flatten().forEach(writer::appendLine) }
 
     private fun String.isChildOf(symbol: List<String>) = startsWith("int styleable ") && symbol.firstOrNull()?.startsWith("int[]") == true

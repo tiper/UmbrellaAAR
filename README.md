@@ -582,10 +582,15 @@ pluginManagement {
   AAR's `AndroidManifest.xml`; references to them — from the merged modules *and* from the umbrella
   module's own classes — are rewritten to the umbrella's `R`. A third-party AAR bundled inside one of
   your modules keeps its own `R`. Keep rules go the same way: `com.acme.feature.R$string` becomes
-  the umbrella's, and a wildcard on the module's package gets the umbrella's `R` listed next to it,
-  so it keeps all of that shared class. A wildcard above the package (`com.acme.**`) is left as it
-  is, and matches the umbrella's `R` only if that lies below it. The bytecode pre-scan that decides whether ASM runs at all is
-  best-effort (false positives only cost a no-op rewrite).
+  the umbrella's, and a class name with wildcards that reaches a module's `R`, however it is spelled
+  (`com.acme.**`, `**.feature.R$*`), gets the umbrella's `R` listed next to it. A rule on every field
+  of such a class (`{ *; }`, `{ public *; }`) would then keep what the other modules declare, so what
+  it reached, read from that module's `R.txt`, goes in a rule of its own. `-keepclassmembers` fires
+  when the class is live, and the shared one nearly always is, so that rule gets an `-if` on the
+  classes that read the module's `R`, and goes when nothing does. A module's `R` that is only live
+  because another rule keeps it loses its members that way, so give that rule the members as well.
+  An `-if` of a module's own only follows an `R` it names. The bytecode pre-scan that decides
+  whether ASM runs at all is best-effort (false positives only cost a no-op rewrite).
 - **Mixed-plugin umbrellas and the `debug` publication.** `com.android.kotlin.multiplatform.library`
   has no build types, so the umbrella's own AAR is the same `androidMain` artifact for both
   publications. Exported plain `com.android.library` modules are therefore also taken from one AAR

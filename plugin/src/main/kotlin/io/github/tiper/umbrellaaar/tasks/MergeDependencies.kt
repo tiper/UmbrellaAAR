@@ -10,6 +10,7 @@ import com.android.manifmerger.MergingReport.Record.Severity.ERROR
 import com.android.utils.ILogger
 import io.github.tiper.umbrellaaar.extensions.AAR_METADATA_PATH
 import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
+import io.github.tiper.umbrellaaar.extensions.RClassContent
 import io.github.tiper.umbrellaaar.extensions.fieldName
 import io.github.tiper.umbrellaaar.extensions.inlineIds
 import io.github.tiper.umbrellaaar.extensions.mergeAarMetadata
@@ -121,7 +122,7 @@ abstract class MergeDependencies : DefaultTask() {
         }
 
         val values = MergedValues(resourceNames, ::conflict)
-        val symbolTables = mutableListOf<File>()
+        val symbolTables = linkedMapOf(MAIN to File(src, R_TXT))
 
         src.copyRecursively(out, overwrite = true)
         src.walk().filter { it.isFile }.forEach {
@@ -183,7 +184,7 @@ abstract class MergeDependencies : DefaultTask() {
 
                         relativePath.endsWith(".kotlin_module") -> srcFile.copyTo(destFile.ofModule(owner), overwrite = true)
 
-                        relativePath == R_TXT -> symbolTables += srcFile
+                        relativePath == R_TXT -> symbolTables[owner] = srcFile
 
                         // public.txt is one `<type> <name>` per line, so whole lines are the key. See
                         // finalisePublicResources for why merging alone is not enough.
@@ -242,7 +243,7 @@ abstract class MergeDependencies : DefaultTask() {
 
         reportDuplicateResources()
 
-        val symbols = mergeSymbols(into = File(out, R_TXT), modules = symbolTables, lost = lost)
+        val symbols = mergeSymbols(into = File(out, R_TXT), tables = symbolTables.values, lost = lost)
 
         (appendedFiles + touchedProguardFiles).forEach { it.ensureTrailingNewline() }
 
@@ -254,25 +255,38 @@ abstract class MergeDependencies : DefaultTask() {
         // The merged modules' R classes are folded into the umbrella's, so references to them from
         // the umbrella's own code must follow. Dependency classes were already relocated while they
         // were extracted.
-        val mergedNamespaces = libraryManifests.mapNotNullTo(mutableSetOf()) { (_, file) ->
-            file.readText().packageName()?.replace('.', '/')
-        }
+        val namespaces = libraryManifests.mapNotNull { (owner, file) -> file.readText().packageName()?.let { owner to it.replace('.', '/') } }.toMap()
         val umbrellaNamespace = (mainNamespace.orNull ?: packageOverride).replace('.', '/')
-        buildClassesJar(out, classEntries, umbrellaNamespace, mergedNamespaces)
-        File(out, PROGUARD_TXT).takeIf { it.isFile }?.let { it.writeText(it.readText().relocateRInRules(umbrellaNamespace, mergedNamespaces)) }
+        val rClasses by lazy { (namespaces + (MAIN to umbrellaNamespace)).rClasses(symbolTables, symbols) }
+        buildClassesJar(out, classEntries, umbrellaNamespace, namespaces.values.toSet()) { it.relocateRInRules(umbrellaNamespace, rClasses) }
+        File(out, PROGUARD_TXT).takeIf { it.isFile }?.let { it.writeText(it.readText().relocateRInRules(umbrellaNamespace, rClasses)) }
         failOnMissingFields(symbols)
         logger.lifecycle("Merged dependencies into main AAR (processed $filesProcessed files)")
     }
 
     /**
-     * Folds [modules]' `R.txt` into the umbrella's, without what the merge [lost]. Only that goes: any
-     * other symbol has a resource left, or belongs to a dependency that a transitive `R` lists.
+     * Folds [tables], the umbrella's `R.txt` and each module's, into one, without what the merge
+     * [lost]. Only that goes: any other symbol has a resource left, or belongs to a dependency that a
+     * transitive `R` lists.
      */
-    private fun mergeSymbols(into: File, modules: List<File>, lost: Set<String>) = SymbolTable().apply {
-        val tables = listOf(into).filter(File::isFile) + modules
-        tables.forEach(::read)
+    private fun mergeSymbols(into: File, tables: Collection<File>, lost: Set<String>) = SymbolTable().apply {
+        val existing = tables.filter(File::isFile)
+        existing.forEach(::read)
         remove(lost)
-        if (tables.isNotEmpty()) write(into)
+        if (existing.isNotEmpty()) write(into)
+    }
+
+    /**
+     * From `module -> namespace` to what the `R` of each namespace had in stock, by type, out of
+     * [tables] by module. A field that [merged] does not have is gone.
+     */
+    private fun Map<String, String>.rClasses(tables: Map<String, File>, merged: SymbolTable): Map<String, Map<String, RClassContent>> {
+        val readers = rFieldReads.groupBy({ it.field }, { it.reader })
+        return entries.groupBy({ it.value }, { it.key }).mapValues { (_, owners) ->
+            SymbolTable().apply { owners.mapNotNull(tables::get).filter(File::isFile).forEach(::read) }.fieldsIn(merged).mapValues { (type, fields) ->
+                RClassContent(fields, fields.flatMapTo(sortedSetOf()) { readers["$type/$it"].orEmpty() })
+            }
+        }
     }
 
     /**
@@ -282,7 +296,7 @@ abstract class MergeDependencies : DefaultTask() {
      * transitive `R` gets from outside the merge too, and not by the resources merged.
      */
     private fun failOnMissingFields(symbols: SymbolTable) {
-        val missing = rFieldReads.filterNot { it.field in symbols }.sortedBy { it.field }
+        val missing = rFieldReads.filterNot { it.field in symbols }.distinctBy { it.field }.sortedBy { it.field }
         if (missing.isEmpty()) return
 
         throw GradleException(
@@ -460,6 +474,7 @@ abstract class MergeDependencies : DefaultTask() {
         dependencyEntries: List<Triple<String, String, File>>,
         umbrellaNamespace: String,
         mergedNamespaces: Set<String>,
+        relocateRules: (String) -> String,
     ) {
         val classes = File(out, "classes")
         val entries = linkedMapOf<String, Pair<String, File>>()
@@ -490,7 +505,8 @@ abstract class MergeDependencies : DefaultTask() {
         val relocate = umbrellaNamespace.isNotEmpty() && mergedNamespaces.isNotEmpty()
         val jar = File(out, "classes.jar").apply { if (exists()) delete() }
         ZipOutputStream(BufferedOutputStream(FileOutputStream(jar), IO_BUFFER_SIZE)).use { zos ->
-            entries.entries.sortedBy { it.key }.forEach { (entryName, source) ->
+            // Rules last: they go by what reads an `R`, and that takes the umbrella's own classes too.
+            entries.entries.sortedWith(compareBy({ it.key.startsWith(TARGETED_RULES) }, { it.key })).forEach { (entryName, source) ->
                 val (owner, file) = source
                 zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
                 val services = serviceFiles[entryName]
@@ -499,7 +515,7 @@ abstract class MergeDependencies : DefaultTask() {
                     relocate && owner == MAIN && entryName.endsWith(".class") ->
                         zos.write(file.readBytes().transformClass(umbrellaNamespace, mergedNamespaces) { field, reader -> rFieldReads += RFieldRead(field, reader, MAIN) })
                     relocate && entryName.startsWith(TARGETED_RULES) ->
-                        zos.write(file.readText().relocateRInRules(umbrellaNamespace, mergedNamespaces).encodeToByteArray())
+                        zos.write(relocateRules(file.readText()).encodeToByteArray())
                     else -> file.inputStream().use { it.copyTo(zos, IO_BUFFER_SIZE) }
                 }
                 zos.closeEntry()

@@ -62,6 +62,54 @@ class MergeDependenciesTest {
     }
 
     @Test
+    fun `a rule on the members of a module's R goes by all that read it`() {
+        mainAar("R.txt" to "int string a_only 0x0")
+        module(
+            "moduleA",
+            "com.example.a",
+            "R.txt" to "int string a_only 0x0",
+            ".r-references" to "string/a_only\tcom.example.a.Second\nstring/a_only\tcom.example.a.First\n",
+            "proguard.txt" to "-keepclassmembers class com.example.a.R\$* { *; }",
+        )
+        module("moduleB", "com.example.b", "R.txt" to "int string b_only 0x0", "proguard.txt" to "-keepclassmembers class com.example.b.R\$* { *; }")
+
+        assertEquals(
+            listOf("-if class com.example.a.First,com.example.a.Second", "-keepclassmembers class com.example.umbrella.R\$string { *** a_only; }"),
+            File(merge(), "proguard.txt").readLines().filter(String::isNotBlank),
+        )
+    }
+
+    @Test
+    fun `a rule on every field of a module's R keeps what that R txt lists and the merge left`() {
+        mainAar("R.txt" to "int string own 0x0")
+        module(
+            "moduleA",
+            "com.example.a",
+            "R.txt" to "int string a_only 0x0\nint id one 0x0",
+            "res/values/values.xml" to resources(attr("mode", "string")),
+            "proguard.txt" to "-keep class com.example.a.** { *; }",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "R.txt" to "int string b_only 0x0\nint attr mode 0x0\nint id gone 0x0",
+            "res/values/values.xml" to resources(attr("mode", children = "<enum name=\"gone\" value=\"1\"/>")),
+            "proguard.txt" to "-keep class com.example.b.R\$id { *; }",
+        )
+
+        val rules = File(merge(), "proguard.txt").readLines().filter(String::isNotBlank)
+
+        assertEquals(
+            listOf(
+                "-keep class com.example.a.** { *; }",
+                "-keep class com.example.umbrella.R\$id { *** one; }",
+                "-keep class com.example.umbrella.R\$string { *** a_only; }",
+            ),
+            rules,
+        )
+    }
+
+    @Test
     fun `R txt symbols are de-duplicated`() {
         mainAar("R.txt" to "int string shared 0x0\nint string umbrella_only 0x0")
         module("moduleA", "com.example.a", "R.txt" to "int string shared 0x0\nint string a_only 0x0")

@@ -65,6 +65,12 @@ class KeepRulesTest {
             "packages_wildcard" to { ns: String, name: String -> "-keep class $ns.** { public static int $name; }" },
             "any_package" to { _: String, name: String -> "-keep class **.R\$string { public static int $name; }" },
             "multi_line" to { ns: String, name: String -> "-keep class $ns.R\$string {\n    public static int $name;\n}" },
+            "any_inner" to { ns: String, name: String -> "-keep class $ns.*\$* { public static int $name; }" },
+            "any_letter" to { ns: String, name: String -> "-keep class $ns.?\$string { public static int $name; }" },
+            "package_prefix" to { ns: String, name: String -> "-keep class ${ns.dropLast(2)}*.R\$* { public static int $name; }" },
+            "packages_between" to { ns: String, name: String -> "-keep class com.**.${ns.substringAfterLast('.')}.R\$* { public static int $name; }" },
+            "any_parent" to { ns: String, name: String -> "-keep class **.${ns.substringAfterLast('.')}.R\$string { public static int $name; }" },
+            "nested_classes" to { ns: String, name: String -> "-keep class $ns.**\$* { public static int $name; }" },
         )
         val modules = forms.mapValues { (form, rule) ->
             androidLibrary(form.replace("_", "")) {
@@ -81,6 +87,73 @@ class KeepRulesTest {
 
         parity.assertMatchesStock()
         modules.forEach { (form, module) -> parity.assertKept(module.namespace, "R\$string.kept_$form") }
+    }
+
+    @Test
+    fun `a wildcard above a module reaches the umbrella's R, wherever that is`() = fixture {
+        val feature = androidLibrary("feature") {
+            keptString("a_above")
+            consumerRule("-keep class com.acme.** { *; }")
+        }
+        val umbrella = androidUmbrella {
+            buildScript("android { namespace = \"org.other.sdk\" }")
+            export(feature)
+        }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        // The oracle reads an `R` under the fixtures' group, and this one is meant to be outside it.
+        assertEquals(emptyList(), parity.differences.filterNot { " R field " in it })
+        assertTrue("org.other.sdk.R\$string.a_above" in parity.umbrella.release.apk.fields, "${parity.umbrella.release.apk.fields}")
+    }
+
+    @Test
+    fun `a rule on every field keeps what its module declares, and not what the others do, as in stock`() = fixture {
+        val members = androidLibrary("members") {
+            keptString("kept_by_members")
+            reads("string.kept_by_members")
+            consumerRule("-keepclassmembers class $namespace.** { public *; }")
+        }
+        val everything = androidLibrary("everything") {
+            keptString("kept_by_everything")
+            androidKotlin("Used", "package $namespace\n\nclass Used")
+            consumerRule("-keep class $namespace.* { *; }")
+        }
+        val fields = androidLibrary("fields") {
+            keptString("kept_by_fields")
+            consumerRule("-keep class $namespace.R\$string { public static <fields>; }")
+        }
+        val unread = androidLibrary("unread") {
+            keptString("not_kept_unread")
+            consumerRule("-keepclassmembers class $namespace.** { public *; }")
+        }
+        val readAbove = androidLibrary("readabove") {
+            keptString("read_from_umbrella")
+            keptString("kept_by_umbrella_reading")
+            consumerRule("-keepclassmembers class $namespace.** { public *; }")
+        }
+        val other = androidLibrary("other") { keptString("not_kept") }
+        val umbrella = androidUmbrella {
+            keptString("kept_by_own")
+            consumerRule("-keep class $namespace.** { *; }")
+            androidKotlin("Reader", "package $namespace\n\nclass Reader { val field = ${readAbove.namespace}.R.string.read_from_umbrella }")
+            calls += "$namespace.Reader()"
+            api(readAbove)
+            export(members, everything, fields, unread, readAbove, other)
+        }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+        val kept = parity.umbrella.release.apk.fields
+        listOf("members", "everything", "fields", "own", "umbrella_reading").forEach { assertTrue("com.acme.sdk.R\$string.kept_by_$it" in kept, "$kept") }
+        assertFalse(kept.any { "not_kept" in it }, "A field no rule of its module reached stayed: $kept")
     }
 
     @Test

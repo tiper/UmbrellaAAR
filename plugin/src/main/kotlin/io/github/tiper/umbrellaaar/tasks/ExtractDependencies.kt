@@ -180,8 +180,8 @@ abstract class ExtractDependencies : DefaultTask() {
             val namespace = parameters.mainNamespace.get()
             val merged = parameters.mergedNamespaces.get()
             // The rewrite walks every field read anyway, so a later pass over the classes would only cost.
-            val rFields = java.util.TreeMap<String, String>()
-            val transform = { bytes: ByteArray -> bytes.transformClass(namespace, merged) { field, reader -> rFields.putIfAbsent(field, reader) } }
+            val rReads = java.util.TreeSet<String>()
+            val transform = { bytes: ByteArray -> bytes.transformClass(namespace, merged) { field, reader -> rReads += "$field\t$reader" } }
 
             when (file.extension) {
                 "aar" -> try {
@@ -225,7 +225,7 @@ abstract class ExtractDependencies : DefaultTask() {
                 else -> Unit
             }
 
-            if (rFields.isNotEmpty()) File(out, R_REFERENCES).writeText(rFields.entries.joinToString("") { (field, reader) -> "$field\t$reader\n" })
+            if (rReads.isNotEmpty()) File(out, R_REFERENCES).writeText(rReads.joinToString("") { "$it\n" })
         }
     }
 }
