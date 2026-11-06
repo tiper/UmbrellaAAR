@@ -27,8 +27,8 @@ java {
 dependencies {
     compileOnly(libs.android.gradle.plugin)
     compileOnly(libs.kotlin.gradle.plugin)
+    compileOnly(libs.android.tools.common)
     implementation(libs.asm.commons)
-    implementation(libs.android.tools.common)
 
     testImplementation(kotlin("test"))
     testImplementation(gradleTestKit())
