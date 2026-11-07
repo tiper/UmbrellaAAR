@@ -88,6 +88,48 @@ class AarMetadataTest {
     }
 
     @Test
+    fun `a stricter desugar flavor wins at the same version`() {
+        val merged = linkedMapOf("desugarJdkLib" to "com.android.tools:desugar_jdk_libs:2.1.5")
+        merged.mergeAarMetadata(mapOf("desugarJdkLib" to "com.android.tools:desugar_jdk_libs_nio:2.1.5"))
+
+        assertEquals("com.android.tools:desugar_jdk_libs_nio:2.1.5", merged["desugarJdkLib"])
+    }
+
+    @Test
+    fun `desugar flavor and version are each the strictest, whichever comes first`() {
+        val plain = "com.android.tools:desugar_jdk_libs:2.1.5"
+        val nio = "com.android.tools:desugar_jdk_libs_nio:2.0.4"
+
+        listOf(plain to nio, nio to plain).forEach { (first, second) ->
+            val merged = linkedMapOf("desugarJdkLib" to first)
+            merged.mergeAarMetadata(mapOf("desugarJdkLib" to second))
+
+            assertEquals("com.android.tools:desugar_jdk_libs_nio:2.1.5", merged["desugarJdkLib"])
+        }
+    }
+
+    @Test
+    fun `the plain desugar flavor outranks the minimal one`() {
+        val merged = linkedMapOf("desugarJdkLib" to "com.android.tools:desugar_jdk_libs_minimal:2.1.5")
+        merged.mergeAarMetadata(mapOf("desugarJdkLib" to "com.android.tools:desugar_jdk_libs:2.0.4"))
+
+        assertEquals("com.android.tools:desugar_jdk_libs:2.1.5", merged["desugarJdkLib"])
+    }
+
+    @Test
+    fun `a desugar flavor AGP does not know keeps the first, and names the other`() {
+        val known = "com.android.tools:desugar_jdk_libs:2.1.5"
+        val unknown = "com.acme:desugar_other:9.0.0"
+        val dropped = mutableListOf<String>()
+
+        val merged = linkedMapOf("desugarJdkLib" to known)
+        merged.mergeAarMetadata(mapOf("desugarJdkLib" to unknown)) { _, _, value -> dropped += value }
+
+        assertEquals(known, merged["desugarJdkLib"])
+        assertEquals(listOf(unknown), dropped)
+    }
+
+    @Test
     fun `keys missing from the umbrella are added`() {
         val merged = linkedMapOf("aarFormatVersion" to "1.0")
         merged.mergeAarMetadata(mapOf("minCompileSdk" to "34"))

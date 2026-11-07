@@ -23,7 +23,8 @@ internal fun Map<String, String>.toAarMetadataText(): String = entries.joinToStr
  *   means something with its SDK, so 36.1 and 37.0 merge to 37.0, and never to 37.1.
  * - `minAndroidGradlePluginVersion`, `aarFormatVersion`, `aarMetadataVersion`: highest version wins.
  * - `coreLibraryDesugaringEnabled`: enabled if any module needs it.
- * - `desugarJdkLib`: the coordinate with the highest version wins.
+ * - `desugarJdkLib`: the strictest flavor at the highest version. AGP holds a consumer to each apart,
+ *   so the two need not come from one module. A flavor it does not know goes by the next rule.
  * - Anything else (`forceCompileSdkPreview`, keys a future AGP adds): the first value is kept and
  *   [onConflict] is told about the one that was dropped.
  */
@@ -39,11 +40,19 @@ internal fun MutableMap<String, String>.mergeAarMetadata(
             key in MAX_INT_KEYS -> maxOf(current, value, compareBy { it.toIntOrNull() ?: Int.MIN_VALUE })
             key in MAX_VERSION_KEYS -> maxOf(current, value, ::compareVersions)
             key == DESUGARING_ENABLED -> (current.toBoolean() || value.toBoolean()).toString()
-            key == DESUGAR_JDK_LIB -> maxOf(current, value) { a, b -> compareVersions(a.substringAfterLast(':'), b.substringAfterLast(':')) }
+            key == DESUGAR_JDK_LIB -> strictestDesugarLib(current, value) ?: current.also { onConflict(key, current, value) }
             else -> current.also { onConflict(key, current, value) }
         }
     }
     if (minor != null) this[MIN_COMPILE_MINOR_SDK] = minor else remove(MIN_COMPILE_MINOR_SDK)
+}
+
+/** Null for a flavor AGP does not know, as nothing here can rank it. */
+private fun strictestDesugarLib(a: String, b: String): String? {
+    val flavor = { coordinate: String -> DESUGAR_FLAVORS.indexOf(coordinate.substringBeforeLast(':').substringAfterLast(':')) }
+    if (flavor(a) < 0 || flavor(b) < 0) return null
+    val version = maxOf(a.substringAfterLast(':'), b.substringAfterLast(':'), ::compareVersions)
+    return "${maxOf(a, b, compareBy(flavor)).substringBeforeLast(':')}:$version"
 }
 
 /**
@@ -74,3 +83,4 @@ private val MAX_INT_KEYS = setOf(MIN_COMPILE_SDK, "minCompileSdkExtension")
 private val MAX_VERSION_KEYS = setOf("minAndroidGradlePluginVersion", "aarFormatVersion", "aarMetadataVersion")
 private const val DESUGARING_ENABLED = "coreLibraryDesugaringEnabled"
 private const val DESUGAR_JDK_LIB = "desugarJdkLib"
+private val DESUGAR_FLAVORS = listOf("desugar_jdk_libs_minimal", "desugar_jdk_libs", "desugar_jdk_libs_nio")
