@@ -28,13 +28,16 @@ class ParityTest {
         consumerOf(umbrella, "broken-consumer") { uses("com.acme.leftout.LeftOut()") }.assembleFails().assertLogged("Unresolved reference")
     }
 
-    /** Stock publishes the first flavor, so an umbrella selecting the other gets the same name with another value. */
+    /** Stock publishes the first flavor, so an umbrella selecting the other gets the same names with other content. */
     @Test
-    fun `parity notices a resource with another value`() = fixture {
+    fun `parity notices a resource or a file with other content`() = fixture {
         val flavored = androidLibrary("flavored") {
             flavors("tier", "paid", "free")
             listOf("paid", "free").forEach { flavor ->
                 file("src/$flavor/res/values/label.xml", "<resources>\n    <string name=\"tier_label\">$flavor label</string>\n</resources>\n")
+                file("src/$flavor/assets/tier.txt", "$flavor\n")
+                file("src/$flavor/resources/com/acme/flavored/tier.properties", "tier=$flavor\n")
+                file("src/$flavor/resources/META-INF/services/com.acme.flavored.Tier", "com.acme.flavored.${flavor.replaceFirstChar(Char::uppercaseChar)}Tier\n")
             }
         }
         val umbrella = androidUmbrella {
@@ -45,5 +48,8 @@ class ParityTest {
         val differences = parity(umbrella).differences
 
         assertTrue(differences.any { "release resource string/tier_label is" in it && "free label" in it && "paid label" in it }, differences.toString())
+        assertTrue("release APK entry assets/tier.txt holds other bytes in the umbrella than in stock" in differences, differences.toString())
+        assertTrue("release APK entry com/acme/flavored/tier.properties holds other bytes in the umbrella than in stock" in differences, differences.toString())
+        assertTrue("release APK entry META-INF/services/com.acme.flavored.Tier holds other bytes in the umbrella than in stock" in differences, differences.toString())
     }
 }

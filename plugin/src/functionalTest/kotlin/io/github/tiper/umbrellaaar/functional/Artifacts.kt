@@ -352,13 +352,23 @@ internal class Apk(val file: File) {
     }
 
     /** Everything but code, compiled resources and the signature: assets, native code, service files. */
-    val otherEntries: Set<String> by lazy {
+    val otherEntries: Set<String> get() = otherContents.keys
+
+    /**
+     * [otherEntries] with what each holds: the providers of a service file, in the order a
+     * `ServiceLoader` meets them, and the CRC of anything else, which the zip already has.
+     */
+    val otherContents: Map<String, Any> by lazy {
         ZipFile(file).use { zip ->
-            zip.entries().asSequence().map { it.name }
-                .filterNot { it.matches(DEX_ENTRY) || it == "resources.arsc" || it.matches(SIGNATURE_ENTRY) || it.startsWith("res/") }
-                .toSortedSet()
+            zip.entries().asSequence()
+                .filterNot { it.name.matches(DEX_ENTRY) || it.name == "resources.arsc" || it.name.matches(SIGNATURE_ENTRY) || it.name.startsWith("res/") }
+                .associateTo(sortedMapOf()) { entry ->
+                    entry.name to if (entry.name.startsWith("META-INF/services/")) zip.providersIn(entry.name) else entry.crc
+                }
         }
     }
+
+    private fun ZipFile.providersIn(name: String) = checkNotNull(textOf(name)).lines().map { it.substringBefore('#').trim() }.filter(String::isNotEmpty).distinct()
 
     /** The attributes of every manifest element, as a set: merging need not keep their order. */
     val manifest: Set<String> by lazy {

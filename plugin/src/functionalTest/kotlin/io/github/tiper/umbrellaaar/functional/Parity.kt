@@ -1,5 +1,7 @@
 package io.github.tiper.umbrellaaar.functional
 
+import java.nio.file.FileSystems
+import java.nio.file.Path
 import kotlin.test.fail
 
 /**
@@ -17,7 +19,7 @@ internal fun Fixture.parity(umbrella: Umbrella, configure: Consumer.() -> Unit =
         consumer.usesEverythingIn(umbrella)
         consumer.configure()
     }
-    return Parity(merged.assemble(), stock.assemble())
+    return Parity(merged.assemble(), stock.assemble(), stock.pickFirsts)
 }
 
 /** Publishes every module of the fixture as an ordinary library, and a consumer of [umbrella]'s. */
@@ -30,8 +32,14 @@ internal fun Fixture.stockConsumer(umbrella: Umbrella): Consumer {
     )
 }
 
-/** What differs between a consumer of the umbrella and a consumer of stock libraries. */
-internal class Parity(val umbrella: ConsumerBuilds, val stock: ConsumerBuilds) {
+/**
+ * What differs between a consumer of the umbrella and a consumer of stock libraries. [pickFirsts] are
+ * paths both took from whichever library came first, so their bytes need not agree.
+ */
+internal class Parity(val umbrella: ConsumerBuilds, val stock: ConsumerBuilds, pickFirsts: List<String> = emptyList()) {
+
+    /** From the root of the APK unless they start with `*`, as AGP roots them. */
+    private val pickedFirst = pickFirsts.map { FileSystems.getDefault().getPathMatcher("glob:${if (it.startsWith("/") || it.startsWith("*")) it else "/$it"}") }
 
     val differences: List<String> = buildList {
         addAll(compare("debug", umbrella.debug, stock.debug))
@@ -55,6 +63,11 @@ internal class Parity(val umbrella: ConsumerBuilds, val stock: ConsumerBuilds) {
         diff("APK entry", umbrella.apk.otherEntries, stock.apk.otherEntries)
         diff("runtime dependency", umbrella.runtimeClasspath.externals(), stock.runtimeClasspath.externals())
         diff("runtime artifact", umbrella.runtimeArtifacts.externals(), stock.runtimeArtifacts.externals())
+
+        (umbrella.apk.otherEntries intersect stock.apk.otherEntries)
+            .filterNot { entry -> entry in BUILT_APART || pickedFirst.any { it.matches(Path.of("/$entry")) } }
+            .filter { umbrella.apk.otherContents[it] != stock.apk.otherContents[it] }
+            .forEach { add("$variant APK entry $it holds other bytes in the umbrella than in stock") }
 
         (umbrella.apk.resources.keys intersect stock.apk.resources.keys)
             .filter { umbrella.apk.resources[it] != stock.apk.resources[it] }
@@ -88,5 +101,8 @@ internal class Parity(val umbrella: ConsumerBuilds, val stock: ConsumerBuilds) {
     private companion object {
         val R_CLASS = Regex(".*\\.R(\\$.*)?")
         val KEPT_R_FIELD = Regex("R\\$\\w+\\.\\w+$")
+
+        /** Each consumer writes these itself: the manifest is compared above, and the ART profile holds a checksum of the dex. */
+        val BUILT_APART = setOf("AndroidManifest.xml", "assets/dexopt/baseline.prof", "assets/dexopt/baseline.profm")
     }
 }
