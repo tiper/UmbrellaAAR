@@ -12,6 +12,8 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
             implementation(libs.sample.export.legacy)
+            // `@Preview` is used in main sources, so every build type needs the annotation, not just debug.
+            implementation(compose.preview)
         }
         commonMain.dependencies {
             implementation(compose.material3)
