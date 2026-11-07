@@ -137,5 +137,6 @@ The warning about shared coordinates on every invocation is gone. A run that wou
 - The plugin moves to ASM `9.11.1`. Where AGP sits on a parent classpath its ASM runs instead, and a class too new for it now fails naming the class, its module and the way out.
 - The plugins apply in any order next to Kotlin and Android.
 - A build on top of an earlier one now ends up where a clean one would. Modules trading bytes or project paths used to keep what they held.
+- `R.txt` and `public.txt` no longer hold a blank line. `3.0` left one where the umbrella's own lines met a module's, and one blank line in `R.txt` leaves Android Studio with no field of that AAR's `R`, in a build that stays green.
 
 Tested on AGP `9.0.0` / Kotlin `2.2.10` / Gradle `9.1.0` and on AGP `9.5.0` / Kotlin `2.4.21` / Gradle `9.8.2`. The largest build it was tested on is a generated 203-module one, not a real project of that size.

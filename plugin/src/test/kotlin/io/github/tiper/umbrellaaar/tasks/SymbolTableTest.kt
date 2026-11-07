@@ -29,6 +29,16 @@ class SymbolTableTest {
     private val fooBar = "int[] styleable Foo_bar { 0x0 }\nint styleable Foo_bar_baz 0\n"
 
     @Test
+    fun `a blank line stays out of the table, wherever it sits`() {
+        val table = table("\nint attr a 0x0\n\n \t\nint[] styleable Shared { 0x0 }\n\nint styleable Shared_a 0\n\n", "int attr b 0x0\r\n\r\nint attr c 0x0\r\n")
+
+        assertEquals(
+            listOf("int attr a 0x0", "int[] styleable Shared { 0x0 }", "int styleable Shared_a 0", "int attr b 0x0", "int attr c 0x0"),
+            File(dir, "out.txt").also(table::write).readLines(),
+        )
+    }
+
+    @Test
     fun `a lost child leaves a united styleable without its line`() {
         val table = table(first, second)
 

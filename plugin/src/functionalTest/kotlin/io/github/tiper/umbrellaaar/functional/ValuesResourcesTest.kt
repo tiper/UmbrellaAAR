@@ -353,6 +353,18 @@ class ValuesResourcesTest {
     }
 
     @Test
+    fun `public resources of the umbrella and of a module make one table, as in stock`() = fixture {
+        val umbrella = androidUmbrella {
+            values("<string name=\"own\">own</string><public name=\"own\" type=\"string\"/>")
+            export(androidLibrary("first") { values("<string name=\"shown\">a</string><public name=\"shown\" type=\"string\"/>") })
+        }
+
+        matchesStock(umbrella)
+
+        assertEquals("string own\nstring shown\n", umbrella.published().aar.text("public.txt"))
+    }
+
+    @Test
     fun `a value beats a file of one name, whichever module has which, as in stock`() = fixture {
         val umbrella = ranked(
             {

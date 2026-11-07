@@ -115,7 +115,7 @@ class MergeDependenciesTest {
         module("moduleA", "com.example.a", "R.txt" to "int string shared 0x0\nint string a_only 0x0")
         module("moduleB", "com.example.b", "R.txt" to "int string shared 0x0\nint string b_only 0x0")
 
-        val lines = File(merge(), "R.txt").readLines().filter { it.isNotBlank() }
+        val lines = File(merge(), "R.txt").readLines()
 
         assertEquals(lines.distinct(), lines, "R.txt must not contain duplicated symbols")
         assertEquals(
@@ -588,10 +588,66 @@ class MergeDependenciesTest {
             "public.txt" to "string a_name\nstring b_name",
         )
 
-        val lines = File(merge(), "public.txt").readLines().filter { it.isNotBlank() }
+        val lines = File(merge(), "public.txt").readLines()
 
         assertEquals(listOf("string a_name", "string b_name", "string umbrella_name"), lines.sorted())
         assertEquals(lines.distinct(), lines)
+    }
+
+    @Test
+    fun `tables read on past the umbrella's own lines, as a blank line loses all of them`() {
+        mainAar(
+            "res/values/values.xml" to values("umbrella_name" to "U"),
+            "R.txt" to "int string umbrella_name 0x0\n",
+            "public.txt" to "string umbrella_name\n",
+        )
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to values("a_name" to "A"),
+            "R.txt" to "int string a_name 0x0\n",
+            "public.txt" to "string a_name\n",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to values("b_name" to "B"),
+            "R.txt" to "\nint string b_name 0x0\n\n",
+            "public.txt" to "\nstring b_name\n\n",
+        )
+
+        val out = merge()
+
+        assertEquals(listOf("int string a_name 0x0", "int string b_name 0x0", "int string umbrella_name 0x0"), File(out, "R.txt").readLines().sorted())
+        assertEquals(listOf("string a_name", "string b_name", "string umbrella_name"), File(out, "public.txt").readLines().sorted())
+    }
+
+    @Test
+    fun `a blank line of the umbrella's own stays out of public txt`() {
+        mainAar("public.txt" to "string first\n\nstring second\n")
+
+        assertEquals("string first\nstring second\n", File(merge(), "public.txt").readText())
+    }
+
+    @Test
+    fun `a public txt that lost every line is empty, not a blank line`() {
+        mainAar()
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to resources(attr("mode", "string")),
+            "R.txt" to "int attr mode 0x0\n",
+            "public.txt" to "",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to resources(attr("mode", children = ONE)),
+            "R.txt" to "int attr mode 0x0\nint id one 0x0\n",
+            "public.txt" to "id one\n",
+        )
+
+        assertEquals("", File(merge(), "public.txt").readText())
     }
 
     @Test
@@ -622,7 +678,7 @@ class MergeDependenciesTest {
         // Code only — contributes no resources, so it has no public surface to lose.
         module("moduleB", "com.example.b", "classes/com/example/b/B.class" to "b")
 
-        assertEquals(listOf("string a_name"), File(merge(), "public.txt").readLines().filter { it.isNotBlank() })
+        assertEquals(listOf("string a_name"), File(merge(), "public.txt").readLines())
     }
 
     // ── R.txt is keyed by symbol, not by line ────────────────────────────────────────────────
@@ -633,7 +689,7 @@ class MergeDependenciesTest {
         module("moduleA", "com.example.a", "R.txt" to "int string shared 0x7f0e0001\nint[] styleable Shared { 0x7f040001 }")
         module("moduleB", "com.example.b", "R.txt" to "int string shared 0x7f0e0042\nint[] styleable Shared { 0x7f040009 }")
 
-        val lines = File(merge(), "R.txt").readLines().filter { it.isNotBlank() }
+        val lines = File(merge(), "R.txt").readLines()
 
         assertEquals(
             listOf("int string shared 0x7f0e0001", "int string umbrella_only 0x7f010000", "int[] styleable Shared { 0x7f040001 }"),
@@ -950,7 +1006,7 @@ class MergeDependenciesTest {
         val out = merge()
 
         assertEquals(listOf("int attr mode 0x0"), File(out, "R.txt").readLines())
-        assertEquals(listOf("attr mode"), File(out, "public.txt").readLines().filter { it.isNotBlank() })
+        assertEquals(listOf("attr mode"), File(out, "public.txt").readLines())
     }
 
     @Test
@@ -1099,12 +1155,20 @@ class MergeDependenciesTest {
     // ── Files every module may legitimately ship ─────────────────────────────────────────────
 
     @Test
+    fun `a baseline profile reads on past the umbrella's own lines`() {
+        mainAar("baseline-prof.txt" to "HSPLcom/example/umbrella/Main;-><init>()V\n")
+        module("moduleA", "com.example.a", "baseline-prof.txt" to "HSPLcom/example/a/A;-><init>()V\n")
+
+        assertEquals(listOf("HSPLcom/example/umbrella/Main;-><init>()V", "HSPLcom/example/a/A;-><init>()V"), File(merge(), "baseline-prof.txt").readLines())
+    }
+
+    @Test
     fun `baseline profiles are concatenated without duplicates`() {
         mainAar("baseline-prof.txt" to "HSPLcom/example/umbrella/Main;-><init>()V")
         module("moduleA", "com.example.a", "baseline-prof.txt" to "HSPLcom/example/a/A;-><init>()V\nLkotlin/Unit;")
         module("moduleB", "com.example.b", "baseline-prof.txt" to "HSPLcom/example/b/B;-><init>()V\nLkotlin/Unit;")
 
-        val lines = File(merge(), "baseline-prof.txt").readLines().filter { it.isNotBlank() }
+        val lines = File(merge(), "baseline-prof.txt").readLines()
 
         assertEquals(
             listOf("HSPLcom/example/a/A;-><init>()V", "HSPLcom/example/b/B;-><init>()V", "HSPLcom/example/umbrella/Main;-><init>()V", "Lkotlin/Unit;"),
@@ -1171,7 +1235,7 @@ class MergeDependenciesTest {
         assertEquals("not a\n\nsymbol table", File(out, "assets/docs/R.txt").readText())
         assertEquals(
             listOf("int string a_only 0x0", "int string umbrella_only 0x0"),
-            File(out, "R.txt").readLines().filter { it.isNotBlank() }.sorted(),
+            File(out, "R.txt").readLines().sorted(),
         )
     }
 

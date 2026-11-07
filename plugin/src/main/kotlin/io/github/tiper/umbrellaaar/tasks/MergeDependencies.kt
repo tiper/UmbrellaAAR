@@ -138,8 +138,6 @@ abstract class MergeDependencies : DefaultTask() {
         val classEntries = mutableListOf<Triple<String, String, File>>()
         val aarMetadata = mutableListOf<Pair<String, File>>()
         val annotationZips = mutableListOf<Pair<String, File>>()
-        val touchedProguardFiles = mutableSetOf<File>()
-        val appendedFiles = mutableSetOf<File>()
         var filesProcessed = 0
 
         moduleOrder.get().forEach { owner ->
@@ -190,19 +188,19 @@ abstract class MergeDependencies : DefaultTask() {
                         // finalisePublicResources for why merging alone is not enough.
                         relativePath == PUBLIC_TXT -> {
                             modulesDeclaringPublicResources += owner
-                            appendedFiles += srcFile.appendLines(to = destFile, keyOf = WHOLE_LINE)
+                            srcFile.appendLines(to = destFile, keyOf = WHOLE_LINE)
                         }
 
                         // Baseline profile rules are independent lines: every module's rules apply
                         // to the classes it contributed.
-                        relativePath == BASELINE_PROFILE -> appendedFiles += srcFile.appendLines(to = destFile, keyOf = WHOLE_LINE)
+                        relativePath == BASELINE_PROFILE -> srcFile.appendLines(to = destFile, keyOf = WHOLE_LINE)
 
                         // Consumer rules live in `proguard.txt` inside an AAR — `consumer-rules.pro`
                         // is not part of the AAR spec and consumers simply ignore it. Away from the
                         // AAR root (`assets/…`) neither is a rule file, just a file with that name.
                         relativePath == PROGUARD_TXT || relativePath.isRootProFile() -> {
                             val target = File(out, PROGUARD_TXT)
-                            touchedProguardFiles += srcFile.appendLines(to = target, keyOf = null)
+                            srcFile.appendLines(to = target, keyOf = null)
                         }
 
                         relativePath == ANDROID_MANIFEST -> libraryManifests += owner to srcFile
@@ -249,10 +247,8 @@ abstract class MergeDependencies : DefaultTask() {
 
         val symbols = mergeSymbols(into = File(out, R_TXT), tables = symbolTables, lost = lost)
 
-        (appendedFiles + touchedProguardFiles).forEach { it.ensureTrailingNewline() }
-
-        File(out, PUBLIC_TXT).takeIf { it.isFile && lost.isNotEmpty() }?.let { file ->
-            file.writeText(file.readLines().filterNot { it.trim().replace(' ', '/') in lost }.joinToString("\n", postfix = "\n"))
+        File(out, PUBLIC_TXT).takeIf { it.isFile }?.let { file ->
+            file.writeText(file.readLines().filterNot { it.isBlank() || it.trim().replace(' ', '/') in lost }.joinToString("") { "$it\n" })
         }
         finalisePublicResources(out)
 
@@ -603,10 +599,12 @@ abstract class MergeDependencies : DefaultTask() {
     private fun File.ofModule(owner: String) = File(parentFile, "$owner-$name").also { it.parentFile.mkdirs() }
 
     /**
-     * Streams [this] into [to] line by line. When [keyOf] is given, a line whose key was already
-     * written to [to] is skipped; `null` appends everything.
+     * Streams [this] into [to] line by line, each with its own line end, so whatever [to] already
+     * holds meets the next line with no blank one between: AGP's reader of `public.txt` gives up on
+     * a whole file over one. When [keyOf] is given, a line whose key was already written to [to] is
+     * skipped; `null` appends everything.
      */
-    private fun File.appendLines(to: File, keyOf: ((String) -> String)?): File {
+    private fun File.appendLines(to: File, keyOf: ((String) -> String)?) {
         val seen = keyOf?.let { key ->
             seenKeys.getOrPut(to) {
                 if (to.exists()) to.useLines { lines -> lines.filter(String::isNotBlank).mapTo(mutableSetOf(), key) } else mutableSetOf()
@@ -614,18 +612,16 @@ abstract class MergeDependencies : DefaultTask() {
         }
         val appendToExisting = to.exists() && to.length() > 0L
         to.parentFile?.mkdirs()
+        to.ensureTrailingNewline()
 
         to.bufferedWriter(options = if (appendToExisting) APPEND else CREATE).use { writer ->
-            var first = !appendToExisting
             bufferedReader().useLines { lines ->
                 lines.filter(String::isNotBlank).forEach { line ->
                     if (seen != null && !seen.add(keyOf(line))) return@forEach
-                    if (first) first = false else writer.append('\n')
-                    writer.append(line)
+                    writer.append(line).append('\n')
                 }
             }
         }
-        return to
     }
 
     private fun File.ensureTrailingNewline() {

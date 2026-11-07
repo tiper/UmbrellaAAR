@@ -102,8 +102,16 @@ internal class Aar(val file: File) {
     /** The lines of `R.txt` that make up styleable [name]. */
     fun styleable(name: String): List<String> = text("R.txt").orEmpty().lines().filter { it.startsWith("int[] styleable $name ") || it.startsWith("int styleable ${name}_") }
 
-    /** `R.txt` and the resources beside it have to tell one story, whatever the merge left out. */
-    fun assertSymbolsAgree() = assertEquals(declaredSymbols, symbols, "R.txt and the merged resources of $file disagree")
+    /**
+     * `R.txt` and the resources beside it have to tell one story, whatever the merge left out, on
+     * lines the reader in AGP and the IDE takes: one blank line and it gives up on the whole file.
+     */
+    fun assertSymbolsAgree() {
+        assertEquals(declaredSymbols, symbols, "R.txt and the merged resources of $file disagree")
+        listOf("R.txt", "public.txt").forEach { table ->
+            assertEquals(emptyList(), text(table).orEmpty().lines().dropLast(1).filter(String::isBlank), "$table of $file has a blank line")
+        }
+    }
 
     /**
      * True when class [name] mentions [text] anywhere in its constant pool. Enough to tell which
