@@ -340,7 +340,8 @@ pluginManagement {
    > on the default one. In `external-dependencies.txt`, ignore ` excludes=`, `artifact=` and
    > `capabilities=`, constraint lines and a `kotlin-stdlib` line, which KGP adds too late for this
    > walk to always see. In `merged-modules.txt`, compare the first column: the second names a
-   > configuration on one graph and a variant on the other. It publishes coordinates alone: none of
+   > configuration on one graph and a variant on the other. A version can differ too, as this walk
+   > keeps one declaration of a module, the last it reads. It publishes coordinates alone: none of
    > what a module declares about a dependency, no constraints, and no failure on a dependency without
    > a group or a version. A dependency Gradle cannot resolve is left out of the POM with no warning,
    > so read `external-dependencies.txt` before you publish, and the warnings about unexported modules
