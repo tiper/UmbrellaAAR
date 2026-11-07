@@ -1,6 +1,7 @@
 package io.github.tiper.umbrellaaar.tasks
 
 import io.github.tiper.umbrellaaar.extensions.IO_BUFFER_SIZE
+import io.github.tiper.umbrellaaar.extensions.contentHash
 import io.github.tiper.umbrellaaar.extensions.normalizePath
 import java.io.BufferedOutputStream
 import java.io.File
@@ -15,18 +16,19 @@ import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity.NONE
+import org.gradle.api.tasks.PathSensitivity.NAME_ONLY
 import org.gradle.api.tasks.TaskAction
 
 @CacheableTask
 internal abstract class MergeSources : DefaultTask() {
 
+    /** Named, as a jar's name decides the order and where a file that clashes goes. */
     @get:InputFiles
-    @get:PathSensitive(NONE)
+    @get:PathSensitive(NAME_ONLY)
     abstract val dependencySourcesJars: ConfigurableFileCollection
 
     @get:InputFiles
-    @get:PathSensitive(NONE)
+    @get:PathSensitive(NAME_ONLY)
     abstract val mainSourcesJars: ConfigurableFileCollection
 
     @get:OutputFile
@@ -35,7 +37,7 @@ internal abstract class MergeSources : DefaultTask() {
     @TaskAction
     fun execute() {
         val outputJar = mergedSourcesJar.get().asFile.apply { parentFile.mkdirs() }
-        val written = mutableMapOf<String, Pair<Long, Long>>()
+        val written = mutableMapOf<String, String>()
         var sourceFilesCollected = 0
         var jarsProcessed = 0
 
@@ -45,8 +47,7 @@ internal abstract class MergeSources : DefaultTask() {
         logger.lifecycle("Merging sources from ${dependencyJars.size + mainJars.size} source JARs")
 
         ZipOutputStream(BufferedOutputStream(FileOutputStream(outputJar), IO_BUFFER_SIZE)).use { zos ->
-            // The umbrella module first, so its files stay where its own sources jar has them. All of
-            // them are streamed straight out of their jars.
+            // The umbrella module first, so its files stay where its own sources jar has them.
             (mainJars + dependencyJars).forEach { jar ->
                 logger.debug("Merging sources from: ${jar.name}")
                 ZipFile(jar).use { zip ->
@@ -54,11 +55,12 @@ internal abstract class MergeSources : DefaultTask() {
                         .filter { !it.isDirectory && (it.name.endsWith(".java") || it.name.endsWith(".kt")) }
                         .sortedBy { it.name }
                         .forEach { entry ->
-                            val content = entry.crc to entry.size
+                            val bytes = zip.getInputStream(entry).use { it.readBytes() }
+                            val content = bytes.contentHash()
                             val entryName = written.freePathFor(entry.name.normalizePath(), content, jar)
                             if (written.put(entryName, content) != null) return@forEach
                             zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
-                            zip.getInputStream(entry).use { it.copyTo(zos, IO_BUFFER_SIZE) }
+                            zos.write(bytes)
                             zos.closeEntry()
                             sourceFilesCollected++
                         }
@@ -75,7 +77,7 @@ internal abstract class MergeSources : DefaultTask() {
      * packages need not follow its folders, so two modules' `commonMain/Platform.kt` are two files,
      * and the AAR has the classes of both.
      */
-    private fun Map<String, Pair<Long, Long>>.freePathFor(path: String, content: Pair<Long, Long>, jar: File): String {
+    private fun Map<String, String>.freePathFor(path: String, content: String, jar: File): String {
         val module = jar.nameWithoutExtension
         return (sequenceOf(path, "$module/$path") + generateSequence(2, Int::inc).map { "$module-$it/$path" }).first { this[it] == null || this[it] == content }
     }

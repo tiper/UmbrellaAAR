@@ -103,8 +103,12 @@ internal fun File.contentHash(): String {
     val digest = MessageDigest.getInstance("SHA-256")
     val buffer = ByteArray(IO_BUFFER_SIZE)
     inputStream().use { input -> generateSequence { input.read(buffer).takeIf { it >= 0 } }.forEach { digest.update(buffer, 0, it) } }
-    return digest.digest().joinToString("") { "%02x".format(it) }
+    return digest.digest().toHex()
 }
+
+internal fun ByteArray.contentHash(): String = MessageDigest.getInstance("SHA-256").digest(this).toHex()
+
+private fun ByteArray.toHex() = joinToString("") { "%02x".format(it) }
 
 internal fun File.sameBytesAs(other: File) = other.isFile && Files.mismatch(toPath(), other.toPath()) == -1L
 

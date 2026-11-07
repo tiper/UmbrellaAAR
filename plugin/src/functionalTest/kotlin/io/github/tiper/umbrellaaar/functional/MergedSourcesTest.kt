@@ -56,6 +56,33 @@ class MergedSourcesTest {
     }
 
     @Test
+    fun `two files of one size and one CRC both ship`() = fixture {
+        // 37 bytes and a CRC of 2502913408 each, which is all a zip entry says about what it holds.
+        val first = kmpLibrary("first") { file("src/commonMain/kotlin/Platform.kt", "package ubkeypneqhbg\n\nclass Platform\n") }
+        val second = kmpLibrary("second") { file("src/commonMain/kotlin/Platform.kt", "package ztudurnrcwqt\n\nclass Platform\n") }
+        val umbrella = kmpUmbrella { export(first, second) }
+
+        umbrella.mergedSources()
+
+        val platformFiles = sourcesOf(umbrella).filterKeys { it.endsWith("/Platform.kt") }
+        assertEquals(setOf("ubkeypneqhbg", "ztudurnrcwqt"), platformFiles.values.mapTo(sortedSetOf()) { it.lines().first().removePrefix("package ") })
+    }
+
+    @Test
+    fun `a sources jar under a new name moves the files named after it`() = fixture {
+        val first = kmpLibrary("first") { platformFile("com.acme.first") }
+        val second = kmpLibrary("second") { platformFile("com.acme.second") }
+        val umbrella = kmpUmbrella { export(first, second) }
+        umbrella.mergedSources()
+
+        second.buildScript("tasks.withType<org.gradle.jvm.tasks.Jar>().configureEach { archiveBaseName = \"renamed\" }")
+        umbrella.mergedSources()
+
+        val paths = sourcesOf(umbrella).keys.filter { it.endsWith("/Platform.kt") }
+        assertTrue(paths.any { it.startsWith("renamed") }, "The path comes from the jar's name: $paths")
+    }
+
+    @Test
     fun `one file with the same bytes in two modules ships once`() = fixture {
         val shared = "package com.acme.shared\n\nconst val SHARED = 1\n"
         val feature = kmpLibrary("feature") { file("src/commonMain/kotlin/com/acme/shared/Shared.kt", shared) }
