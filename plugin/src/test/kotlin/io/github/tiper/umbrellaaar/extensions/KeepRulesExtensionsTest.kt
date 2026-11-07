@@ -113,6 +113,32 @@ class KeepRulesExtensionsTest {
         assertEquals("-keepclassmembers class org.other.** { *; }", "-keepclassmembers class org.other.** { *; }".relocated())
     }
 
+    /** R8 can inline a reader away, and what looks a field up by name reads none. */
+    @Test
+    fun `a rule on an R that a module takes as a class goes behind no if`() {
+        val reflected = rClasses + ("com/acme/sounds" to mapOf("raw" to RClassContent(setOf("beep", "boop"), setOf("com.acme.sounds.Sounds"), reflected = true)))
+        val unread = rClasses + ("com/acme/sounds" to mapOf("raw" to RClassContent(setOf("beep"), reflected = true)))
+        assertEquals(
+            "-keepclassmembers class com.acme.sdk.R\$raw { *** beep; *** boop; }",
+            "-keepclassmembers class com.acme.sounds.R\$raw { *; }".relocateRInRules("com/acme/sdk", reflected),
+        )
+        assertEquals(
+            "-keepclassmembers class com.acme.sdk.R\$raw { *** beep; }",
+            "-keepclassmembers class com.acme.sounds.R\$raw { *; }".relocateRInRules("com/acme/sdk", unread),
+        )
+        assertEquals(
+            "-if class a.B\n-keepclassmembers class com.acme.sdk.R\$raw { *** beep; *** boop; }",
+            "-if class a.B\n-keepclassmembers class com.acme.sounds.R\$raw { *; }".relocateRInRules("com/acme/sdk", reflected),
+        )
+        assertEquals(
+            "-keepclassmembers class !com.acme.sdk.R\$*,com.acme.** { *; }\n" +
+                "-if class com.acme.feature.Title\n-keepclassmembers class com.acme.sdk.R\$string { *** body; *** title; }\n" +
+                "-if class com.acme.feature.a.Label,com.acme.feature.a.Other\n-keepclassmembers class com.acme.sdk.R\$string { *** label; }\n" +
+                "-keepclassmembers class com.acme.sdk.R\$raw { *** beep; *** boop; }",
+            "-keepclassmembers class com.acme.** { *; }".relocateRInRules("com/acme/sdk", reflected),
+        )
+    }
+
     @Test
     fun `a rule on every member of every R goes by the readers of each`() {
         assertEquals(
@@ -213,15 +239,21 @@ class KeepRulesExtensionsTest {
             "-keep # why\n    , allowshrinking # why\n    , allowobfuscation class ",
             "-keep public # why\n    class ",
             "-keep public # why\n    final # why\n    class ",
-            "-keep ! # why\n    abstract class ",
-            "-keep ! abstract class ",
             "-keep class # why\n    ",
             "-keep class\n    # why\n    ",
             "-keep !interface # why\n    ",
             "-keep !enum # why\n    ",
+            "-keep !@interface # why\n    ",
+            "-keep !@ # why\n    interface ",
         ).forEach { head ->
             assertEquals(
                 "${head}com.acme.feature.a.* { *; }\n${head}com.acme.sdk.R\$string { *** label; }",
+                "${head}com.acme.feature.a.* { *; }".relocated(),
+            )
+        }
+        listOf("-keep ! # why\n    abstract class ", "-keep ! abstract class ").forEach { head ->
+            assertEquals(
+                "${head}com.acme.feature.a.* { *; }\n-keep class com.acme.sdk.R\$string { *** label; }",
                 "${head}com.acme.feature.a.* { *; }".relocated(),
             )
         }
@@ -310,6 +342,87 @@ class KeepRulesExtensionsTest {
         assertEquals("", "-keep class com.acme.silent.R\$string { *; }".relocated())
         assertEquals("", "-keep class com.acme.feature.a.R\$id { *; }".relocated())
         assertEquals("-keep class a.B { *; }", "-keep class a.B,com.acme.silent.R\$* { *; }".relocated())
+    }
+
+    /** R8 takes these where it takes `class`, and an `R` is no annotation, so they reach one like any rule. */
+    @Test
+    fun `a rule that leaves annotations out reaches an R`() {
+        assertEquals(
+            "-keep !@interface com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keep !@interface com.acme.feature.R\$string { *; }".relocated(),
+        )
+        assertEquals(
+            "-keep public !@ interface com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keep public !@ interface com.acme.feature.R\$string { *; }".relocated(),
+        )
+        assertEquals(
+            "-keep !@interface com.acme.f*.R\$string { *; }\n-keep !@interface com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keep !@interface com.acme.f*.R\$string { *; }".relocated(),
+        )
+    }
+
+    /** R8 reads past both, so a rule behind one still has to find what it reaches. */
+    @Test
+    fun `a comma with no option behind it hides no rule`() {
+        listOf("-keep, class ", "-keep , class ", "-keep,,class ", "-keep, # why\n    class ", "-keep,allowshrinking, class ").forEach { head ->
+            assertEquals(
+                "${head}com.acme.f*.R\$string { *; }\n${head}com.acme.sdk.R\$string { *** body; *** title; }",
+                "${head}com.acme.f*.R\$string { *; }".relocated(),
+            )
+        }
+        assertEquals(
+            "-keep, !@interface com.acme.f*.R\$string { *; }\n-keep, !@interface com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keep, !@interface com.acme.f*.R\$string { *; }".relocated(),
+        )
+        assertEquals(
+            "-keep, !abstract class com.acme.f*.R\$string { *; }\n-keep, class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keep, !abstract class com.acme.f*.R\$string { *; }".relocated(),
+        )
+    }
+
+    @Test
+    fun `a byte order mark hides no rule`() {
+        assertEquals(
+            "\uFEFF-keep class com.acme.f*.R\$string { *; }\n-keep class com.acme.sdk.R\$string { *** body; *** title; }",
+            "\uFEFF-keep class com.acme.f*.R\$string { *; }".relocated(),
+        )
+        assertEquals(
+            "-if class a.B\n\uFEFF-keepclassmembers class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-if class a.B\n\uFEFF-keepclassmembers class com.acme.feature.R\$string { *; }".relocated(),
+        )
+    }
+
+    /** R8 loses a field named behind an `-if` on a class said not to be abstract, and no `R` is. */
+    @Test
+    fun `a rule that names fields says nothing about abstract`() {
+        assertEquals(
+            "-if class com.acme.feature.Title\n-keepclassmembers class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keepclassmembers !abstract class com.acme.feature.R\$string { *; }".relocated(),
+        )
+        assertEquals(
+            "-if class com.acme.feature.Title\n-keepclassmembers public class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keepclassmembers public ! abstract class com.acme.feature.R\$string { *; }".relocated(),
+        )
+        assertEquals(
+            "-if class a.B\n-keep class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-if class a.B\n-keep !abstract class com.acme.feature.R\$string { *; }".relocated(),
+        )
+        assertEquals(
+            "-if class com.acme.feature.Title\n-keepclassmembers !@interface com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keepclassmembers !abstract !@interface com.acme.feature.R\$string { *; }".relocated(),
+        )
+        assertEquals(
+            "-if class com.acme.feature.Title\n-keepclassmembers public class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keepclassmembers public!abstract class com.acme.feature.R\$string { *; }".relocated(),
+        )
+        assertEquals(
+            "-if class com.acme.feature.Title\n-keepclassmembers # why\n class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keepclassmembers # why\n !abstract class com.acme.feature.R\$string { *; }".relocated(),
+        )
+        assertEquals(
+            "-if class com.acme.feature.Title\n-keepclassmembers # was !abstract\n    class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keepclassmembers # was !abstract\n    class com.acme.feature.R\$string { *; }".relocated(),
+        )
     }
 
     @Test

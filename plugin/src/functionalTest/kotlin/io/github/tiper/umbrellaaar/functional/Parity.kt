@@ -68,6 +68,9 @@ internal class Parity(val umbrella: ConsumerBuilds, val stock: ConsumerBuilds) {
         val theirs = stock.rFields()
         diff("R field", ours.keys, theirs.keys)
         (ours.keys intersect theirs.keys).filter { ours[it] != theirs[it] }.forEach { add("$variant R field $it has length ${ours[it]} in the umbrella and ${theirs[it]} in stock") }
+
+        // Rules decide what stays in the APK. One `R` can keep more than stock, as it holds every module's, but not less.
+        (stock.keptRFields() - umbrella.keptRFields()).forEach { add("$variant R field stays in stock alone: $it") }
     }
 
     /** `R$type.field` to its length. Stock gives each module its `R`, and the umbrella one for them all. */
@@ -75,11 +78,15 @@ internal class Parity(val umbrella: ConsumerBuilds, val stock: ConsumerBuilds) {
         fields.map { (field, length) -> "${owner.substringAfterLast('.')}.$field" to length }
     }.toMap()
 
+    /** What is left in the APK of the `R`s under [GROUP], as `R$type.field`, with the module gone from the name. */
+    private fun ConsumerBuild.keptRFields() = apk.fields.filter { it.startsWith(GROUP) }.mapNotNullTo(sortedSetOf()) { KEPT_R_FIELD.find(it)?.value }
+
     private fun Set<String>.withoutR() = filterNot { it.matches(R_CLASS) }.toSet()
 
     private fun Set<String>.externals() = filterNot { it.startsWith("$GROUP:") }.toSet()
 
     private companion object {
         val R_CLASS = Regex(".*\\.R(\\$.*)?")
+        val KEPT_R_FIELD = Regex("R\\$\\w+\\.\\w+$")
     }
 }

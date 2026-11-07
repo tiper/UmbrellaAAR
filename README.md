@@ -739,8 +739,11 @@ pluginManagement {
   of such a class (`{ *; }`, `{ public *; }`) would then keep what the other modules declare, so what
   it reached, read from that module's `R.txt`, goes in a rule of its own. `-keepclassmembers` fires
   when the class is live, and the shared one nearly always is, so that rule gets an `-if` on the
-  classes that read the module's `R`, and goes when nothing does. A module's `R` that is only live
-  because another rule keeps it loses its members that way, so give that rule the members as well.
+  classes that read the module's `R`, and goes when nothing does. An `R` a module takes as a class,
+  as `R.raw::class.java` does to look fields up by name, gets the rule with no `-if`. Otherwise the
+  `-if` holds only while a reader does, and R8 can inline a reader away. So where code outside the
+  umbrella looks fields up by name, or another rule is all that keeps a module's `R`, name the
+  members in the rule: a rule that names them gets no `-if`.
   Two modules with one field name share its readers, so a rule on one can keep more than it needs.
   An `-if` of a module's own only follows an `R` it names. The bytecode pre-scan that decides
   whether ASM runs at all is best-effort (false positives only cost a no-op rewrite).

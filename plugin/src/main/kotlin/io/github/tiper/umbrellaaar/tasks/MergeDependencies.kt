@@ -83,6 +83,9 @@ abstract class MergeDependencies : DefaultTask() {
     /** The fields merged classes read from the umbrella's `R`. */
     private val rFieldReads = mutableListOf<RFieldRead>()
 
+    /** The `R`s merged classes take as a class, as `<namespace>/R$<type>`, to look fields up by name. */
+    private val reflectedRs = hashSetOf<String>()
+
     /**
      * Keys already written to each de-duplicated file (`public.txt`, `baseline-prof.txt`).
      * Kept in memory so each module's lines are checked once, instead of re-reading the growing
@@ -103,6 +106,7 @@ abstract class MergeDependencies : DefaultTask() {
         paths.clear()
         resourceNames.clear()
         rFieldReads.clear()
+        reflectedRs.clear()
         seenKeys.clear()
         modulesWithResources.clear()
         modulesDeclaringPublicResources.clear()
@@ -154,8 +158,9 @@ abstract class MergeDependencies : DefaultTask() {
                     when {
                         // For the check below, and nothing an AAR has any use for.
                         relativePath == R_REFERENCES -> srcFile.forEachLine { line ->
-                            val (field, reader) = line.split('\t')
-                            rFieldReads += RFieldRead(field, reader, owner)
+                            val (read, reader) = line.split('\t')
+                            // A resource name holds no `$`, and the `R` of a type always does.
+                            if ('$' in read) reflectedRs += read else rFieldReads += RFieldRead(read, reader, owner)
                         }
 
                         // Says what one JVM module exports, and one jar is many. Two would clash, and
@@ -265,6 +270,7 @@ abstract class MergeDependencies : DefaultTask() {
             namespaces.values.toSet(),
             module = path.substringBeforeLast(':').ifEmpty { ":" },
             onDuplicate = ::onDuplicate,
+            onRClass = { rClass, _ -> reflectedRs += rClass },
             onRField = { field, reader -> rFieldReads += RFieldRead(field, reader, MAIN) },
             relocateRules = { it.relocateRInRules(umbrellaNamespace, rClasses) },
         )
@@ -309,10 +315,15 @@ abstract class MergeDependencies : DefaultTask() {
      */
     private fun Map<String, String>.rClasses(tables: Map<String, File>, merged: SymbolTable): Map<String, Map<String, RClassContent>> {
         val readers = rFieldReads.groupBy({ it.field }, { it.reader })
-        return entries.groupBy({ it.value }, { it.key }).mapValues { (_, owners) ->
+        return entries.groupBy({ it.value }, { it.key }).mapValues { (namespace, owners) ->
             val table = SymbolTable().apply { owners.mapNotNull(tables::get).filter(File::isFile).forEach(::read) }
             table.fieldsIn(merged).mapValues { (type, fields) ->
-                RClassContent(fields, fields.flatMapTo(sortedSetOf()) { readers["$type/$it"].orEmpty() }, fields.filterTo(hashSetOf()) { table.isArray("$type/$it") })
+                RClassContent(
+                    fields,
+                    fields.flatMapTo(sortedSetOf()) { readers["$type/$it"].orEmpty() },
+                    fields.filterTo(hashSetOf()) { table.isArray("$type/$it") },
+                    reflected = "$namespace/R\$$type" in reflectedRs,
+                )
             }
         }
     }

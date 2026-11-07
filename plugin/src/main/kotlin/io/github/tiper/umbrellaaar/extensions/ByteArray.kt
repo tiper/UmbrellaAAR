@@ -4,6 +4,7 @@ import org.gradle.api.GradleException
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes.V1_8
+import org.objectweb.asm.Type
 import org.objectweb.asm.commons.ClassRemapper
 import org.objectweb.asm.commons.Remapper
 
@@ -17,12 +18,15 @@ import org.objectweb.asm.commons.Remapper
  * `NoSuchFieldError` at runtime, far away from the cause.
  *
  * [onRField] gets each `<type>/<name>` read from one of those `R`s, or from the umbrella's own, with
- * the class that reads it. [module] is the project path to name when the class cannot be read.
+ * the class that reads it. [onRClass] gets each of those `R`s a class takes as a class, as
+ * `R.raw::class.java` does to look a field up by name, which no read shows. [module] is the project
+ * path to name when the class cannot be read.
  */
 internal fun ByteArray.transformClass(
     mainNsInternal: String,
     mergedNamespaces: Set<String>,
     module: String,
+    onRClass: (rClass: String, reader: String) -> Unit = { _, _ -> },
     onRField: (field: String, reader: String) -> Unit = { _, _ -> },
 ): ByteArray {
     // Fast path: classes that cannot possibly mention an R class are returned untouched.
@@ -42,6 +46,14 @@ internal fun ByteArray.transformClass(
             // Already the umbrella's own R, or an R we are not merging: leave it alone.
             if (owner == mainNsInternal || owner !in mergedNamespaces) return internalName
             return mainNsInternal + internalName.substring(owner.length)
+        }
+
+        override fun mapValue(value: Any?): Any? {
+            if (value is Type && value.sort == Type.OBJECT && value.internalName != reader.className) {
+                val namespace = value.internalName.substringBefore("/R$", "")
+                if (namespace == mainNsInternal || namespace in mergedNamespaces) onRClass(value.internalName, reader.className.replace('/', '.'))
+            }
+            return super.mapValue(value)
         }
 
         override fun mapFieldName(owner: String, name: String, descriptor: String): String {

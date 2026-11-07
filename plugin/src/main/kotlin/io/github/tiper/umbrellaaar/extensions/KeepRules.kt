@@ -2,8 +2,12 @@ package io.github.tiper.umbrellaaar.extensions
 
 import kotlin.text.Regex.Companion.escape
 
-/** What the `R` class of a type holds in a module, the classes that read any of it, and which of its fields are arrays. */
-internal class RClassContent(val fields: Set<String>, val readers: Set<String> = emptySet(), val arrays: Set<String> = emptySet())
+/**
+ * What the `R` class of a type holds in a module, the classes that read any of it, which of its fields
+ * are arrays, and whether a class takes it as a class, as `R.raw::class.java` does to look a field up
+ * by name.
+ */
+internal class RClassContent(val fields: Set<String>, val readers: Set<String> = emptySet(), val arrays: Set<String> = emptySet(), val reflected: Boolean = false)
 
 /**
  * These keep rules pointed at the umbrella's `R`, as [transformClass] points code at it. A merged
@@ -17,7 +21,9 @@ internal class RClassContent(val fields: Set<String>, val readers: Set<String> =
  * reached get a rule of their own, with the type and modifiers it asked for, as `R$styleable` holds
  * `int`s and arrays side by side. `-keepclassmembers` only acts on a class that is alive, which
  * a module's `R` is if what reads it is, and the shared one nearly always is. So there those rules
- * go by the classes that read each `R`, and one that nothing reads keeps nothing, as in stock.
+ * go by the classes that read each `R`, and one that nothing reads keeps nothing, as in stock
+ * unless another rule keeps that `R` alive. An `R` a class takes as a class is looked up by name,
+ * which reads no field, and R8 can inline the class that does it away, so those go by nothing.
  */
 internal fun String.relocateRInRules(mainNsInternal: String, rClasses: Map<String, Map<String, RClassContent>>): String {
     val umbrella = mainNsInternal.replace('/', '.')
@@ -46,10 +52,10 @@ internal fun String.relocateRInRules(mainNsInternal: String, rClasses: Map<Strin
             val original = "$condition$keep$outsideR${others.joinToString(",")}$members".takeIf { others.any { !it.startsWith("!") } }
             fun kept(type: String, fields: Set<String>): String {
                 val arrays = reached.filter { it.type == type }.flatMapTo(hashSetOf()) { it.arrays }
-                return "$keep$umbrella.R\$$type { ${statements.flatMap { it.spelledOutFor(fields, arrays) }.joinToString(" ")} }"
+                return "${keep.replace(NOT_ABSTRACT) { if (it.value.startsWith('#')) it.value else " " }}$umbrella.R\$$type { ${statements.flatMap { it.spelledOutFor(fields, arrays) }.joinToString(" ")} }"
             }
             val own = when {
-                whileAlive -> reached.filter { it.readers.isNotEmpty() }.map { condition.ifEmpty { it.whileRead } + kept(it.type, it.fields) }
+                whileAlive -> reached.filter { it.reflected || it.readers.isNotEmpty() }.map { condition.ifEmpty { it.whileRead } + kept(it.type, it.fields) }
                 else -> fields.map { (type, fields) -> condition + kept(type, fields) }
             }
             (listOfNotNull(original) + own).joinToString("\n")
@@ -64,7 +70,8 @@ private class RClass(val name: String, val type: String, content: RClassContent)
     val fields = content.fields
     val readers = content.readers
     val arrays = content.arrays
-    val whileRead get() = "-if class ${readers.joinToString(",")}\n"
+    val reflected = content.reflected
+    val whileRead get() = if (reflected) "" else "-if class ${readers.joinToString(",")}\n"
 }
 
 /**
@@ -110,8 +117,11 @@ private class ClassNames(names: String) {
 
 private const val COMMENT = """#[^\n]*+"""
 
+/** What R8 takes for a space, a byte order mark among them, for a character class. */
+private const val SPACE = """\s\uFEFF"""
+
 /** What R8 skips between any two words of a rule, which is why a rule can span lines at all. */
-private const val GAP = """(?:\s++|$COMMENT)*+"""
+private const val GAP = """(?:[$SPACE]++|$COMMENT)*+"""
 
 /** A block of members, which a comment in it does not end, and which holds no other. */
 private const val MEMBERS = """\{(?:[^{}#]++|$COMMENT)*+}"""
@@ -124,20 +134,28 @@ private const val MEMBERS = """\{(?:[^{}#]++|$COMMENT)*+}"""
  *
  * R8 starts an option wherever the last one ended, on its line or not, and needs no space after
  * `-if`, as no other option starts with that. A name is not such a place: `-include rules-if.pro`
- * holds no `-if`. Neither is a comment, which matches as well so that this reads past it.
+ * holds no `-if`. Neither is a comment, which matches as well so that this reads past it. A comma
+ * with no option behind it is nothing to R8.
  *
  * An `-if` ends at the next option, and nothing in here gives back what it took, so a rule file is
  * one pass however long it is.
  */
 private val KEEP_RULE = Regex(
-    """$COMMENT|(?<![^\s}])((?:-if(?:[^\s{#]++|\s++(?!-\w)|$COMMENT)*+(?:$MEMBERS)?+$GAP)?)""" +
-        """(-keep(?:class(?:es)?(?:with)?member(?:s|names)|names)?(?:$GAP,$GAP\w++)*+$GAP(?:(?:public|final|!${GAP}abstract)$GAP)*+(?:class|!interface|!enum)$GAP)""" +
+    """$COMMENT|(?<![^$SPACE}])((?:-if(?:[^$SPACE{#]++|[$SPACE]++(?!-\w)|$COMMENT)*+(?:$MEMBERS)?+$GAP)?)""" +
+        """(-keep(?:class(?:es)?(?:with)?member(?:s|names)|names)?(?:$GAP,$GAP(?:(?!class\b)\w++)?+)*+$GAP(?:(?:public|final|!${GAP}abstract)$GAP)*+(?:class|!interface|!enum|!@${GAP}interface)$GAP)""" +
         """([^\s{#,]++(?:$GAP,$GAP[^\s{#,]++)*+)(?!$GAP(?:extends|implements)\b)($GAP$MEMBERS)?""",
 )
 
 private val COMMENTS = Regex(COMMENT)
 
 private val BACK_REFERENCE = Regex("""<\d+>""")
+
+/**
+ * No `R` is abstract, so this says nothing about one, and behind an `-if` R8 then loses a field a
+ * rule names. It goes with the spaces around it, short of a line break, which may end a comment.
+ * A comment matches as well, as what ends it must stay.
+ */
+private val NOT_ABSTRACT = Regex("""$COMMENT|[\t ]*+!${GAP}abstract$GAP""")
 
 /** A member that takes all of an `R`, whichever way that is spelled. */
 private val EVERY_FIELD = Regex("""((?:(?:public|static|final)\s+)*)(?:(int(?:\[])?|\*\*\*|%)\s+)?(?:\*|<fields>)""")

@@ -11,9 +11,11 @@ import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes.ACC_PUBLIC
 import org.objectweb.asm.Opcodes.ACC_SUPER
+import org.objectweb.asm.Opcodes.ARETURN
 import org.objectweb.asm.Opcodes.GETSTATIC
 import org.objectweb.asm.Opcodes.IRETURN
 import org.objectweb.asm.Opcodes.V1_8
+import org.objectweb.asm.Type
 
 class ByteArrayExtensionsTest {
 
@@ -136,6 +138,17 @@ class ByteArrayExtensionsTest {
         assertEquals(emptyMap(), writer.toByteArray().rFields())
     }
 
+    private fun ByteArray.rClassesTaken() = buildMap { transformClass("com/main", mergedNamespaces, module, onRClass = { rClass, reader -> put(rClass, reader) }) }
+
+    @Test
+    fun `transformClass reports an R a class takes as a class, as reflection does`() {
+        assertEquals(mapOf("com/dep/R\$raw" to "com.test.TestClass"), classTaking("com/dep/R\$raw").rClassesTaken())
+        assertEquals(setOf("com/main/R\$raw"), classTaking("com/main/R\$raw").rClassesTaken().keys)
+        assertEquals(emptyMap(), classTaking("com/thirdparty/R\$raw").rClassesTaken())
+        assertEquals(emptyMap(), classTaking("com/dep/Repo").rClassesTaken())
+        assertEquals(emptyMap(), classTaking("com/dep/R\$raw").rFields(), "A class is no field read")
+    }
+
     // ── ASM-based R class remapping tests ──────────────────────────────────
 
     @Test
@@ -250,6 +263,21 @@ class ByteArrayExtensionsTest {
             visitCode()
             visitFieldInsn(GETSTATIC, owner, field, descriptor)
             visitInsn(IRETURN)
+            visitMaxs(1, 1)
+            visitEnd()
+        }
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** Creates bytecode for a class that takes [type] as a class, as `R.raw::class.java` does. */
+    private fun classTaking(type: String): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(V1_8, ACC_PUBLIC or ACC_SUPER, "com/test/TestClass", null, "java/lang/Object", null)
+        cw.visitMethod(ACC_PUBLIC, "type", "()Ljava/lang/Class;", null, null).apply {
+            visitCode()
+            visitLdcInsn(Type.getObjectType(type))
+            visitInsn(ARETURN)
             visitMaxs(1, 1)
             visitEnd()
         }

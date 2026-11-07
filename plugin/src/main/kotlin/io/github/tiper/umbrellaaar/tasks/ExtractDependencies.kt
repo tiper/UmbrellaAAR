@@ -35,7 +35,10 @@ import org.gradle.workers.WorkAction
 import org.gradle.workers.WorkParameters
 import org.gradle.workers.WorkerExecutor
 
-/** The `R` fields a module's classes read, one `<type>/<field>\t<class>` per line. */
+/**
+ * The `R` fields a module's classes read, one `<type>/<field>\t<class>` per line, and the `R`s they
+ * take as a class, one `<namespace>/R$<type>\t<class>`.
+ */
 internal const val R_REFERENCES = ".r-references"
 
 @CacheableTask
@@ -205,7 +208,7 @@ abstract class ExtractDependencies : DefaultTask() {
             // The rewrite walks every field read anyway, so a later pass over the classes would only cost.
             val rReads = java.util.TreeSet<String>()
             val module = parameters.module.get()
-            val transform = { bytes: ByteArray -> bytes.transformClass(namespace, merged, module) { field, reader -> rReads += "$field\t$reader" } }
+            val transform = { bytes: ByteArray -> bytes.transformClass(namespace, merged, module, onRClass = { rClass, reader -> rReads += "$rClass\t$reader" }) { field, reader -> rReads += "$field\t$reader" } }
 
             when (file.extension) {
                 "aar" -> try {

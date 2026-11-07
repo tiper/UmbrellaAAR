@@ -48,6 +48,7 @@ internal fun buildClassesJar(
     mergedNamespaces: Set<String>,
     module: String,
     onDuplicate: (owner: String, relativePath: String, file: File, existing: File, existingOwner: String) -> Unit,
+    onRClass: (rClass: String, reader: String) -> Unit,
     onRField: (field: String, reader: String) -> Unit,
     relocateRules: (String) -> String,
 ) {
@@ -94,7 +95,7 @@ internal fun buildClassesJar(
                 services != null && services.size > 1 -> zos.write(services.mergeServiceFiles())
 
                 relocate && owner == MAIN && entryName.endsWith(".class") ->
-                    zos.write(file.readBytes().transformClass(umbrellaNamespace, mergedNamespaces, module, onRField))
+                    zos.write(file.readBytes().transformClass(umbrellaNamespace, mergedNamespaces, module, onRClass, onRField))
 
                 relocate && entryName.startsWith(TARGETED_RULES) ->
                     zos.write(relocateRules(file.readText()).encodeToByteArray())

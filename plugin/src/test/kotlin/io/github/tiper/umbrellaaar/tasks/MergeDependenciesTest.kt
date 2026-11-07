@@ -80,6 +80,24 @@ class MergeDependenciesTest {
     }
 
     @Test
+    fun `a rule on the members of a module's R that a class takes as a class goes behind no if`() {
+        mainAar("R.txt" to "int raw beep 0x0")
+        module(
+            "moduleA",
+            "com.example.a",
+            "R.txt" to "int raw beep 0x0",
+            ".r-references" to "com/example/a/R\$raw\tcom.example.a.Sounds\n",
+            "proguard.txt" to "-keepclassmembers class com.example.a.R\$raw { *; }",
+        )
+        module("moduleB", "com.example.b", "R.txt" to "int raw boop 0x0", ".r-references" to "raw/boop\tcom.example.b.B\n", "proguard.txt" to "-keepclassmembers class com.example.b.R\$raw { *; }")
+
+        assertEquals(
+            listOf("-keepclassmembers class com.example.umbrella.R\$raw { *** beep; }", "-if class com.example.b.B", "-keepclassmembers class com.example.umbrella.R\$raw { *** boop; }"),
+            File(merge(), "proguard.txt").readLines().filter(String::isNotBlank),
+        )
+    }
+
+    @Test
     fun `a rule on every field of a module's R keeps what that R txt lists and the merge left`() {
         mainAar("R.txt" to "int string own 0x0")
         module(

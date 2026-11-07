@@ -199,6 +199,91 @@ class KeepRulesTest {
         assertFalse("com.acme.sdk.R\$styleable.Other_size" in parity.umbrella.release.apk.fields, "A field of another module stayed: ${parity.umbrella.release.apk.fields}")
     }
 
+    /** A name that only meets the module's own `R` keeps nothing unless the rule is read, so this one has to be. */
+    @Test
+    fun `a rule that leaves annotations out keeps what it reaches, as in stock`() = fixture {
+        val feature = androidLibrary("feature") {
+            keptString("kept_by_rule")
+            consumerRule("-keep !@interface ${namespace.dropLast(1)}*.R\$string { *; }")
+        }
+        val umbrella = androidUmbrella { export(feature) }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+        parity.assertKept(feature.namespace, "R\$string.kept_by_rule_unused")
+    }
+
+    /** What looks a field up by name reads none, and R8 can inline the class that does it away. */
+    @Test
+    fun `a rule on an R that a module looks fields up in by name keeps them, as in stock`() = fixture {
+        val feature = androidLibrary("feature") {
+            file("src/main/res/raw/beep.txt", "beep\n")
+            file("src/main/res/raw/boop.txt", "boop\n")
+            androidKotlin("Sounds", "package $namespace\n\nobject Sounds { fun names() = R.raw::class.java.fields.map { it.name } }")
+            calls += "$namespace.Sounds.names()"
+            consumerRule("-keepclassmembers class $namespace.R\$raw { *; }")
+        }
+        val umbrella = androidUmbrella { export(feature) }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+        parity.assertKept(feature.namespace, "R\$raw.beep")
+        parity.assertKept(feature.namespace, "R\$raw.boop")
+    }
+
+    /** R8 reads past both, and a name that only meets the module's own `R` keeps nothing unless the rule is read. */
+    @Test
+    fun `a rule behind a byte order mark or a stray comma keeps what it reaches, as in stock`() = fixture {
+        val marked = androidLibrary("marked") {
+            keptString("kept_by_rule")
+            consumerRule("\uFEFF-keep class ${namespace.dropLast(1)}*.R\$string { *; }")
+        }
+        val comma = androidLibrary("comma") {
+            keptString("kept_by_comma")
+            consumerRule("-keep, class ${namespace.dropLast(1)}*.R\$string { *; }")
+        }
+        val umbrella = androidUmbrella {
+            export(marked)
+            export(comma)
+        }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+        parity.assertKept(marked.namespace, "R\$string.kept_by_rule_unused")
+        parity.assertKept(comma.namespace, "R\$string.kept_by_comma_unused")
+    }
+
+    /** The `-if` this goes behind here and the fields it names are what make R8 lose them. */
+    @Test
+    fun `a rule on a class that is not abstract keeps what nothing reads, as in stock`() = fixture {
+        val feature = androidLibrary("feature") {
+            keptString("kept_by_rule")
+            reads("string.kept_by_rule")
+            consumerRule("-keepclassmembers !abstract class $namespace.R\$string { *; }")
+        }
+        val umbrella = androidUmbrella { export(feature) }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+        parity.assertKept(feature.namespace, "R\$string.kept_by_rule_unused")
+    }
+
     @Test
     fun `an if whose block opens on the next line goes along, as in stock`() = fixture {
         val feature = androidLibrary("feature") {
