@@ -39,6 +39,9 @@ internal class SymbolTable {
     /** Whether the table has [field], as `<type>/<name>`. */
     operator fun contains(field: String) = field in fields
 
+    /** Whether [field], as `<type>/<name>`, is an array. */
+    fun isArray(field: String) = symbols[field]?.first()?.startsWith("int[]") == true
+
     /** What this table has of [other]'s, as `<type>` -> its fields. */
     fun fieldsIn(other: SymbolTable) = symbols.values.flatten().map { it.symbol }.filter { it in other }
         .groupBy({ it.substringBefore('/') }, { it.substringAfter('/') })

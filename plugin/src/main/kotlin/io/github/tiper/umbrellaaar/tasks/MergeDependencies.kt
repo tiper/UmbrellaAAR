@@ -296,8 +296,9 @@ abstract class MergeDependencies : DefaultTask() {
     private fun Map<String, String>.rClasses(tables: Map<String, File>, merged: SymbolTable): Map<String, Map<String, RClassContent>> {
         val readers = rFieldReads.groupBy({ it.field }, { it.reader })
         return entries.groupBy({ it.value }, { it.key }).mapValues { (_, owners) ->
-            SymbolTable().apply { owners.mapNotNull(tables::get).filter(File::isFile).forEach(::read) }.fieldsIn(merged).mapValues { (type, fields) ->
-                RClassContent(fields, fields.flatMapTo(sortedSetOf()) { readers["$type/$it"].orEmpty() })
+            val table = SymbolTable().apply { owners.mapNotNull(tables::get).filter(File::isFile).forEach(::read) }
+            table.fieldsIn(merged).mapValues { (type, fields) ->
+                RClassContent(fields, fields.flatMapTo(sortedSetOf()) { readers["$type/$it"].orEmpty() }, fields.filterTo(hashSetOf()) { table.isArray("$type/$it") })
             }
         }
     }

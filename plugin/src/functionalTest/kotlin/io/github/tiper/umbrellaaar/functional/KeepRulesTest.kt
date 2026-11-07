@@ -156,6 +156,49 @@ class KeepRulesTest {
         assertFalse(kept.any { "not_kept" in it }, "A field no rule of its module reached stayed: $kept")
     }
 
+    /** `R$styleable` holds arrays and `int`s side by side, so the type a rule names decides what it keeps. */
+    @Test
+    fun `a rule on every field of one type leaves the others out, as in stock`() = fixture {
+        val feature = androidLibrary("feature") {
+            values(styleable("Widget", attr("title", "string")))
+            reads("styleable.Widget_title")
+            consumerRule("-keepclassmembers class $namespace.R\$styleable { public static int *; }")
+        }
+        val umbrella = androidUmbrella { export(feature) }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+        parity.assertKept(feature.namespace, "R\$styleable.Widget_title")
+        assertFalse("${feature.namespace}.R\$styleable.Widget" in parity.stock.release.apk.fields, "Stock has moved on: ${parity.stock.release.apk.fields}")
+        assertFalse("com.acme.sdk.R\$styleable.Widget" in parity.umbrella.release.apk.fields, "An array the rule leaves out stayed: ${parity.umbrella.release.apk.fields}")
+    }
+
+    /** `-keepclasseswithmembers` needs each member it lists, so a field of the wrong type would stop it. */
+    @Test
+    fun `a rule that needs its members goes on working on every field of one type, as in stock`() = fixture {
+        val feature = androidLibrary("feature") {
+            values(styleable("Widget", attr("title", "string")))
+            consumerRule("-keepclasseswithmembers class $namespace.R\$styleable { public static int *; }")
+        }
+        val other = androidLibrary("other") { values(styleable("Other", attr("size", "string"))) }
+        val umbrella = androidUmbrella { export(feature, other) }
+
+        val parity = parity(umbrella) {
+            minifyRelease = true
+            shrinkResources = true
+        }
+
+        parity.assertMatchesStock()
+        parity.assertKept(feature.namespace, "R\$styleable.Widget_title")
+        assertFalse("${feature.namespace}.R\$styleable.Widget" in parity.stock.release.apk.fields, "Stock has moved on: ${parity.stock.release.apk.fields}")
+        assertFalse("com.acme.sdk.R\$styleable.Widget" in parity.umbrella.release.apk.fields, "An array the rule leaves out stayed: ${parity.umbrella.release.apk.fields}")
+        assertFalse("com.acme.sdk.R\$styleable.Other_size" in parity.umbrella.release.apk.fields, "A field of another module stayed: ${parity.umbrella.release.apk.fields}")
+    }
+
     @Test
     fun `an if whose block opens on the next line goes along, as in stock`() = fixture {
         val feature = androidLibrary("feature") {

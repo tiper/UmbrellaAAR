@@ -2,8 +2,8 @@ package io.github.tiper.umbrellaaar.extensions
 
 import kotlin.text.Regex.Companion.escape
 
-/** What the `R` class of a type holds in a module, and the classes that read any of it. */
-internal class RClassContent(val fields: Set<String>, val readers: Set<String> = emptySet())
+/** What the `R` class of a type holds in a module, the classes that read any of it, and which of its fields are arrays. */
+internal class RClassContent(val fields: Set<String>, val readers: Set<String> = emptySet(), val arrays: Set<String> = emptySet())
 
 /**
  * These keep rules pointed at the umbrella's `R`, as [transformClass] points code at it. A merged
@@ -14,7 +14,8 @@ internal class RClassContent(val fields: Set<String>, val readers: Set<String> =
  * reaches what it matches in there, in whatever spelling, and the umbrella's `R` of those types joins
  * its classes. That `R` is every module's though, and a rule on all of its fields would keep what
  * the others declare along with its own. So a rule like that stays out of it, and the fields it
- * reached get a rule of their own. `-keepclassmembers` only acts on a class that is alive, which
+ * reached get a rule of their own, with the type and modifiers it asked for, as `R$styleable` holds
+ * `int`s and arrays side by side. `-keepclassmembers` only acts on a class that is alive, which
  * a module's `R` is if what reads it is, and the shared one nearly always is. So there those rules
  * go by the classes that read each `R`, and one that nothing reads keeps nothing, as in stock.
  */
@@ -37,12 +38,16 @@ internal fun String.relocateRInRules(mainNsInternal: String, rClasses: Map<Strin
         val relocated = ClassNames(classes.replace(named) { "$umbrella.R" })
         val types = fields.keys + everyField.keys.filter { "$umbrella.R\$$it" in relocated }
         val whileAlive = keep.startsWith("-keepclassmember")
-        if (EVERY_FIELD in members.replace(COMMENTS, "") && types.any { whileAlive || fields[it] != everyField[it] }) {
+        val statements = members.replace(COMMENTS, "").substringAfter('{').substringBeforeLast('}').split(';').map(String::trim).filter(String::isNotEmpty)
+        if (statements.any(EVERY_FIELD::matches) && types.any { whileAlive || fields[it] != everyField[it] }) {
             val others = names.all.filterNot(onlyAnR::matches)
             val rest = ClassNames(others.joinToString(","))
             val outsideR = if (everyField.keys.any { "$umbrella.R\$$it" in rest }) "!$umbrella.R\$*," else ""
             val original = "$condition$keep$outsideR${others.joinToString(",")}$members".takeIf { others.any { !it.startsWith("!") } }
-            fun kept(type: String, fields: Set<String>) = "$keep$umbrella.R\$$type { ${fields.sorted().joinToString(" ") { "*** $it;" }} }"
+            fun kept(type: String, fields: Set<String>): String {
+                val arrays = reached.filter { it.type == type }.flatMapTo(hashSetOf()) { it.arrays }
+                return "$keep$umbrella.R\$$type { ${statements.flatMap { it.spelledOutFor(fields, arrays) }.joinToString(" ")} }"
+            }
             val own = when {
                 whileAlive -> reached.filter { it.readers.isNotEmpty() }.map { condition.ifEmpty { it.whileRead } + kept(it.type, it.fields) }
                 else -> fields.map { (type, fields) -> condition + kept(type, fields) }
@@ -58,7 +63,23 @@ internal fun String.relocateRInRules(mainNsInternal: String, rClasses: Map<Strin
 private class RClass(val name: String, val type: String, content: RClassContent) {
     val fields = content.fields
     val readers = content.readers
+    val arrays = content.arrays
     val whileRead get() = "-if class ${readers.joinToString(",")}\n"
+}
+
+/**
+ * This member of a rule, once for each of [fields] it takes if it takes every field. A field of
+ * another type would stop a `-keepclasseswithmembers`, which needs all it lists. A back reference
+ * lost the class name it pointed at, and behind an `-if` R8 refuses one like that.
+ */
+private fun String.spelledOutFor(fields: Set<String>, arrays: Set<String>): List<String> {
+    val (modifiers, type) = EVERY_FIELD.matchEntire(this)?.destructured ?: return listOfNotNull("$this;".takeUnless { BACK_REFERENCE in this })
+    val taken = when (type) {
+        "int", "%" -> fields - arrays
+        "int[]" -> fields intersect arrays
+        else -> fields
+    }
+    return taken.sorted().map { "$modifiers${type.ifEmpty { "***" }} $it;" }
 }
 
 private fun List<RClass>.fieldsByType() = groupBy { it.type }.mapValues { (_, classes) -> classes.flatMapTo(sortedSetOf()) { it.fields } }.toSortedMap()
@@ -116,5 +137,7 @@ private val KEEP_RULE = Regex(
 
 private val COMMENTS = Regex(COMMENT)
 
+private val BACK_REFERENCE = Regex("""<\d+>""")
+
 /** A member that takes all of an `R`, whichever way that is spelled. */
-private val EVERY_FIELD = Regex("""[{;]\s*(?:(?:public|static|final)\s+)*(?:(?:int(?:\[])?|\*\*\*|%)\s+)?(?:\*|<fields>)\s*;""")
+private val EVERY_FIELD = Regex("""((?:(?:public|static|final)\s+)*)(?:(int(?:\[])?|\*\*\*|%)\s+)?(?:\*|<fields>)""")

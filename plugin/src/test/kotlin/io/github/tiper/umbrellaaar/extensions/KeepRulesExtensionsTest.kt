@@ -68,14 +68,23 @@ class KeepRulesExtensionsTest {
 
     @Test
     fun `a rule on every field of a shared R keeps only what it reached`() {
-        listOf("{ *; }", "{ public *; }", "{ <fields>; }", "{ public static <fields>; }", "{ public static int *; }", "{ *** *; }", "{ <methods>; *; }", "{\n    *;\n}").forEach { members ->
+        mapOf(
+            "{ *; }" to "*** label;",
+            "{ public *; }" to "public *** label;",
+            "{ <fields>; }" to "*** label;",
+            "{ public static <fields>; }" to "public static *** label;",
+            "{ public static int *; }" to "public static int label;",
+            "{ *** *; }" to "*** label;",
+            "{ <methods>; *; }" to "<methods>; *** label;",
+            "{\n    *;\n}" to "*** label;",
+        ).forEach { (members, kept) ->
             assertEquals(
-                "-keep class com.acme.feature.a.* $members\n-keep class com.acme.sdk.R\$string { *** label; }",
+                "-keep class com.acme.feature.a.* $members\n-keep class com.acme.sdk.R\$string { $kept }",
                 "-keep class com.acme.feature.a.* $members".relocated(),
             )
         }
         assertEquals(
-            "-keep class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keep class com.acme.sdk.R\$string { public static *** body; public static *** title; }",
             "-keep class com.acme.feature.R\$string { public static <fields>; }".relocated(),
         )
         assertEquals(
@@ -89,11 +98,11 @@ class KeepRulesExtensionsTest {
         assertEquals(
             "-keepclassmembers class com.acme.feature.a.** { public *; }\n" +
                 "-if class com.acme.feature.a.Label,com.acme.feature.a.Other\n" +
-                "-keepclassmembers class com.acme.sdk.R\$string { *** label; }",
+                "-keepclassmembers class com.acme.sdk.R\$string { public *** label; }",
             "-keepclassmembers class com.acme.feature.a.** { public *; }".relocated(),
         )
         assertEquals(
-            "-if class com.acme.feature.Title\n-keepclassmembers,allowshrinking class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-if class com.acme.feature.Title\n-keepclassmembers,allowshrinking class com.acme.sdk.R\$string { public static *** body; public static *** title; }",
             "-keepclassmembers,allowshrinking class com.acme.feature.R\$* { public static <fields>; }".relocated(),
         )
     }
@@ -108,8 +117,8 @@ class KeepRulesExtensionsTest {
     fun `a rule on every member of every R goes by the readers of each`() {
         assertEquals(
             "-keepclassmembers class !com.acme.sdk.R\$*,**.R\$* { public static <fields>; }\n" +
-                "-if class com.acme.feature.Title\n-keepclassmembers class com.acme.sdk.R\$string { *** body; *** title; }\n" +
-                "-if class com.acme.feature.a.Label,com.acme.feature.a.Other\n-keepclassmembers class com.acme.sdk.R\$string { *** label; }",
+                "-if class com.acme.feature.Title\n-keepclassmembers class com.acme.sdk.R\$string { public static *** body; public static *** title; }\n" +
+                "-if class com.acme.feature.a.Label,com.acme.feature.a.Other\n-keepclassmembers class com.acme.sdk.R\$string { public static *** label; }",
             "-keepclassmembers class **.R\$* { public static <fields>; }".relocated(),
         )
     }
@@ -232,7 +241,7 @@ class KeepRulesExtensionsTest {
             " # why\n{ *; }",
             "\n# why\n{ *; }",
             " {\n    # why\n    *;\n}",
-            " { # why\n    public static <fields>;\n}",
+            " { # why\n    <fields>;\n}",
             " { # a } in a comment\n    *;\n}",
         ).forEach { members ->
             assertEquals(
@@ -301,6 +310,74 @@ class KeepRulesExtensionsTest {
         assertEquals("", "-keep class com.acme.silent.R\$string { *; }".relocated())
         assertEquals("", "-keep class com.acme.feature.a.R\$id { *; }".relocated())
         assertEquals("-keep class a.B { *; }", "-keep class a.B,com.acme.silent.R\$* { *; }".relocated())
+    }
+
+    @Test
+    fun `a rule on every field keeps the type and modifiers it asked for`() {
+        mapOf(
+            "public static int" to "public static int",
+            "%" to "%",
+            "***" to "***",
+            "public static final int" to "public static final int",
+        ).forEach { (filter, kept) ->
+            assertEquals(
+                "-keep class com.acme.sdk.R\$string { $kept body; $kept title; }",
+                "-keep class com.acme.feature.R\$string { $filter *; }".relocated(),
+            )
+        }
+        assertEquals(
+            "-keep class com.acme.sdk.R\$string { public static *** body; public static *** title; }",
+            "-keep class com.acme.feature.R\$string { public static <fields>; }".relocated(),
+        )
+        assertEquals(
+            "-if class com.acme.feature.Title\n-keepclassmembers class com.acme.sdk.R\$string { public static int body; public static int title; }",
+            "-keepclassmembers class com.acme.feature.R\$string { public static int *; }".relocated(),
+        )
+    }
+
+    @Test
+    fun `a rule on every field of one type takes the fields of that type`() {
+        val styleables = mapOf(
+            "com/acme/feature" to mapOf("styleable" to RClassContent(setOf("Widget", "Widget_title"), setOf("com.acme.feature.Title"), setOf("Widget"))),
+            "com/acme/other" to mapOf("styleable" to RClassContent(setOf("Other", "Other_size"), arrays = setOf("Other"))),
+        )
+        fun String.spelledOut() = relocateRInRules("com/acme/sdk", styleables)
+        val r = "com.acme.feature.R\$styleable"
+
+        assertEquals("-keepclasseswithmembers class com.acme.sdk.R\$styleable { public static int Widget_title; }", "-keepclasseswithmembers class $r { public static int *; }".spelledOut())
+        assertEquals("-keepclasseswithmembers class com.acme.sdk.R\$styleable { int[] Widget; }", "-keepclasseswithmembers class $r { int[] *; }".spelledOut())
+        assertEquals("-keepclasseswithmembernames class com.acme.sdk.R\$styleable { % Widget_title; }", "-keepclasseswithmembernames class $r { % *; }".spelledOut())
+        assertEquals("-keepclasseswithmembers class com.acme.sdk.R\$styleable { *** Widget; *** Widget_title; }", "-keepclasseswithmembers class $r { *; }".spelledOut())
+        assertEquals("-keepclasseswithmembers class com.acme.sdk.R\$styleable { public *** Widget; public *** Widget_title; }", "-keepclasseswithmembers class $r { public <fields>; }".spelledOut())
+        assertEquals(
+            "-if class com.acme.feature.Title\n-keepclassmembers class com.acme.sdk.R\$styleable { public static int Widget_title; }",
+            "-keepclassmembers class $r { public static int *; }".spelledOut(),
+        )
+    }
+
+    @Test
+    fun `a rule that takes no field of a type still keeps the class`() {
+        assertEquals("-keep class com.acme.sdk.R\$string {  }", "-keep class com.acme.feature.R\$string { int[] *; }".relocated())
+    }
+
+    @Test
+    fun `a rule on every field keeps each of its members`() {
+        assertEquals(
+            "-keep class com.acme.sdk.R\$string { int body; int title; int[] named; }",
+            "-keep class com.acme.feature.R\$string { int *; int[] *; int[] named; }".relocated(),
+        )
+        assertEquals(
+            "-keep class com.acme.sdk.R\$string { int body; int title; }",
+            "-keep class com.acme.feature.R\$string { # why\n    int *; # and why\n}".relocated(),
+        )
+    }
+
+    @Test
+    fun `a back reference goes, as the class name it pointed at did`() {
+        assertEquals(
+            "-if class com.acme.feature.Title\n-keepclassmembers class com.acme.sdk.R\$string { public static int body; public static int title; }",
+            "-keepclassmembers class com.acme.feature.R\$* { public static int *; public static int[] <1>; }".relocated(),
+        )
     }
 
     @Test
