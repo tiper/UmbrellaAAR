@@ -83,6 +83,35 @@ class MergedSourcesTest {
     }
 
     @Test
+    fun `jars of one name place their files the same whichever is exported first`() = fixture {
+        val first = androidLibrary("first") { file("src/main/kotlin/com/acme/Platform.kt", "package com.acme.first\n") }
+        val second = androidLibrary("second") { file("src/main/kotlin/com/acme/Platform.kt", "package com.acme.second\n") }
+        val umbrella = androidUmbrella { export(first, second) }
+        umbrella.mergedSources()
+        val before = sourcesOf(umbrella)
+
+        umbrella.exports.reverse()
+        gradle("clean")
+        umbrella.mergedSources()
+
+        assertTrue(before.keys.any { it.startsWith("release-sources/") }, "AGP names every jar alike: ${before.keys}")
+        assertEquals(before, sourcesOf(umbrella))
+    }
+
+    @Test
+    fun `one file with the same bytes in two modules ships once beside a third that differs`() = fixture {
+        val shared = "package com.acme.shared\n\nconst val SHARED = 1\n"
+        val first = kmpLibrary("first") { file("src/commonMain/kotlin/Shared.kt", "package com.acme.first\n") }
+        val second = kmpLibrary("second") { file("src/commonMain/kotlin/Shared.kt", shared) }
+        val third = kmpLibrary("third") { file("src/commonMain/kotlin/Shared.kt", shared) }
+        val umbrella = kmpUmbrella { export(first, second, third) }
+
+        umbrella.mergedSources()
+
+        assertEquals(1, sourcesOf(umbrella).values.count { it == shared }, "${sourcesOf(umbrella).keys}")
+    }
+
+    @Test
     fun `one file with the same bytes in two modules ships once`() = fixture {
         val shared = "package com.acme.shared\n\nconst val SHARED = 1\n"
         val feature = kmpLibrary("feature") { file("src/commonMain/kotlin/com/acme/shared/Shared.kt", shared) }

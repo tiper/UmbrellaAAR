@@ -37,11 +37,16 @@ internal abstract class MergeSources : DefaultTask() {
     @TaskAction
     fun execute() {
         val outputJar = mergedSourcesJar.get().asFile.apply { parentFile.mkdirs() }
-        val written = mutableMapOf<String, String>()
+        val shipped = mutableSetOf<Pair<String, String>>()
+        val written = mutableSetOf<String>()
         var sourceFilesCollected = 0
         var jarsProcessed = 0
 
-        val dependencyJars = dependencySourcesJars.files.filter { it.extension == "jar" }.sortedBy { it.name }
+        // Bytes settle a tie, as the jars of AGP's modules all share one name and their order is no input.
+        val dependencyJars = dependencySourcesJars.files.filter { it.extension == "jar" }
+            .associateWith { it.contentHash() }.entries
+            .sortedWith(compareBy({ it.key.name }, { it.value }))
+            .map { it.key }
         val mainJars = mainSourcesJars.files.filter { it.extension == "jar" }
 
         logger.lifecycle("Merging sources from ${dependencyJars.size + mainJars.size} source JARs")
@@ -56,9 +61,10 @@ internal abstract class MergeSources : DefaultTask() {
                         .sortedBy { it.name }
                         .forEach { entry ->
                             val bytes = zip.getInputStream(entry).use { it.readBytes() }
-                            val content = bytes.contentHash()
-                            val entryName = written.freePathFor(entry.name.normalizePath(), content, jar)
-                            if (written.put(entryName, content) != null) return@forEach
+                            val path = entry.name.normalizePath()
+                            if (!shipped.add(path to bytes.contentHash())) return@forEach
+                            val entryName = written.freePathFor(path, jar)
+                            written += entryName
                             zos.putNextEntry(ZipEntry(entryName).also { it.time = 0L })
                             zos.write(bytes)
                             zos.closeEntry()
@@ -73,12 +79,12 @@ internal abstract class MergeSources : DefaultTask() {
     }
 
     /**
-     * Where a file with [content] goes, which is [path] if that is free or holds the same. Kotlin's
-     * packages need not follow its folders, so two modules' `commonMain/Platform.kt` are two files,
-     * and the AAR has the classes of both.
+     * Where a file goes, which is [path] if that is free. Kotlin's packages need not follow its
+     * folders, so two modules' `commonMain/Platform.kt` are two files, and the AAR has the classes
+     * of both.
      */
-    private fun Map<String, String>.freePathFor(path: String, content: String, jar: File): String {
+    private fun Set<String>.freePathFor(path: String, jar: File): String {
         val module = jar.nameWithoutExtension
-        return (sequenceOf(path, "$module/$path") + generateSequence(2, Int::inc).map { "$module-$it/$path" }).first { this[it] == null || this[it] == content }
+        return (sequenceOf(path, "$module/$path") + generateSequence(2, Int::inc).map { "$module-$it/$path" }).first { it !in this }
     }
 }
