@@ -38,6 +38,21 @@ class HarnessTest {
     }
 
     @Test
+    fun `a consumer assembled again resolves what was published since`() = fixture {
+        val annotation = "androidx.annotation:annotation:1.9.1"
+        val core = androidLibrary("core")
+        val umbrella = kmpUmbrella { export(core) }
+        umbrella.publish()
+        val consumer = consumerOf(umbrella)
+        assertFalse(annotation in consumer.assemble().release.runtimeClasspath)
+
+        core.buildScript("dependencies { api(\"$annotation\") }")
+        umbrella.publish()
+
+        assertTrue(annotation in consumer.assemble().release.runtimeClasspath)
+    }
+
+    @Test
     fun `fixtures run with the configuration cache, which the README says is supported`() = fixture {
         val umbrella = kmpUmbrella { export(androidLibrary("core")) }
 

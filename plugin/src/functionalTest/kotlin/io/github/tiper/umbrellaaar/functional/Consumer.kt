@@ -163,6 +163,7 @@ internal class Consumer(
         |        val output = layout.buildDirectory.file("resolved/${'$'}variant.txt")
         |        val artifactsOutput = layout.buildDirectory.file("resolved/${'$'}variant-artifacts.txt")
         |        outputs.files(output, artifactsOutput)
+        |        outputs.upToDateWhen { false }
         |        doLast {
         |            val seen = linkedSetOf(root.get())
         |            val queue = ArrayDeque(seen)
