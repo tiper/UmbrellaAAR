@@ -167,7 +167,7 @@ abstract class ExtractDependencies : DefaultTask() {
     }
 
     private fun writeReport() = reportFile.get().asFile.apply { parentFile.mkdirs() }.bufferedWriter().use { writer ->
-        writer.appendLine("# Modules merged into the umbrella AAR by $path")
+        writer.appendLine("# Modules merged into the umbrella AAR")
         writer.appendLine("# <project path>\t<first edge that reached it>")
         mergedModules.get().forEach { writer.appendLine(it) }
     }
