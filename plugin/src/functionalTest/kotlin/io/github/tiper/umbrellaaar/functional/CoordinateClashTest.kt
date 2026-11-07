@@ -5,6 +5,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.gradle.testkit.runner.TaskOutcome.SKIPPED
+import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 
 /** One publication overwriting another stays green, and what consumers get is whichever ran last. */
 class CoordinateClashTest {
@@ -21,18 +23,31 @@ class CoordinateClashTest {
     private fun File.artifacts() = walkTopDown().filter { it.isFile && it.extension in setOf("aar", "pom", "module") }.map { it.name }.toSortedSet()
 
     /** The block of the failure that starts at [first], as a reader would select it in the log. */
-    private fun Build.block(first: String): String {
-        val lines = output.lines().dropWhile { it.trim() != first }
+    private fun String.block(first: String): String {
+        val lines = lines().dropWhile { it.trim() != first }
         return lines.take(lines.indexOfFirst { it.trim() == "}" } + 1).joinToString("\n") { it.trim() }
     }
 
-    private fun Build.fix() = block("publishing {")
+    private fun Build.fix() = output.block("publishing {")
 
-    private fun Build.leaveOut() = block("tasks.withType<AbstractPublishToMaven>().configureEach {")
+    private fun Build.fixFor(module: String) = output.substringAfter("debug builds as well, in the build script of $module:").block("publishing {")
+
+    private fun Build.leaveOut() = output.block("tasks.withType<AbstractPublishToMaven>().configureEach {")
+
+    private fun Build.assertPublishes(release: String, vararg leftOut: String) {
+        assertEquals(SUCCESS, outcome(release), "Release must go out")
+        leftOut.forEach { assertEquals(SKIPPED, outcome(it), "$it must stay behind") }
+    }
+
+    private fun Fixture.umbrellaWithStaging() = androidUmbrella {
+        export(androidLibrary("feature") { buildType("staging", fallback = "release") })
+        buildScript("android { buildTypes { create(\"staging\") { initWith(getByName(\"release\")) } } }")
+    }
+
+    private fun releaseAt(artifactId: String) = "publishing { publications.named<MavenPublication>(\"androidReleaseUmbrellaAar\") { artifactId = \"$artifactId\" } }"
 
     private fun Build.assertNamesTheFix() {
         assertLogged("publications.named<MavenPublication>")
-        assertLogged("tasks.withType<AbstractPublishToMaven>()")
         assertLogged("umbrellaaar.allowCoordinateClash=true in the root gradle.properties")
         assertNotLogged("> Task :")
     }
@@ -144,11 +159,128 @@ class CoordinateClashTest {
         assertTrue(failure.output.indexOf(failure.leaveOut().lines().first()) < failure.output.indexOf("publishing {"), failure.output)
         umbrella.buildScript(failure.leaveOut())
 
-        gradle(umbrella.publishAll)
+        gradle(umbrella.publishAll).assertPublishes(umbrella.publishTask("release"), umbrella.publishTask("debug"))
         gradle("${umbrella.path}:publishToMavenLocal", mavenLocal)
 
         assertTrue("com.acme.feature.Feature" in umbrella.published().aar.classes)
         assertTrue(repository("maven-local").resolve("com/acme/sdk/$VERSION/sdk-$VERSION.aar").isFile)
+    }
+
+    /** Gradle hands a task its publication after the rules already there, and a repository can come after this block. */
+    @Test
+    fun `leaving debug out can be pasted above a repository`() = fixture {
+        val umbrella = androidUmbrella { export(androidLibrary("feature")) }
+
+        umbrella.buildScript(gradleFails(umbrella.publishAll).leaveOut())
+        umbrella.buildScript("publishing { repositories { maven { name = \"late\"; url = uri(\"${repository("late").toURI()}\") } } }")
+
+        gradle(umbrella.publishAll).assertPublishes(umbrella.publishTask("release", "late"), umbrella.publishTask("debug", "late"))
+    }
+
+    @Test
+    fun `leaving out what clashes covers every build type but release`() = fixture {
+        val umbrella = umbrellaWithStaging()
+
+        umbrella.buildScript(gradleFails(umbrella.publishAll).leaveOut())
+
+        gradle(umbrella.publishAll).assertPublishes(umbrella.publishTask("release"), umbrella.publishTask("debug"), umbrella.publishTask("staging"))
+        assertTrue("com.acme.feature.Feature" in umbrella.published().aar.classes)
+    }
+
+    @Test
+    fun `a run with no release is not told to leave out all it asked for`() = fixture {
+        val umbrella = umbrellaWithStaging()
+
+        gradleFails(umbrella.publishTask("debug"), umbrella.publishTask("staging")).assertNotLogged("tasks.withType<AbstractPublishToMaven>()")
+    }
+
+    @Test
+    fun `with release on coordinates of its own, leaving out takes debug along`() = fixture {
+        val umbrella = umbrellaWithStaging().apply { buildScript(releaseAt("sdk-release")) }
+
+        val failure = gradleFails(umbrella.publishAll)
+        failure.assertLogged("./gradlew ${umbrella.path}:publishAndroidReleaseUmbrellaAarPublicationTo")
+        umbrella.buildScript(failure.leaveOut())
+        gradle(umbrella.publishAll)
+
+        assertTrue("com.acme.feature.Feature" in umbrella.published("sdk-release").aar.classes)
+        assertFalse(umbrella.published().dir.exists(), "Debug must not stay behind at those coordinates")
+    }
+
+    @Test
+    fun `with release on coordinates of its own, the fix moves debug as well`() = fixture {
+        val umbrella = umbrellaWithStaging().apply { buildScript(releaseAt("sdk-release")) }
+
+        umbrella.buildScript(gradleFails(umbrella.publishAll).fix())
+        gradle(umbrella.publishAll)
+
+        assertTrue("com.acme.feature.Feature" in umbrella.published("sdk-debug").aar.classes)
+        assertTrue("com.acme.feature.Feature" in umbrella.published("sdk-staging").aar.classes)
+        assertFalse(umbrella.published().dir.exists(), "Debug must not stay behind at those coordinates")
+    }
+
+    @Test
+    fun `a KMP umbrella with release on coordinates of its own can leave debug out`() = fixture {
+        val umbrella = kmpUmbrella {
+            export(androidLibrary("feature"))
+            buildScript(releaseAt("sdk-umbrella"))
+        }
+
+        umbrella.buildScript(gradleFails(umbrella.publishAll).leaveOut())
+        gradle(umbrella.publishAll)
+
+        assertTrue("com.acme.feature.Feature" in umbrella.published("sdk-umbrella").aar.classes)
+    }
+
+    /** A dry run at a name that cannot resolve, as nothing may leave a test should this ever pass. */
+    @Test
+    fun `one URL with and without a trailing slash is one repository`() = fixture {
+        val umbrella = androidUmbrella {
+            export(androidLibrary("feature"))
+            buildScript("publishing { repositories { maven { name = \"first\"; url = uri(\"https://repo.invalid/maven\") }; maven { name = \"second\"; url = uri(\"https://repo.invalid/maven/\") } } }")
+        }
+
+        gradleFails(umbrella.publishTask("release", "first"), umbrella.publishTask("debug", "second"), "--dry-run").assertLogged("would publish one publication")
+    }
+
+    @Test
+    fun `two umbrellas at one set of coordinates are told apart, so both fixes can be pasted`() = fixture {
+        val feature = androidLibrary("feature")
+        val artifactId = "publishing { publications.withType<MavenPublication>().configureEach { artifactId = \"shared\" } }"
+        val umbrellas = listOf("one", "two").map { name ->
+            androidUmbrella(name) {
+                export(feature)
+                buildScript(artifactId)
+            }
+        }
+
+        val failure = gradleFails("publish")
+        umbrellas.forEach { it.buildScript(failure.fixFor(it.path)) }
+        gradle("publish")
+
+        assertTrue("com.acme.feature.Feature" in umbrellas.first().published("shared-one-umbrella").aar.classes)
+        assertTrue("com.acme.feature.Feature" in umbrellas.last().published("shared-two-umbrella").aar.classes)
+    }
+
+    @Test
+    fun `one publication reaching one repository under two names is no clash`() = fixture {
+        val shared = repository("shared").toURI()
+        val umbrella = androidUmbrella {
+            export(androidLibrary("feature"))
+            buildScript("publishing { repositories { maven { name = \"first\"; url = uri(\"$shared\") }; maven { name = \"second\"; url = uri(\"$shared\") } } }")
+        }
+
+        gradle(umbrella.publishTask("release", "first"), umbrella.publishTask("release", "second"))
+
+        assertTrue(repository("shared").resolve("com/acme/sdk/$VERSION/sdk-$VERSION.aar").isFile)
+    }
+
+    /** The root publication stays at those coordinates, so this would only fail again, with nothing to paste. */
+    @Test
+    fun `a KMP umbrella is not told to leave out what would not end the clash`() = fixture {
+        val umbrella = kmpUmbrella { export(androidLibrary("feature")) }
+
+        gradleFails(umbrella.publishAll).assertNotLogged("tasks.withType<AbstractPublishToMaven>()")
     }
 
     @Test

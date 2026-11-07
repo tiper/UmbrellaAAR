@@ -24,15 +24,17 @@ private class Upload(val task: AbstractPublishToMaven) {
 
     val publication: MavenPublication = task.publication
     val module: String = task.project.path
+    val label = "$module ${publication.name}"
     val command = "./gradlew ${task.path}"
     val coordinates = "${publication.groupId}:${publication.artifactId}:${publication.version}"
     val repositoryName: String = repository?.name ?: MAVEN_LOCAL
 
     /**
-     * Two names can stand for one place. Only read of what shares its coordinates with something, as
-     * a URL can be a provider for what a task has yet to work out, which then has to stop nothing.
+     * Two names can stand for one place, and one URL be written with a trailing slash or without.
+     * Only read of what shares its coordinates with something, as a URL can be a provider for what a
+     * task has yet to work out, which then has to stop nothing.
      */
-    val destination: Any by lazy { runCatching { repository?.url }.getOrNull() ?: repositoryName }
+    val destination: String by lazy { runCatching { repository?.url?.toString()?.trimEnd('/') }.getOrNull() ?: repositoryName }
 
     /** The `<variant>` of an `android<Variant>UmbrellaAar` publication, and nothing for any other. */
     val variant: String? = publication.name.takeIf { it.startsWith("android") && it.endsWith("UmbrellaAar") }
@@ -49,31 +51,39 @@ private fun List<Task>.uploads() = filterIsInstance<AbstractPublishToMaven>().fi
  * the task graph knows what a run really publishes, and it comes before anything has left.
  *
  * Each umbrella answers for its own publications, so a build with several reports each one once.
+ * One publication reaching one place under two names is no clash, as those are the same bytes.
+ * Leaving publications out is only offered where that ends it with release still going out, as
+ * nothing here can leave out what another plugin publishes. It goes by the name of the task: one
+ * registered after those lines runs them before Gradle has handed it its publication.
  */
 internal fun Project.checkCoordinateClashes(tasks: List<Task>) {
     if (providers.gradleProperty(ALLOW_COORDINATE_CLASH_PROPERTY).orNull.toBoolean()) return
     fun Upload.isUmbrella() = variant != null && module == path
 
-    fun List<Upload>.clash() = size > 1 && any { it.isUmbrella() }
+    fun List<Upload>.clash() = distinctBy { it.label }.size > 1 && any { it.isUmbrella() }
 
-    val clashes = tasks.uploads().groupBy { it.coordinates }.values.filter { it.clash() }.flatMap { uploads -> uploads.groupBy { it.destination }.values.filter { it.clash() } }
+    val run = tasks.uploads()
+    val clashes = run.groupBy { it.coordinates }.values.filter { it.clash() }.flatMap { uploads -> uploads.groupBy { it.destination }.values.filter { it.clash() } }.map { uploads -> uploads.distinctBy { it.label } }
     if (clashes.isEmpty()) return
 
-    val renames = clashes.flatMap { uploads -> renames(uploads.filter { it.isUmbrella() }, alone = uploads.all { it.isUmbrella() }) }.distinct().sorted()
-    val single = clashes.first().filter { it.isUmbrella() }.minBy { it.variant != RELEASE }
-    val spare = clashes.flatten().firstOrNull { it.isUmbrella() && it.variant != RELEASE }?.publication?.name ?: "<publication>"
+    val renames = clashes.flatMap { uploads -> renames(uploads.filter { it.isUmbrella() }, alone = uploads.all { it.isUmbrella() }, shared = uploads.any { it.variant != null && it.module != path }) }.distinct().sorted()
+    val single = run.filter { it.isUmbrella() }.minBy { it.variant != RELEASE }
+    val spares = clashes.flatten().filter { it.isUmbrella() && it.variant != RELEASE }
+    val leavingOutEndsIt = run.any { it.isUmbrella() && it.variant == RELEASE } && clashes.all { (it - spares).size <= 1 }
     throw GradleException(
         buildString {
             appendLine("[UmbrellaAarPom] This run would publish one publication of $path over another, so consumers would get whichever ran last:")
             clashes.forEach { uploads ->
-                appendLine("  ${uploads.first().coordinates} in repository '${uploads.first().repositoryName}': ${uploads.map { "${it.module} ${it.publication.name}" }.sorted().joinToString()}")
+                appendLine("  ${uploads.first().coordinates} in repository '${uploads.first().repositoryName}': ${uploads.map { it.label }.sorted().joinToString()}")
             }
             appendLine("  Publish one of them on its own:")
             appendLine("    ${single.command}")
-            appendLine("  Or leave one out of every run, in the build script of $path. A debug build has no use on Maven Central. onlyIf does not count, as it only decides once the run is under way:")
-            appendLine("    tasks.withType<AbstractPublishToMaven>().configureEach {")
-            appendLine("        if (publication.name == \"$spare\") enabled = false")
-            appendLine("    }")
+            if (leavingOutEndsIt) {
+                appendLine("  Or leave all but release out of every run, in the build script of $path. A debug build has no use on Maven Central. onlyIf does not count, as it only decides once the run is under way:")
+                appendLine("    tasks.withType<AbstractPublishToMaven>().configureEach {")
+                spares.map { it.publication.name }.distinct().sorted().forEach { appendLine("        if (name.startsWith(\"publish${it.capitalize()}PublicationTo\")) enabled = false") }
+                appendLine("    }")
+            }
             appendLine("  Or give each one coordinates of its own, which publishes them all, debug builds as well, in the build script of $path:")
             appendLine("    publishing {")
             renames.forEach { appendLine("        $it") }
@@ -86,10 +96,12 @@ internal fun Project.checkCoordinateClashes(tasks: List<Task>) {
 /**
  * What moves [umbrellas] out of the way, as lines of a `publishing` block. Umbrellas [alone] at their
  * coordinates leave them to release. Next to anything else, which this plugin does not own, they all
- * move.
+ * move. An umbrella of another project [shared] them, and it is told the same, so each goes by its
+ * project or they would only meet again.
  */
-private fun renames(umbrellas: List<Upload>, alone: Boolean) = umbrellas.sortedBy { it.variant != RELEASE }.drop(if (alone) 1 else 0).map { upload ->
-    val artifactId = listOfNotNull(upload.publication.artifactId, "umbrella".takeUnless { alone }, upload.variant.takeUnless { it == RELEASE })
+private fun renames(umbrellas: List<Upload>, alone: Boolean, shared: Boolean) = umbrellas.filterNot { alone && it.variant == RELEASE }.map { upload ->
+    val project = upload.module.trim(':').replace(':', '-').takeIf { shared && it.isNotEmpty() }
+    val artifactId = listOfNotNull(upload.publication.artifactId, project, "umbrella".takeUnless { alone }, upload.variant.takeUnless { it == RELEASE })
     "publications.named<MavenPublication>(\"${upload.publication.name}\") { artifactId = \"${artifactId.joinToString("-")}\" }"
 }
 
