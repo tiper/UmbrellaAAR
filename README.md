@@ -684,7 +684,11 @@ pluginManagement {
   `res/` folders go by folder and name without extension, so `res/drawable/a.xml` and
   `res/drawable/a.png` are one resource, and `assets/**` by path: the first stays, the same way a
   consumer of those modules overrides one with the other, and the ids of the file that goes stay
-  too. Identical bytes keep one copy, quietly.
+  too. Identical bytes keep one copy, quietly. A library the modules depend on ranks below all of
+  them, as one AAR ranks above what it depends on, while a consumer of the modules ranks it by
+  where it first reaches it. So where a library and a module that does not depend on it ship a
+  resource or asset of one name, a consumer of the umbrella takes the module's, and a consumer of
+  the modules takes the library's if it reaches the library first.
 - **Files that cannot be merged fail the build.** These are merged:
   - `AndroidManifest.xml` goes through ManifestMerger2 in one pass, consumer first. A conflict fails
     with `Manifest merge failed:` and the merger's errors, which name the module.
