@@ -34,6 +34,8 @@ Each failure says what is wrong, and most print the way out as well.
   *Way out:* declare the resource in a merged module, or stop reading it.
 - **Attr definitions a consumer rejects** with `Duplicate value for resource`, and an `<item type="attr">` that a styleable names. The failure names both modules. A stock consumer of those modules fails as well.
   *Way out:* declare the attr once at the top level of one module and refer to it with `<attr name="..."/>` in each styleable, or rename it.
+- **Styleables on one `R` field**, like `Foo` with `bar_baz` and `Foo_bar` with `baz`, or `Foo` with `bar` and a styleable named `Foo_bar`, naming both modules. A stock consumer has an `R` per namespace. `3.0` shipped one `R`, where a module could read another's attr, or a consumer could not compile a read of that field. A module that does this on its own fails too: stock stays green there, with the same broken `R`.
+  *Way out:* rename one of the styleables or attrs, or exclude one of the modules from export and publish it on its own.
 - **Paths in one archive that differ by case alone**, like `a.class` and `A.class`, on a disk that cannot hold both, where the second replaced the first. A case-sensitive disk keeps both.
   *Way out:* rename one in its module, or build on a case-sensitive disk.
 - **Two modules' paths that differ by case alone**, like `assets/Foo/` and `assets/foo/`, on a disk that cannot hold both, even with identical bytes, naming both modules: the merged AAR would ship them at one path, to every consumer.

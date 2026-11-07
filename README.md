@@ -678,7 +678,9 @@ pluginManagement {
   down the merge order, as in a consumer. An `<attr>` is one attr however many styleables define it,
   so definitions a consumer takes for one are left as one, and the others refer to it. Definitions
   it rejects with "Duplicate value for resource" fail the merge instead, naming both modules, and so
-  does an `<item type="attr">`, which is one with a top-level `<attr>`, where a styleable names it. Other
+  does an `<item type="attr">`, which is one with a top-level `<attr>`, where a styleable names it.
+  Styleables that land on one `R` field fail as well, naming both modules, like `Foo` with `bar_baz`
+  and `Foo_bar` with `baz`: a consumer has an `R` per namespace, and an umbrella has one. Other
   `res/` folders go by folder and name without extension, so `res/drawable/a.xml` and
   `res/drawable/a.png` are one resource, and `assets/**` by path: the first stays, the same way a
   consumer of those modules overrides one with the other, and the ids of the file that goes stay

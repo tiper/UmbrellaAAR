@@ -30,6 +30,15 @@ class ValuesResourcesTest {
         build.assertLogged("Declare it once")
     }
 
+    private fun Fixture.assertRedAtTheUmbrellaAlone(umbrella: Umbrella, field: String, first: String, second: String) {
+        stockConsumer(umbrella).apply { usesEverythingIn(umbrella) }.assemble()
+        val build = gradleFails(umbrella.bundleTask())
+        build.assertLogged("UmbrellaAar cannot merge 'R.styleable.$field'")
+        build.assertLogged("styleables $first and $second")
+        build.assertLogged("First contributor : first")
+        build.assertLogged("Second contributor: second")
+    }
+
     // ── An attr shared by name ───────────────────────────────────────────────────────────────
 
     @Test
@@ -197,6 +206,44 @@ class ValuesResourcesTest {
 
         assertEquals(stockPublished("whole").aar.styleable("Shared"), umbrella.published().aar.styleable("Shared"))
         assertEquals(4, parity.umbrella.debug.rClasses.fields.getValue("$GROUP.sdk.R\$styleable")["Shared"])
+    }
+
+    /** Kotlin in a consumer cannot tell the two apart, where stock has them in two classes. */
+    @Test
+    fun `a styleable named as another module's child fails the umbrella alone`() = fixture {
+        val umbrella = ranked(
+            { values(styleable("Widget", attr("title", "string"))) },
+            { values(styleable("Widget_title", attr("size", "string"))) },
+        )
+
+        assertRedAtTheUmbrellaAlone(umbrella, "Widget_title", "Widget", "Widget_title")
+    }
+
+    /** One `R` would have that field once, at the place of one of them, and the other module would read a wrong attr. */
+    @Test
+    fun `children of two modules on one field fail the umbrella alone`() = fixture {
+        val umbrella = ranked(
+            { values(styleable("Foo", attr("aaa", "string"), attr("bar_baz", "string"))) },
+            { values(styleable("Foo_bar", attr("baz", "string"))) },
+        )
+
+        assertRedAtTheUmbrellaAlone(umbrella, "Foo_bar_baz", "Foo", "Foo_bar")
+    }
+
+    /** Here the module above lists both, and each of the two still goes by a field of its own. */
+    @Test
+    fun `a clash shows through a transitive R, naming the modules that declare it`() = fixture {
+        gradleProperties += "android.nonTransitiveRClass=false"
+        val umbrella = ranked(
+            { values(styleable("Foo", attr("aaa", "string"), attr("bar_baz", "string"))) },
+            { values(styleable("Foo_bar", attr("baz", "string"))) },
+        )
+
+        val build = gradleFails(umbrella.bundleTask())
+
+        build.assertLogged("UmbrellaAar cannot merge 'R.styleable.Foo_bar_baz'")
+        build.assertLogged("First contributor : first")
+        build.assertLogged("Second contributor: second")
     }
 
     @Test

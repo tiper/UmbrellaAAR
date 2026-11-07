@@ -247,7 +247,7 @@ abstract class MergeDependencies : DefaultTask() {
 
         reportDuplicateResources()
 
-        val symbols = mergeSymbols(into = File(out, R_TXT), tables = symbolTables.values, lost = lost)
+        val symbols = mergeSymbols(into = File(out, R_TXT), tables = symbolTables, lost = lost)
 
         (appendedFiles + touchedProguardFiles).forEach { it.ensureTrailingNewline() }
 
@@ -282,11 +282,29 @@ abstract class MergeDependencies : DefaultTask() {
      * [lost]. Only that goes: any other symbol has a resource left, or belongs to a dependency that a
      * transitive `R` lists.
      */
-    private fun mergeSymbols(into: File, tables: Collection<File>, lost: Set<String>) = SymbolTable().apply {
-        val existing = tables.filter(File::isFile)
-        existing.forEach(::read)
+    private fun mergeSymbols(into: File, tables: Map<String, File>, lost: Set<String>) = SymbolTable().apply {
+        val existing = tables.filterValues(File::isFile)
+        existing.forEach { (module, table) -> read(table, module) }
         remove(lost)
+        failOnFieldClash()
         if (existing.isNotEmpty()) write(into)
+    }
+
+    /**
+     * Two fields in one `R`, which stock mostly has in two. An `int` and an `int[]` of one name are a
+     * class that Kotlin cannot read. Two `int`s are a class the JVM cannot load and one field in the
+     * APK, with the place of one of them, so a module reads another attr, and the app stays green.
+     */
+    private fun SymbolTable.failOnFieldClash() {
+        val (first, second) = clash() ?: return
+        throw cannotMerge(
+            "R.styleable.${first.name}",
+            "styleables ${first.styleable} and ${second.styleable} each declare it, and the umbrella has one R",
+            first.module,
+            second.module,
+            "  A stock consumer has an R per namespace. Here a module would read another's field, or a consumer could not compile a read of it. " +
+                "Rename one of the styleables or attrs, or exclude(...) one of the modules from export and publish it on its own.",
+        )
     }
 
     /**
