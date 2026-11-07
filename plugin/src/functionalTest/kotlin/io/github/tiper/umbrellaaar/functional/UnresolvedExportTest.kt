@@ -136,6 +136,17 @@ class UnresolvedExportTest {
         assertTrue("com.acme.shared.Shared" in umbrella.bundled().classes)
     }
 
+    /** It walks configurations by name, so it has no resolution to say this module has no Android side. */
+    @Test
+    fun `the legacy graph fails on a framework export with no Android target`() = fixture {
+        val umbrella = kmpUmbrella {
+            ios()
+            frameworkExports(iosLibrary("ios-only"))
+        }
+
+        gradleFails(umbrella.bundleTask(), legacyGraph).assertLogged("cannot find an archive task")
+    }
+
     @Test
     fun `an explicit export wins over a framework export of the same module`() = fixture {
         val iosOnly = iosLibrary("ios-only")
