@@ -197,6 +197,19 @@ class ArchiveSelectionTest {
         assertTrue(setOf("Desktop.kt", "Server.kt", "Plain.java").all { name -> sources.any { it.endsWith(name) } }, sources.toString())
     }
 
+    /** The Java plugin's `runtimeElements` names no target, so these stray tasks are nothing Gradle selected. */
+    @Test
+    fun `a Java module merges its own archives, whatever a task of a JVM target's name holds`() = fixture {
+        val plain = javaLibrary("plain") {
+            buildScript("tasks.register<Jar>(\"jvmJar\") { archiveBaseName = \"stray\" }")
+            buildScript("tasks.register<Jar>(\"jvmSourcesJar\") { archiveBaseName = \"stray-sources\" }")
+        }
+        val umbrella = androidUmbrella { export(plain) }
+
+        assertTrue("com.acme.plain.Plain" in umbrella.bundle().classes, "Expected the module's own jar")
+        assertTrue(umbrella.mergedSources().any { it.endsWith("Plain.java") }, "Classes and sources must agree")
+    }
+
     /** A module merges as one archive, so whatever else was asked of it could not ship. */
     @Test
     fun `a module reached through its test fixtures fails instead of losing its classes`() = fixture {

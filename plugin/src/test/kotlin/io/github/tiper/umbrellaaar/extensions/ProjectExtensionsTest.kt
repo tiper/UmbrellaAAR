@@ -127,6 +127,34 @@ class ProjectExtensionsTest {
     }
 
     @Test
+    fun `the Java plugin's variant takes its own archives over a JVM target's`() {
+        val project = moduleWithTasks("jvmJar", "jar", "jvmSourcesJar", "sourcesJar")
+        val variant = graphSelecting(project, "runtimeElements").archiveVariant(project, arrayOf("Release"))
+
+        assertEquals("jar", project.findAarTask(*variant).get().name)
+        assertEquals("sourcesJar", project.findSourcesJarTask(*variant).get().name)
+    }
+
+    @Test
+    fun `the Java plugin's variant never falls back on a JVM target's archives`() {
+        val project = moduleWithTasks("jvmJar", "jvmSourcesJar")
+        val variant = graphSelecting(project, "runtimeElements").archiveVariant(project, arrayOf("Release"))
+
+        assertEquals(null, project.findSourcesJarTask(*variant).orNull)
+        val error = assertFailsWith<GradleException> { project.findAarTask(*variant).get() }
+        assertFalse(error.message?.contains("jvmJar") == true, error.message)
+    }
+
+    @Test
+    fun `the legacy walk still finds the archives of a JVM target`() {
+        val project = moduleWithTasks("jvmJar", "jvmSourcesJar")
+        val variant = graphSelecting(project, null).archiveVariant(project, arrayOf("Release"))
+
+        assertEquals("jvmJar", project.findAarTask(*variant).get().name)
+        assertEquals("jvmSourcesJar", project.findSourcesJarTask(*variant).get().name)
+    }
+
+    @Test
     fun `a module with an Android plugin takes no JVM sources jar`() {
         val project = androidModuleWithTasks("bundleReleaseAar", "jvmSourcesJar")
         val variant = graphSelecting(project, "releaseRuntimeElements").archiveVariant(project, arrayOf("Release"))

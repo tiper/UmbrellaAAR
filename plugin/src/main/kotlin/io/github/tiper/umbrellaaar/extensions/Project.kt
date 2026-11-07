@@ -22,14 +22,14 @@ import org.gradle.api.provider.Provider
  */
 private fun Project.aarTaskCandidates(variants: Array<out String>): List<String> = variants.map { "bundle${it}Aar" } + when {
     hasAndroidPlugin() -> emptyList()
-    else -> variants.map { "${it.replaceFirstChar(Char::lowercaseChar)}Jar" } + listOf("jvmJar", "jar").takeIf { variants.all(String::isEmpty) }.orEmpty()
+    else -> variants.map { "${it}Jar".replaceFirstChar(Char::lowercaseChar) } + listOf("jvmJar", "jar").takeIf { variants.isEmpty() }.orEmpty()
 }
 
 private fun Project.sourcesJarTaskCandidates(variants: Array<out String>): List<String> = variants.flatMap {
-    listOf("android${it}SourcesJar", "${it.replaceFirstChar(Char::lowercaseChar)}SourcesJar", "source${it}Jar")
+    listOf("android${it}SourcesJar", "${it}SourcesJar".replaceFirstChar(Char::lowercaseChar), "source${it}Jar")
 } + when {
     hasAndroidPlugin() -> listOf("androidSourcesJar", "sourcesJar")
-    else -> listOf("jvmSourcesJar", "sourcesJar").takeIf { variants.all(String::isEmpty) }.orEmpty()
+    else -> listOf("jvmSourcesJar", "sourcesJar").takeIf { variants.isEmpty() }.orEmpty()
 }
 
 /**
@@ -49,7 +49,7 @@ private fun Project.firstRegistered(candidates: List<String>): String? = tasks.n
  * flavors, and every plugin calls it `<name>RuntimeElements`. What `<name>` stands for differs:
  * - `com.android.library`: a build variant, as in `paidRelease` and `bundlePaidReleaseAar`.
  * - a Kotlin `jvm()` target: the target, as in `desktop` and `desktopJar`.
- * - the Java plugin: nothing, so its `jar` is found as a last resort.
+ * - the Java plugin: nothing, as in `jar`.
  * - `com.android.kotlin.multiplatform.library`: the `android` target, but its tasks are named after
  *   its one compilation, as in `bundleAndroidMainAar`. There is nothing to select, whatever the graph.
  *
