@@ -6,6 +6,7 @@ import java.util.concurrent.ConcurrentHashMap
 import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.file.FileCollection
 import org.gradle.api.provider.Provider
 
 /**
@@ -63,6 +64,28 @@ internal fun ProjectGraph.archiveVariant(module: Project, fallback: Array<out St
     variantOf[module.path]?.let { return arrayOf(it.capitalize().removeSuffix(RUNTIME_ELEMENTS)) }
     val variants = fallback.takeIf { module.hasAndroidPlugin() } ?: emptyArray()
     return variants.firstOrNull { module.firstRegistered(module.aarTaskCandidates(arrayOf(it))) != null }?.let { arrayOf(it) } ?: variants
+}
+
+/**
+ * The archive [module] merges as: the outputs of the task [archiveVariant] names. A JVM variant
+ * declares the archive its consumers get, and a build can put another there, as a shaded jar does.
+ * Merging the task's would then ship something else and stay green, so that fails. AGP declares no
+ * archive on a variant, and the legacy walk selects none, so neither has anything to compare.
+ */
+internal fun ProjectGraph.archiveOf(module: Project, fallback: Array<out String>): FileCollection {
+    val archive = module.findAarTask(*archiveVariant(module, fallback)).get()
+    val variant = variantOf[module.path]?.takeUnless { module.hasAndroidPlugin() } ?: return archive.outputs.files
+    val declared = module.configurations.getByName(variant).outgoing.artifacts.files.files
+    val built = archive.outputs.files.files
+    if (declared != built) {
+        throw GradleException(
+            "UmbrellaAar cannot merge project '${module.path}': its variant '$variant' gives consumers " +
+                "${declared.joinToString { it.name }.ifEmpty { "no archive" }}, but '${archive.name}' builds ${built.joinToString { it.name }}.\n" +
+                "  A JVM module merges as the archive of '${archive.name}'. Ship that from '$variant', " +
+                "or exclude the module with exclude(group = \"${module.group}\", module = \"${module.name}\").",
+        )
+    }
+    return archive.outputs.files
 }
 
 internal fun Project.findAarTask(vararg buildTypes: String): Provider<Task> = provider {

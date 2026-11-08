@@ -325,6 +325,28 @@ class ArchiveSelectionTest {
         }
     }
 
+    /** A consumer of the module gets what its variant declares, as a shaded jar would be, and `jar` does not hold it. */
+    @Test
+    fun `a JVM module whose variant ships another archive than its jar fails instead of merging the jar`() = fixture {
+        val core = javaLibrary("core") {
+            file("src/generated/java/com/acme/core/Generated.java", "package com.acme.core;\n\npublic class Generated {}\n")
+            buildScript(
+                """
+                val generated = sourceSets.create("generated")
+                val fullJar = tasks.register<Jar>("fullJar") { from(sourceSets.main.map { it.output }, generated.output); archiveClassifier = "full" }
+                configurations.runtimeElements { outgoing.artifacts.clear(); outgoing.artifact(fullJar) }
+                """,
+            )
+        }
+        val umbrella = androidUmbrella { export(core) }
+
+        gradleFails(umbrella.bundleTask()).run {
+            assertLogged("UmbrellaAar cannot merge project ':core'")
+            assertLogged("core-1.0.0-full.jar")
+            assertLogged("runtimeElements")
+        }
+    }
+
     private companion object {
         const val LEGACY_GRAPH = "-Pumbrellaaar.legacyGraph=true"
     }

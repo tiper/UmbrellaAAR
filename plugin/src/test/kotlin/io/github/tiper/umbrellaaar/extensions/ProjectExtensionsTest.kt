@@ -172,6 +172,49 @@ class ProjectExtensionsTest {
         assertTrue(error.message?.contains("bundlePaidReleaseAar") == true, error.message)
     }
 
+    @Test
+    fun `a Java module merges as the jar its variant declares`() {
+        val project = javaModule()
+
+        val archive = graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer.jar"), archive.files.map { it.name }.toSet())
+    }
+
+    @Test
+    fun `a JVM module whose variant declares another archive than its jar fails`() {
+        val project = javaModule()
+        project.configurations.getByName("runtimeElements").outgoing {
+            artifacts.clear()
+            artifact(project.fullJar())
+        }
+
+        val error = assertFailsWith<GradleException> { graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release")) }
+
+        assertTrue(error.message?.contains("gives consumers consumer-full.jar, but 'jar' builds consumer.jar") == true, error.message)
+    }
+
+    @Test
+    fun `a JVM module whose variant declares an archive besides its jar fails`() {
+        val project = javaModule()
+        project.configurations.getByName("runtimeElements").outgoing.artifact(project.fullJar())
+
+        val error = assertFailsWith<GradleException> { graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release")) }
+
+        assertTrue(error.message?.contains("consumer.jar, consumer-full.jar") == true, error.message)
+    }
+
+    @Test
+    fun `an Android module merges its AAR, as AGP declares no archive on a variant`() {
+        val project = androidModuleWithTasks("bundleReleaseAar")
+
+        graphSelecting(project, "releaseRuntimeElements").archiveOf(project, arrayOf("Release"))
+    }
+
+    private fun javaModule() = ProjectBuilder.builder().withName("consumer").build().also { it.pluginManager.apply("java-library") }
+
+    private fun org.gradle.api.Project.fullJar() = tasks.register("fullJar", org.gradle.api.tasks.bundling.Jar::class.java) { archiveClassifier.set("full") }
+
     private fun moduleWithTasks(vararg names: String) = ProjectBuilder.builder().withName("consumer").build().also { project ->
         names.forEach { project.tasks.register(it) }
     }

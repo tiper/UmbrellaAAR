@@ -46,6 +46,8 @@ Each failure says what is wrong, and most print the way out as well.
   *Way out:* give the build type `matchingFallbacks`, add it to that module, or disable it through `androidComponents`.
 - **A selected variant with no archive under its name**, rather than ship another archive. A module with an Android plugin is never merged from a `jvmJar` or a `jar`.
   *Way out:* point the dependency at a variant with an archive, or exclude the module.
+- **A JVM module whose selected variant ships another archive than the one under its name**, as a shaded jar put on `runtimeElements` does. `3.0` merged `jar` and stayed green.
+  *Way out:* ship that archive from the variant, or exclude the module.
 - **A task of a variant disabled through `androidComponents`, if you name it.** `publish`, `publishToMavenLocal` and `publishAllPublicationsTo<Repository>Repository` leave that variant out. If a merged module disabled a variant the umbrella still needs, the umbrella fails naming the module.
   *Way out:* enable the variant, or leave its task out of the run. For a merged module's variant, enable it there, disable it on the umbrella as well, or give the umbrella's build type `matchingFallbacks`.
 - **A KMP umbrella on a merged module left with a build type it did not ask for**, as when that module disabled `release`. `3.0` shipped what Gradle selected, a debug build in a release publication at worst.

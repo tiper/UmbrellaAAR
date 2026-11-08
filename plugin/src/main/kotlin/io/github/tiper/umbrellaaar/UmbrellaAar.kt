@@ -7,6 +7,7 @@ import io.github.tiper.umbrellaaar.extensions.FRAMEWORK_EXPORT
 import io.github.tiper.umbrellaaar.extensions.ProjectGraph
 import io.github.tiper.umbrellaaar.extensions.UmbrellaResolution
 import io.github.tiper.umbrellaaar.extensions.allExcludeRules
+import io.github.tiper.umbrellaaar.extensions.archiveOf
 import io.github.tiper.umbrellaaar.extensions.archiveVariant
 import io.github.tiper.umbrellaaar.extensions.capitalize
 import io.github.tiper.umbrellaaar.extensions.checkBuildType
@@ -124,10 +125,7 @@ class UmbrellaAar : Plugin<Project> {
         val memo = lazy {
             val g = graph.get()
             val modules = g.modules.associateBy { it.path }
-            val archives = g.mergeOrder.associateWith { path ->
-                val module = modules.getValue(path)
-                module.findAarTask(*g.archiveVariant(module, archiveCandidates)).get().outputs.files
-            }
+            val archives = g.mergeOrder.associateWith { path -> g.archiveOf(modules.getValue(path), archiveCandidates) }
             Archives(
                 files = archives.values.toList(),
                 modules = archives.entries.flatMap { (path, files) -> files.map { it to path } }.toMap(),

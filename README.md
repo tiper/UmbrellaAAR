@@ -292,8 +292,9 @@ pluginManagement {
    Each module's AAR and sources jar come from the variant Gradle selected, so `matchingFallbacks`
    and flavor selection apply to the umbrella as they do to any other consumer, and classes and
    sources never come from different variants. A variant with no archive under its name fails the
-   build rather than shipping another one. So does a module reached through two variants, as any
-   `testFixtures(project(...))` is, since an AAR can only hold one.
+   build rather than shipping another one, and so does a JVM module whose variant ships another
+   archive than that one, as a shaded jar would. A module reached through two variants fails too, as
+   any `testFixtures(project(...))` is, since an AAR can only hold one.
 
    **What you export ships, or the build fails.** A module declared with `export(...)` that Gradle
    cannot resolve fails the build before any task runs, naming the module, how it was reached and
