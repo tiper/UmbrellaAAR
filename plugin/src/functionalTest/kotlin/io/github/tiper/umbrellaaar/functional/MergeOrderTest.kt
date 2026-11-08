@@ -149,6 +149,41 @@ class MergeOrderTest {
         assertTrue(parity.stock.debug.apk.resources.getValue("string/shared").single().endsWith("\"from middle\""), "Stock has moved: ${parity.stock.debug.apk.resources}")
     }
 
+    /** Nothing ties the umbrella module to what it exports, so in stock only being declared first ranks it above them. */
+    @Test
+    fun `the umbrella's own values and assets win over an export's, as in stock`() = fixture {
+        val feature = androidLibrary("feature") {
+            string("shared", "from feature")
+            file("src/main/assets/shared.txt", "from feature")
+        }
+        val umbrella = androidUmbrella {
+            string("shared", "from the umbrella")
+            file("src/main/assets/shared.txt", "from the umbrella")
+            export(feature)
+        }
+
+        val parity = parity(umbrella)
+
+        parity.assertMatchesStock()
+        assertTrue(parity.stock.debug.apk.resources.getValue("string/shared").single().endsWith("\"from the umbrella\""), "Stock has moved: ${parity.stock.debug.apk.resources}")
+        assertEquals("from the umbrella", parity.stock.debug.apk.text("assets/shared.txt"))
+    }
+
+    /** A KMP library's Android side is a dependency of its root, a level below an export a consumer declares itself. */
+    @Test
+    fun `a KMP umbrella's own values win over an export's, as in stock`() = fixture {
+        val feature = androidLibrary("feature") { string("shared", "from feature") }
+        val umbrella = kmpUmbrella {
+            string("shared", "from the umbrella")
+            export(feature)
+        }
+
+        val parity = parity(umbrella)
+
+        parity.assertMatchesStock()
+        assertTrue(parity.stock.debug.apk.resources.getValue("string/shared").single().endsWith("\"from the umbrella\""), "Stock has moved: ${parity.stock.debug.apk.resources}")
+    }
+
     @Test
     fun `reversing the exports changes who wins on the next build`() = fixture {
         val first = androidLibrary("first") { string("shared", "from first") }

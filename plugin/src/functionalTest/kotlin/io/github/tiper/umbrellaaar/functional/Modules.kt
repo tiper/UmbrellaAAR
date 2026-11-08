@@ -531,6 +531,9 @@ internal sealed interface Umbrella {
 
     val coordinates: String
 
+    /** What a stock consumer declares to reach this module's own AAR first. */
+    val stockCoordinates: String get() = coordinates
+
     val closure: List<Module>
 
     /** Modules declared with `export`. A stock consumer has to depend on each of them itself. */
@@ -637,6 +640,9 @@ internal class KmpUmbrella(fixture: Fixture, name: String) :
     override val extraPlugins get() = UMBRELLA_PLUGINS
 
     override val visibleModules get() = super.visibleModules + exports
+
+    /** The root reaches its Android side a level down, below the exports a consumer declares itself. */
+    override val stockCoordinates get() = "$GROUP:$name-android:$VERSION"
 
     override fun publishingBlocks() = super.publishingBlocks() + listOf(exportBlock(), umbrellaPublishing())
 

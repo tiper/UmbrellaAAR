@@ -22,13 +22,17 @@ internal fun Fixture.parity(umbrella: Umbrella, configure: Consumer.() -> Unit =
     return Parity(merged.assemble(), stock.assemble(), stock.pickFirsts)
 }
 
-/** Publishes every module of the fixture as an ordinary library, and a consumer of [umbrella]'s. */
+/**
+ * Publishes every module of the fixture as an ordinary library, and a consumer of [umbrella]'s. One
+ * AAR ranks the umbrella module's own resources above all it merges. An export is no dependency of
+ * the umbrella module, so in stock only being declared first ranks it above them.
+ */
 internal fun Fixture.stockConsumer(umbrella: Umbrella): Consumer {
     gradle(*modules.values.flatMap { it.stockPublishTasks }.toTypedArray(), "-Pstock")
     return Consumer(
         dir = dir.resolve("stock-consumer"),
         repository = stockRepo,
-        dependencies = umbrella.exports.map(Module::coordinates) + umbrella.coordinates,
+        dependencies = listOf(umbrella.stockCoordinates) + umbrella.exports.map(Module::coordinates),
     )
 }
 
