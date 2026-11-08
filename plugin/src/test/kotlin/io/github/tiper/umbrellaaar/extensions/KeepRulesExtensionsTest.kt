@@ -49,21 +49,21 @@ class KeepRulesExtensionsTest {
     @Test
     fun `a wildcard that reaches a merged R also reaches the umbrella's`() {
         val feature = "com.acme.sdk.R\$id,com.acme.sdk.R\$string"
-        assertEquals("-keep class com.acme.feature.*,$feature { int title; }", "-keep class com.acme.feature.* { int title; }".relocated())
-        assertEquals("-keep public class com.acme.feature.*,$feature", "-keep public class com.acme.feature.*".relocated())
-        assertEquals("-keepnames,allowshrinking class a.B,com.acme.feature.**,$feature", "-keepnames,allowshrinking class a.B,com.acme.feature.**".relocated())
-        assertEquals("-keep class 'com.acme.feature.*',$feature { int title; }", "-keep class 'com.acme.feature.*' { int title; }".relocated())
-        assertEquals("-keep class com.acme.feature.*,$feature # a comment", "-keep class com.acme.feature.* # a comment".relocated())
-        assertEquals("-keep class com.acme.feature.R*,$feature { int title; }", "-keep class com.acme.feature.R* { int title; }".relocated())
-        assertEquals("-keep class com.acme.feature.R?id,com.acme.sdk.R\$id { int root; }", "-keep class com.acme.feature.R?id { int root; }".relocated())
+        assertEquals("-keep class $feature,com.acme.feature.* { int title; }", "-keep class com.acme.feature.* { int title; }".relocated())
+        assertEquals("-keep public class $feature,com.acme.feature.*", "-keep public class com.acme.feature.*".relocated())
+        assertEquals("-keepnames,allowshrinking class $feature,a.B,com.acme.feature.**", "-keepnames,allowshrinking class a.B,com.acme.feature.**".relocated())
+        assertEquals("-keep class $feature,'com.acme.feature.*' { int title; }", "-keep class 'com.acme.feature.*' { int title; }".relocated())
+        assertEquals("-keep class $feature,com.acme.feature.* # a comment", "-keep class com.acme.feature.* # a comment".relocated())
+        assertEquals("-keep class $feature,com.acme.feature.R* { int title; }", "-keep class com.acme.feature.R* { int title; }".relocated())
+        assertEquals("-keep class com.acme.sdk.R\$id,com.acme.feature.R?id { int root; }", "-keep class com.acme.feature.R?id { int root; }".relocated())
     }
 
     @Test
     fun `a wildcard reaches the umbrella's R whichever way it reaches a merged one`() {
         listOf("com.acme.feature.*\$*", "com.acme.feature.?\$string", "com.acme.feat*.R\$*", "com.acme.feature.**\$*", "com.**.feature.R\$s*", "**.feature.R\$string").forEach { wildcard ->
-            assertEquals("-keep class $wildcard,com.acme.sdk.R\$string { int title; }", "-keep class $wildcard { int title; }".relocated().replace("com.acme.sdk.R\$id,", ""))
+            assertEquals("-keep class com.acme.sdk.R\$string,$wildcard { int title; }", "-keep class $wildcard { int title; }".relocated().replace("com.acme.sdk.R\$id,", ""))
         }
-        assertEquals("-keep class org.**,com.acme.sdk.R\$string { int other; }", "-keep class org.** { int other; }".relocated())
+        assertEquals("-keep class com.acme.sdk.R\$string,org.** { int other; }", "-keep class org.** { int other; }".relocated())
     }
 
     @Test
@@ -282,7 +282,7 @@ class KeepRulesExtensionsTest {
             )
         }
         assertEquals(
-            "-keep class com.acme.feature.a.*,com.acme.sdk.R\$string { int label; # no; *;\n}",
+            "-keep class com.acme.sdk.R\$string,com.acme.feature.a.* { int label; # no; *;\n}",
             "-keep class com.acme.feature.a.* { int label; # no; *;\n}".relocated(),
         )
     }
@@ -392,6 +392,37 @@ class KeepRulesExtensionsTest {
         )
     }
 
+    @Test
+    fun `a byte order mark ends a class name or a member, as a space does`() {
+        val feature = "-keep class com.acme.sdk.R\$id { *** root; }\n-keep class com.acme.sdk.R\$string { *** body; *** title; }"
+        assertEquals("-keep class com.acme.feature.R*\uFEFF{ *; }\n$feature", "-keep class com.acme.feature.R*\uFEFF{ *; }".relocated())
+        assertEquals("-keep class com.acme.feature.R* { *;\uFEFF}\n$feature", "-keep class com.acme.feature.R* { *;\uFEFF}".relocated())
+        assertEquals(
+            "-keep class com.acme.sdk.R\$string { *** body; *** other; *** title; }",
+            "-keep class com.acme.feature.R\$string\uFEFF,org.other.R\$string { *; }".relocated(),
+        )
+        assertEquals("-keep class a.B\uFEFF-keep class com.acme.f*.R\$string { *; }\n-keep class com.acme.sdk.R\$string { *** body; *** title; }", "-keep class a.B\uFEFF-keep class com.acme.f*.R\$string { *; }".relocated())
+    }
+
+    @Test
+    fun `any space R8 skips ends a rule's words, and three it reads into a class name`() {
+        assertEquals("\u3000-keep class com.acme.f*.R\$string { *; }\n-keep class com.acme.sdk.R\$string { *** body; *** title; }", "\u3000-keep class com.acme.f*.R\$string { *; }".relocated())
+        assertEquals("-keep class a.B\u2003-keep class com.acme.f*.R\$string { *; }\n-keep class com.acme.sdk.R\$string { *** body; *** title; }", "-keep class a.B\u2003-keep class com.acme.f*.R\$string { *; }".relocated())
+        assertEquals(
+            "-keep class !com.acme.sdk.R\$*,com.acme.** { *; }\n" +
+                "-keep class com.acme.sdk.R\$id { *** root; }\n-keep class com.acme.sdk.R\$string { *** body; *** label; *** own; *** title; }",
+            "-keep class !com.acme.feature.R\$string\u3000,com.acme.** { *; }".relocated(),
+        )
+        assertEquals(
+            "-keep class 'com.acme.f*.R\$string' { *; }\n-keep class com.acme.sdk.R\$string { *** body; *** title; }",
+            "-keep class 'com.acme.f*.R\$string'\u3000 { *; }".relocated(),
+        )
+        assertEquals(
+            "-keep class com.acme.sdk.R\$string,\"com.acme.f*.R\$string\"\u205F,a.B { int body; }",
+            "-keep class \"com.acme.f*.R\$string\"\u205F,a.B { int body; }".relocated(),
+        )
+    }
+
     /** R8 loses a field named behind an `-if` on a class said not to be abstract, and no `R` is. */
     @Test
     fun `a rule that names fields says nothing about abstract`() {
@@ -486,9 +517,9 @@ class KeepRulesExtensionsTest {
     }
 
     @Test
-    fun `a back reference goes, as the class name it pointed at did`() {
+    fun `a back reference takes any name, as the class name it pointed at went`() {
         assertEquals(
-            "-if class com.acme.feature.Title\n-keepclassmembers class com.acme.sdk.R\$string { public static int body; public static int title; }",
+            "-if class com.acme.feature.Title\n-keepclassmembers class com.acme.sdk.R\$string { public static int body; public static int title; public static int[] ***; }",
             "-keepclassmembers class com.acme.feature.R\$* { public static int *; public static int[] <1>; }".relocated(),
         )
     }
@@ -496,14 +527,14 @@ class KeepRulesExtensionsTest {
     @Test
     fun `a rule that reaches all there is of a type lists that R whole`() {
         assertEquals("-keep class com.acme.sdk.R\$id { *; }", "-keep class com.acme.feature.R\$id { *; }".relocated())
-        assertEquals("-keep class com.acme.feature.R?id,com.acme.sdk.R\$id { *; }", "-keep class com.acme.feature.R?id { *; }".relocated())
+        assertEquals("-keep class com.acme.sdk.R\$id,com.acme.feature.R?id { *; }", "-keep class com.acme.feature.R?id { *; }".relocated())
     }
 
     @Test
     fun `members that take no field of an R go along with it`() {
         val feature = "com.acme.sdk.R\$id,com.acme.sdk.R\$string"
         listOf("{ <methods>; }", "{ <init>(); }", "{ *** get*(); }", "{ public static java.lang.String *; }", "{ public static int a_*; }").forEach { members ->
-            assertEquals("-keep class com.acme.feature.*,$feature $members", "-keep class com.acme.feature.* $members".relocated())
+            assertEquals("-keep class $feature,com.acme.feature.* $members", "-keep class com.acme.feature.* $members".relocated())
         }
     }
 
@@ -534,6 +565,127 @@ class KeepRulesExtensionsTest {
     @Test
     fun `an R a rule leaves out stays left out`() {
         assertEquals("-keep class !com.acme.sdk.R\$*,com.acme.feature.a.** { *; }", "-keep class !com.acme.feature.a.R\$*,com.acme.feature.a.** { *; }".relocated())
+    }
+
+    /** R8 goes by the first name that matches, so the umbrella's `R` cannot follow one that leaves it out. */
+    @Test
+    fun `an R a rule leaves out takes no other module's fields with it`() {
+        assertEquals(
+            "-keep public class com.acme.sdk.R\$string,!com.acme.sdk.R\$*,com.acme.feature.** { public protected *; }",
+            "-keep public class !com.acme.feature.R\$*,com.acme.feature.** { public protected *; }".relocated(),
+        )
+        assertEquals(
+            "-keep class com.acme.sdk.R\$string,'!com.acme.sdk.R\$*',com.acme.feature.** { public protected *; }",
+            "-keep class '!com.acme.feature.R\$*',com.acme.feature.** { public protected *; }".relocated(),
+        )
+        assertEquals(
+            "-if class a.B\n-keepclassmembers class com.acme.sdk.R\$string,!com.acme.sdk.R\$*,com.acme.** { int label; }",
+            "-if class a.B\n-keepclassmembers class !com.acme.feature.R\$*,com.acme.** { int label; }".relocated(),
+        )
+    }
+
+    /** One name behind a `!` and again without it is one name to R8, with the flag it saw last. */
+    @Test
+    fun `an R a rule leaves out by name gets a rule of its own`() {
+        assertEquals(
+            "-keep class !com.acme.sdk.R\$string,com.acme.** { int label; }\n-keep class com.acme.sdk.R\$string { int label; }",
+            "-keep class !com.acme.feature.R\$string,com.acme.** { int label; }".relocated(),
+        )
+        assertEquals(
+            "-if class a.B\n-keep class !com.acme.sdk.R\$string,com.acme.**.R\$* { int <2>; }\n-if class a.B\n-keep class com.acme.sdk.R\$string { int ***; }",
+            "-if class a.B\n-keep class !com.acme.feature.R\$string,com.acme.**.R\$* { int <2>; }".relocated(),
+        )
+        assertEquals(
+            "-if class a.B { *** c(); }\n-keep class !com.acme.sdk.R\$string,com.acme.** { <1> label; }\n-if class a.B { *** c(); }\n-keep class com.acme.sdk.R\$string { *** label; }",
+            "-if class a.B { *** c(); }\n-keep class !com.acme.feature.R\$string,com.acme.** { <1> label; }".relocated(),
+        )
+    }
+
+    /** One module's `R` named and another's left out are one name to the umbrella, which R8 holds with the `!` it saw last. */
+    @Test
+    fun `an R one module names and another leaves out gets a rule of its own`() {
+        assertEquals(
+            "-keep class com.acme.sdk.R\$string,!com.acme.sdk.R\$string,com.acme.** { int label; }\n-keep class com.acme.sdk.R\$string { int label; }",
+            "-keep class org.other.R\$string,!com.acme.feature.R\$string,com.acme.** { int label; }".relocated(),
+        )
+    }
+
+    /** A list that ends in a `!` takes every class no name matches, every module's `R` among them. */
+    @Test
+    fun `a rule that ends in a negation reaches what no name matches`() {
+        assertEquals(
+            "-keep class !com.acme.sdk.R\$string { int label; }\n-keep class com.acme.sdk.R\$string { int label; }",
+            "-keep class !com.acme.feature.R\$string { int label; }".relocated(),
+        )
+        assertEquals(
+            "-keep class !com.acme.sdk.R\$*,!com.acme.sdk.R { *; }\n-keep class com.acme.sdk.R\$string { *** label; *** other; *** own; }",
+            "-keep class !com.acme.feature.R\$* { *; }".relocated(),
+        )
+        assertEquals(
+            "-keep class com.acme.feature.**,!com.acme.feature.a.** { public protected *; }",
+            "-keep class com.acme.feature.**,!com.acme.feature.a.** { public protected *; }".relocated(),
+        )
+    }
+
+    /** A list that ends in a `!` takes every class no name matches, so one that did not must not, and the other way round. */
+    @Test
+    fun `a list ends as it did once its R names are the umbrella's`() {
+        val other = "-keep class com.acme.sdk.R\$string { *** other; }"
+        assertEquals("-keep class a.**,!a.B,com.acme.sdk.R { *; }\n$other", "-keep class a.**,!a.B,org.other.R\$string { *; }".relocated())
+        assertEquals("-keep class a.**,!a.B,com.acme.sdk.R { *; }\n$other", "-keep class a.**,!com.acme.feature.R,!a.B,org.other.R\$string { *; }".relocated())
+        assertEquals("-keep class a.**,!a.B,com.acme.sdk.R { *; }\n$other", "-keep class 'com.acme.feature.R',a.**,!a.B,org.other.R\$string { *; }".relocated())
+        assertEquals(other, "-keep class '!a.B',org.other.R\$string { *; }".relocated())
+        assertEquals(
+            "-keep class com.foo.Baz,!com.acme.sdk.R\$string,!com.foo.Bar,com.acme.sdk.R\$string,com.acme.sdk.R { int body; }",
+            "-keep class com.foo.Baz,!org.other.R\$string,!com.foo.Bar,com.acme.feature.R\$string { int body; }".relocated(),
+        )
+        assertEquals(
+            "-keep class !com.acme.sdk.R\$string,com.foo.Baz,!com.acme.sdk.R\$string,!com.acme.sdk.R { int body; }\n-keep class com.acme.sdk.R\$string { int body; }",
+            "-keep class !org.other.R\$string,com.foo.Baz,!com.acme.feature.R\$string { int body; }".relocated(),
+        )
+    }
+
+    /** The umbrella's `R` is left out by name in front of a list a back reference counts, and an `R` with a wildcard stays. */
+    @Test
+    fun `a back reference points where it did once a merged R leaves a rule on every field`() {
+        assertEquals(
+            "-if class a.B\n-keep class a.*,!a.B,com.acme.sdk.R { *; int <1>; }\n-if class a.B\n-keep class com.acme.sdk.R\$string { *** other; int ***; }",
+            "-if class a.B\n-keep class a.*,!a.B,org.other.R\$string { *; int <1>; }".relocated(),
+        )
+        assertEquals(
+            "-if class a.B\n-keep class !com.acme.sdk.R\$id,!com.acme.sdk.R\$string,a.*,com.acme.** { *; int <1>; }\n" +
+                "-if class a.B\n-keep class com.acme.sdk.R\$id { *** root; int ***; }\n-if class a.B\n-keep class com.acme.sdk.R\$string { *** body; *** label; *** own; *** title; int ***; }",
+            "-if class a.B\n-keep class a.*,com.acme.** { *; int <1>; }".relocated(),
+        )
+        assertEquals(
+            "-if class a.B\n-keep class !com.acme.sdk.R\$id,!com.acme.sdk.R\$string,com.acme.sdk.R\$*,a.* { *; int <2>; }\n" +
+                "-if class a.B\n-keep class com.acme.sdk.R\$id { *** root; int ***; }\n-if class a.B\n-keep class com.acme.sdk.R\$string { *** body; *** title; int ***; }",
+            "-if class a.B\n-keep class com.acme.feature.R\$*,a.* { *; int <2>; }".relocated(),
+        )
+    }
+
+    /** What a member with a back reference took on a module's `R`, it takes on the umbrella's, whatever the reference pointed at. */
+    @Test
+    fun `a member with a back reference keeps what it took on the umbrella's R`() {
+        assertEquals(
+            "-if class a.B { *** c(); }\n-keepclassmembers class !com.acme.sdk.R\$id,!com.acme.sdk.R\$string,!a.B { int[] *; <1> *; }\n" +
+                "-if class a.B { *** c(); }\n-keepclassmembers class com.acme.sdk.R\$string { *** body; *** title; }\n" +
+                "-if class a.B { *** c(); }\n-keepclassmembers class com.acme.sdk.R\$string { *** label; }",
+            "-if class a.B { *** c(); }\n-keepclassmembers class !a.B { int[] *; <1> *; }".relocated(),
+        )
+    }
+
+    /** A list that ends in a `!` takes every class no name matches, and it still ends in one. */
+    @Test
+    fun `the umbrella's R goes before the names of a rule`() {
+        assertEquals(
+            "-keep class com.acme.sdk.R\$id,com.acme.sdk.R\$string,com.acme.feature.**,!com.acme.sdk.R\$* { public protected *; }",
+            "-keep class com.acme.feature.**,!com.acme.feature.a.R\$* { public protected *; }".relocated(),
+        )
+        assertEquals(
+            "-if class a.B\n-keep class com.acme.sdk.R\$string,!com.acme.sdk.R\$*,com.acme.feature.**.R\$* { int <2>; }",
+            "-if class a.B\n-keep class !com.acme.feature.R\$*,com.acme.feature.**.R\$* { int <2>; }".relocated(),
+        )
     }
 
     @Test

@@ -1143,6 +1143,18 @@ class MergeDependenciesTest {
         assertEquals(setOf("com/example/umbrella/R\$string"), owners)
     }
 
+    /** The umbrella's classes come before the rules in the jar, so a targeted rule goes by them too. */
+    @Test
+    fun `a targeted rule on a module's R that the umbrella's own class takes as a class goes behind no if`() {
+        mainAar("R.txt" to "int raw beep 0x0")
+        writeBytes(mainDir, "classes/com/example/umbrella/Sounds.class", classTaking("com/example/umbrella/Sounds", "com/example/a/R\$raw"))
+        module("moduleA", "com.example.a", "R.txt" to "int raw beep 0x0", "classes/META-INF/com.android.tools/r8/rules.pro" to "-keepclassmembers class com.example.a.R\$raw { *; }")
+
+        val rules = jarEntry(File(merge(), "classes.jar"), "META-INF/com.android.tools/r8/moduleA-rules.pro").decodeToString()
+
+        assertEquals(listOf("-keepclassmembers class com.example.umbrella.R\$raw { *** beep; }"), rules.lines().filter(String::isNotBlank))
+    }
+
     @Test
     fun `umbrella classes referencing a third-party R are left alone`() {
         mainAar()
@@ -1479,6 +1491,21 @@ class MergeDependenciesTest {
             visitCode()
             visitFieldInsn(org.objectweb.asm.Opcodes.GETSTATIC, owner, "label", "I")
             visitInsn(org.objectweb.asm.Opcodes.IRETURN)
+            visitMaxs(1, 1)
+            visitEnd()
+        }
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** A class `name` whose single method takes [type] as a class, as `R.raw::class.java` does. */
+    private fun classTaking(name: String, type: String): ByteArray {
+        val cw = org.objectweb.asm.ClassWriter(0)
+        cw.visit(org.objectweb.asm.Opcodes.V1_8, org.objectweb.asm.Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null)
+        cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, "type", "()Ljava/lang/Class;", null, null).apply {
+            visitCode()
+            visitLdcInsn(org.objectweb.asm.Type.getObjectType(type))
+            visitInsn(org.objectweb.asm.Opcodes.ARETURN)
             visitMaxs(1, 1)
             visitEnd()
         }

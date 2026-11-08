@@ -31,9 +31,10 @@ internal fun String.relocateRInRules(mainNsInternal: String, rClasses: Map<Strin
     if (umbrella.isEmpty() || namespaces.isEmpty()) return this
 
     val named = Regex("""(?<![\w.$])(?:$namespaces)\.R(?=\$|[^\w.*?<]|\z)""")
-    val onlyAnR = Regex("""['"]?(?:$namespaces|${escape(umbrella)})\.R(?:\$.*)?""")
+    val anR = Regex("""(?:$namespaces|${escape(umbrella)})\.R(\$.*)?""")
     val every = rClasses.flatMap { (namespace, types) -> types.map { (type, content) -> RClass("${namespace.replace('/', '.')}.R\$$type", type, content) } }
     val everyField = every.fieldsByType()
+    fun List<String>.relocated() = ClassNames(joinToString(",").replace(named) { "$umbrella.R" })
 
     return replace(KEEP_RULE) { rule ->
         val (condition, keep, classes, members) = rule.destructured
@@ -44,12 +45,29 @@ internal fun String.relocateRInRules(mainNsInternal: String, rClasses: Map<Strin
         val relocated = ClassNames(classes.replace(named) { "$umbrella.R" })
         val types = fields.keys + everyField.keys.filter { "$umbrella.R\$$it" in relocated }
         val whileAlive = keep.startsWith("-keepclassmember")
-        val statements = members.replace(COMMENTS, "").substringAfter('{').substringBeforeLast('}').split(';').map(String::trim).filter(String::isNotEmpty)
+        val statements = members.replace(COMMENTS, "").substringAfter('{').substringBeforeLast('}').split(';').map(String::trimSpace).filter(String::isNotEmpty)
+
+        // R8 takes a class no name matches if the last name has a `!`. Where the list the umbrella
+        // gets would end otherwise, the umbrella's outer R, which holds no field, ends it as the rule
+        // did. R8 would fold that into the same name anywhere else in it, so that one goes.
+        fun List<String>.ended() = filterNot { anR.matchEntire(it.bare())?.groupValues?.get(1) == "" } + "${if (names.takesTheRest) "!" else ""}$umbrella.R"
+
         if (statements.any(EVERY_FIELD::matches) && types.any { whileAlive || fields[it] != everyField[it] }) {
-            val others = names.all.filterNot(onlyAnR::matches)
-            val rest = ClassNames(others.joinToString(","))
-            val outsideR = if (everyField.keys.any { "$umbrella.R\$$it" in rest }) "!$umbrella.R\$*," else ""
-            val original = "$condition$keep$outsideR${others.joinToString(",")}$members".takeIf { others.any { !it.startsWith("!") } }
+            // The R names leave the list, as the umbrella's R gets rules of its own, but for one with a
+            // wildcard that a back reference counts.
+            val backReferred = BACK_REFERENCE in members
+            val others = names.all.filterNot { anR.matches(it.bare()) }
+            val listed = names.all.filter { !anR.matches(it.bare()) || (backReferred && it.any { c -> c == '*' || c == '?' }) }
+            val list = listed.takeIf { it.relocated().takesTheRest == names.takesTheRest } ?: listed.ended()
+            // The umbrella's R stays out of it, by name where a back reference counts the wildcards.
+            val ending = list.relocated()
+            val taken = everyField.keys.map { "$umbrella.R\$$it" }.filter { it in ending }
+            val outsideR = when {
+                taken.isEmpty() -> ""
+                backReferred -> taken.joinToString("") { "!$it," }
+                else -> "!$umbrella.R\$*,"
+            }
+            val original = "$condition$keep$outsideR${list.joinToString(",")}$members".takeIf { ClassNames(others.joinToString(",")).takesAny || names.takesTheRest }
             fun kept(type: String, fields: Set<String>): String {
                 val arrays = reached.filter { it.type == type }.flatMapTo(hashSetOf()) { it.arrays }
                 return "${keep.replace(NOT_ABSTRACT) { if (it.value.startsWith('#')) it.value else " " }}$umbrella.R\$$type { ${statements.flatMap { it.spelledOutFor(fields, arrays) }.joinToString(" ")} }"
@@ -60,8 +78,18 @@ internal fun String.relocateRInRules(mainNsInternal: String, rClasses: Map<Strin
             }
             (listOfNotNull(original) + own).joinToString("\n")
         } else {
-            val added = fields.keys.map { "$umbrella.R\$$it" }.filterNot { it in relocated }
-            condition + keep + (listOf(classes) + added).joinToString(",") + members
+            // R8 goes by the first name that matches a class. So the umbrella's R goes first, where it
+            // holds no wildcard a back reference counts. A name the list has behind a `!`, word for
+            // word, R8 folds into that one, so that one gets a rule of its own, where a back reference
+            // may have no wildcard to point at, so it takes any type or name, as `***` does.
+            fun withR(list: List<String>): Pair<List<String>, List<String>> {
+                val umbrellas = list.relocated()
+                val (folded, first) = fields.keys.map { "$umbrella.R\$$it" }.filterNot { it in umbrellas }.partition(umbrellas::negates)
+                return folded to first + list
+            }
+            val (folded, list) = withR(listOf(classes)).takeIf { (_, list) -> list.relocated().takesTheRest == names.takesTheRest } ?: withR(names.all.ended())
+            val rule = condition + keep + list.joinToString(",") + members
+            if (folded.isEmpty()) rule else "$rule\n$condition$keep${folded.joinToString(",")}${members.replace(BACK_REFERENCE, "***")}"
         }
     }.replace(named) { "$umbrella.R" }
 }
@@ -77,10 +105,12 @@ private class RClass(val name: String, val type: String, content: RClassContent)
 /**
  * This member of a rule, once for each of [fields] it takes if it takes every field. A field of
  * another type would stop a `-keepclasseswithmembers`, which needs all it lists. A back reference
- * lost the class name it pointed at, and behind an `-if` R8 refuses one like that.
+ * may have lost the wildcard it pointed at, and behind an `-if` R8 refuses one like that, so it
+ * takes any type or name, as `***` does.
  */
 private fun String.spelledOutFor(fields: Set<String>, arrays: Set<String>): List<String> {
-    val (modifiers, type) = EVERY_FIELD.matchEntire(this)?.destructured ?: return listOfNotNull("$this;".takeUnless { BACK_REFERENCE in this })
+    val member = replace(BACK_REFERENCE, "***")
+    val (modifiers, type) = EVERY_FIELD.matchEntire(member)?.destructured ?: return listOf("$member;")
     val taken = when (type) {
         "int", "%" -> fields - arrays
         "int[]" -> fields intersect arrays
@@ -91,14 +121,30 @@ private fun String.spelledOutFor(fields: Set<String>, arrays: Set<String>): List
 
 private fun List<RClass>.fieldsByType() = groupBy { it.type }.mapValues { (_, classes) -> classes.flatMapTo(sortedSetOf()) { it.fields } }.toSortedMap()
 
-/** The class names of a rule. The first to match a class decides it, and a `!` leaves that class out. */
+/**
+ * The class names of a rule. The first to match a class decides it, and a `!` leaves that class out.
+ * One that none matches is taken if the last name has a `!`.
+ */
 private class ClassNames(names: String) {
 
-    val all = names.replace(COMMENTS, "").split(',').map(String::trim)
+    val all = names.replace(COMMENTS, "").split(',').map(String::className).filter(String::isNotEmpty)
 
-    private val patterns = all.map { name -> name.removePrefix("!").trim('\'', '"').toPattern() to name.startsWith("!") }
+    /** Quotes hold a `!` as well. */
+    private val unquoted = all.map { it.trim('\'', '"') }
 
-    operator fun contains(className: String) = patterns.firstOrNull { (pattern) -> pattern.matches(className) }?.second == false
+    /** R8 holds a name once, where it first comes, with the `!` it last had. */
+    private val patterns = unquoted.associate { it.removePrefix("!") to it.startsWith("!") }.map { (name, negated) -> name.toPattern() to negated }
+
+    /** Whether a name takes the classes it matches, rather than leaving them out. */
+    val takesAny get() = patterns.any { (_, negated) -> !negated }
+
+    /** Whether a class no name matches is taken. */
+    val takesTheRest get() = patterns.lastOrNull()?.second == true
+
+    operator fun contains(className: String) = patterns.firstOrNull { (pattern) -> pattern.matches(className) }?.let { (_, negated) -> !negated } ?: takesTheRest
+
+    /** Whether a `!` leaves [className] out by that very name. */
+    fun negates(className: String) = "!$className" in unquoted
 
     /** `?` and `*` stop at a dot, and `**` does not. */
     private fun String.toPattern() = WILDCARD.findAll(this).joinToString("") { part ->
@@ -118,7 +164,26 @@ private class ClassNames(names: String) {
 private const val COMMENT = """#[^\n]*+"""
 
 /** What R8 takes for a space, a byte order mark among them, for a character class. */
-private const val SPACE = """\s\uFEFF"""
+private const val SPACE = """\p{javaWhitespace}\uFEFF"""
+
+/** What ends a class name for R8: a space, but for three it reads into the name. */
+private const val NAME_END = """\s\x1C-\x1F\u2000-\u2006\u2008-\u200A\u2028\u2029\uFEFF"""
+
+private val NAME = Regex("""[^$NAME_END]++""")
+
+private fun Char.isSpace() = Character.isWhitespace(this) || this == '\uFEFF'
+
+/** This without the spaces around it, as R8 takes them. */
+private fun String.trimSpace() = trim(Char::isSpace)
+
+/** This class name without its quotes or `!`. */
+private fun String.bare() = trim('\'', '"').removePrefix("!")
+
+/** The class name in this, past the spaces before it and up to what ends it, as R8 reads it. */
+private fun String.className() = trimStart(Char::isSpace).let { (QUOTED.find(it) ?: NAME.find(it))?.value.orEmpty() }
+
+/** A quoted name ends at its quote, whatever follows. */
+private val QUOTED = Regex("""\A(?:'[^']*+'|"[^"]*+")""")
 
 /** What R8 skips between any two words of a rule, which is why a rule can span lines at all. */
 private const val GAP = """(?:[$SPACE]++|$COMMENT)*+"""
@@ -143,7 +208,7 @@ private const val MEMBERS = """\{(?:[^{}#]++|$COMMENT)*+}"""
 private val KEEP_RULE = Regex(
     """$COMMENT|(?<![^$SPACE}])((?:-if(?:[^$SPACE{#]++|[$SPACE]++(?!-\w)|$COMMENT)*+(?:$MEMBERS)?+$GAP)?)""" +
         """(-keep(?:class(?:es)?(?:with)?member(?:s|names)|names)?(?:$GAP,$GAP(?:(?!class\b)\w++)?+)*+$GAP(?:(?:public|final|!${GAP}abstract)$GAP)*+(?:class|!interface|!enum|!@${GAP}interface)$GAP)""" +
-        """([^\s{#,]++(?:$GAP,$GAP[^\s{#,]++)*+)(?!$GAP(?:extends|implements)\b)($GAP$MEMBERS)?""",
+        """([^$NAME_END{#,]++(?:$GAP,$GAP[^$NAME_END{#,]++)*+)(?!$GAP(?:extends|implements)\b)($GAP$MEMBERS)?""",
 )
 
 private val COMMENTS = Regex(COMMENT)

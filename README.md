@@ -745,8 +745,10 @@ pluginManagement {
   umbrella looks fields up by name, or another rule is all that keeps a module's `R`, name the
   members in the rule: a rule that names them gets no `-if`.
   Two modules with one field name share its readers, so a rule on one can keep more than it needs.
-  An `-if` of a module's own only follows an `R` it names. The bytecode pre-scan that decides
-  whether ASM runs at all is best-effort (false positives only cost a no-op rewrite).
+  An `-if` of a module's own follows an `R` it names in full, as `com.acme.feature.R$string`, and
+  no other: `com.acme.f*.R$string` or `com.acme.feature.R?string` stays as written and matches
+  nothing, and a `!` on one module's `R` there leaves out the umbrella's. The bytecode pre-scan
+  that decides whether ASM runs at all is best-effort (false positives only cost a no-op rewrite).
 - **Mixed-plugin umbrellas and the `debug` publication.** `com.android.kotlin.multiplatform.library`
   has no build types, so the umbrella's own AAR is the same `androidMain` artifact for both
   publications. Exported plain `com.android.library` modules are therefore also taken from one AAR
