@@ -157,9 +157,9 @@ private fun Project.hostClasspath(buildType: String): Configuration? {
  * and attribute at once. So this fails unless all of it ends up merged, published or excluded. Only
  * what `includeFrameworkExports` derived may be left out, see [UmbrellaResolution.unresolved].
  *
- * It also fails on a module Gradle selected more than one variant of, as each module merges as one
- * archive, and on a project that lost a conflict over its coordinates. A project a substitution rule
- * put in another's place is the build's own choice, and merges like the one it replaced.
+ * It also fails on a module Gradle selected more than one variant of, as each module merges through
+ * one variant, and on a project that lost a conflict over its coordinates. A project a substitution
+ * rule put in another's place is the build's own choice, and merges like the one it replaced.
  */
 internal fun Project.resolveUmbrella(export: Configuration, buildType: String): UmbrellaResolution {
     checkBuildType(buildType)

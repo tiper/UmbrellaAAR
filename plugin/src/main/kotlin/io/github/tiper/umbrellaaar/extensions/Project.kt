@@ -8,6 +8,7 @@ import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.file.FileCollection
 import org.gradle.api.provider.Provider
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
 
 /**
  * Candidate archive tasks, in priority order.
@@ -18,12 +19,13 @@ import org.gradle.api.provider.Provider
  * AAR at all.
  *
  * A JVM archive is no candidate in a module with an Android plugin: the `jvmJar` of a KMP module is
- * its desktop build, and shipping that in an AAR stays green while Android gets the wrong code. Nor
- * is a `jar` for a JVM variant with a name of its own, which holds something else.
+ * its desktop build, and shipping that in an AAR stays green while Android gets the wrong code. A
+ * JVM module that Gradle selected a variant of merges what that variant ships, see [archiveOf], so
+ * only the legacy walk, which selects none, looks for its jar.
  */
 private fun Project.aarTaskCandidates(variants: Array<out String>): List<String> = variants.map { "bundle${it}Aar" } + when {
     hasAndroidPlugin() -> emptyList()
-    else -> variants.map { "${it}Jar".replaceFirstChar(Char::lowercaseChar) } + listOf("jvmJar", "jar").takeIf { variants.isEmpty() }.orEmpty()
+    else -> listOf("jvmJar", "jar").takeIf { variants.isEmpty() }.orEmpty()
 }
 
 private fun Project.sourcesJarTaskCandidates(variants: Array<out String>): List<String> = variants.flatMap {
@@ -44,20 +46,22 @@ private fun Project.firstRegistered(candidates: List<String>): String? = tasks.n
 
 /**
  * The variant to take the archives of [module] from. Both [findAarTask] and [findSourcesJarTask] are
- * handed this, so its classes and its sources can never come from different variants.
+ * handed this, so its classes and its sources can never come from different variants. A JVM module
+ * with a selected variant merges what that variant ships instead, see [archiveOf], and only its
+ * sources jar is found here.
  *
  * Gradle already selected a variant for [module], honouring build types, `matchingFallbacks` and
  * flavors, and every plugin calls it `<name>RuntimeElements`. What `<name>` stands for differs:
  * - `com.android.library`: a build variant, as in `paidRelease` and `bundlePaidReleaseAar`.
- * - a Kotlin `jvm()` target: the target, as in `desktop` and `desktopJar`.
- * - the Java plugin: nothing, as in `jar`.
+ * - a Kotlin `jvm()` target: the target, as in `desktop` and `desktopSourcesJar`.
+ * - the Java plugin: nothing, as in `sourcesJar`.
  * - `com.android.kotlin.multiplatform.library`: the `android` target, but its tasks are named after
  *   its one compilation, as in `bundleAndroidMainAar`. There is nothing to select, whatever the graph.
  *
- * A variant with no archive under its name fails: taking any other would ship something Gradle did
- * not select. [fallback] is for the legacy walk, which resolves nothing, so it never applies next to
- * a selection. These are Android names, of no use to a JVM module, which could only be misled by a
- * `releaseJar` of its own. The first name [module] has an archive for wins alone.
+ * An Android variant with no archive under its name fails: taking any other would ship something
+ * Gradle did not select. [fallback] is for the legacy walk, which resolves nothing, so it never
+ * applies next to a selection. These are Android names, of no use to a JVM module, which could only
+ * be misled by a `releaseJar` of its own. The first name [module] has an archive for wins alone.
  */
 internal fun ProjectGraph.archiveVariant(module: Project, fallback: Array<out String>): Array<out String> {
     if (module.plugins.hasPlugin("com.android.kotlin.multiplatform.library")) return arrayOf(KMP_PIPELINE_KEY.capitalize())
@@ -67,26 +71,34 @@ internal fun ProjectGraph.archiveVariant(module: Project, fallback: Array<out St
 }
 
 /**
- * The archive [module] merges as: the outputs of the task [archiveVariant] names. A JVM variant
- * declares the archive its consumers get, and a build can put another there, as a shaded jar does.
- * Merging the task's would then ship something else and stay green, so that fails. AGP declares no
- * archive on a variant, and the legacy walk selects none, so neither has anything to compare.
+ * The archives [module] merges as. A JVM variant declares what its consumers get, inherited archives
+ * included, and the tasks that build it, so the umbrella merges exactly that and runs those tasks: a
+ * shaded jar put there, or a variant's own archive whatever its name. AGP declares no archive on a
+ * variant, and the legacy walk selects none, so for those it is the archive of the task
+ * [archiveVariant] names, and nothing else that task writes, as a checksum.
  */
 internal fun ProjectGraph.archiveOf(module: Project, fallback: Array<out String>): FileCollection {
-    val archive = module.findAarTask(*archiveVariant(module, fallback)).get()
-    val variant = variantOf[module.path]?.takeUnless { module.hasAndroidPlugin() } ?: return archive.outputs.files
-    val declared = module.configurations.getByName(variant).outgoing.artifacts.files.files
-    val built = archive.outputs.files.files
-    if (declared != built) {
+    variantOf[module.path]?.takeUnless { module.hasAndroidPlugin() }?.let { return module.shippedBy(it) }
+    val task = module.findAarTask(*archiveVariant(module, fallback)).get()
+    return (task as? AbstractArchiveTask)?.let { module.files(it.archiveFile).builtBy(it) } ?: task.outputs.files
+}
+
+/** What a consumer of [variant] gets, which is nothing when it ships nothing. */
+private fun Project.shippedBy(variant: String): FileCollection {
+    val shipped = configurations.getByName(variant).allArtifacts
+    val archives = shipped.files.files
+    val other = archives.filterNot { it.extension in MERGEABLE }
+    if (other.isNotEmpty()) {
         throw GradleException(
-            "UmbrellaAar cannot merge project '${module.path}': its variant '$variant' gives consumers " +
-                "${declared.joinToString { it.name }.ifEmpty { "no archive" }}, but '${archive.name}' builds ${built.joinToString { it.name }}.\n" +
-                "  A JVM module merges as the archive of '${archive.name}'. Ship that from '$variant', " +
-                "or exclude the module with exclude(group = \"${module.group}\", module = \"${module.name}\").",
+            "UmbrellaAar cannot merge project '$path': its variant '$variant' gives consumers " +
+                "${other.joinToString { it.name }}, and only a jar or an AAR can be merged.\n" +
+                "  Ship only those from '$variant', or exclude the module with exclude(group = \"$group\", module = \"$name\").",
         )
     }
-    return archive.outputs.files
+    return files(archives).builtBy(shipped)
 }
+
+private val MERGEABLE = setOf("jar", "aar")
 
 internal fun Project.findAarTask(vararg buildTypes: String): Provider<Task> = provider {
     val candidates = aarTaskCandidates(buildTypes)
@@ -106,8 +118,12 @@ internal fun Project.findSourcesJarTask(vararg buildTypes: String): Provider<Tas
     firstRegistered(sourcesJarTaskCandidates(buildTypes))?.let { tasks.named(it).get() }
 }
 
-/** What gives this module a sources jar for [variant]. */
-internal fun Project.sourcesJarSetup(variant: String): String = when {
+/**
+ * What gives this module a sources jar for [variant], which Gradle selected as [selected]. A variant
+ * no plugin made, as one a dependency names, has no sources jar of its own but one named after it.
+ */
+internal fun Project.sourcesJarSetup(variant: String, selected: String? = null): String = when {
+    selected?.endsWith(RUNTIME_ELEMENTS, ignoreCase = true) == false -> "a sources jar task named '${variant.replaceFirstChar(Char::lowercaseChar)}SourcesJar', for its variant '$selected'"
     plugins.hasPlugin("com.android.library") -> "android { publishing { singleVariant(\"${variant.replaceFirstChar(Char::lowercaseChar)}\") { withSourcesJar() } } }"
     plugins.hasPlugin("java") -> "java { withSourcesJar() }"
     else -> "kotlin { withSourcesJar() }"

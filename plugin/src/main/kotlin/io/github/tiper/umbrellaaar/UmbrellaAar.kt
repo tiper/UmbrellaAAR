@@ -190,15 +190,15 @@ class UmbrellaAar : Plugin<Project> {
      * sources and no more. Classes never depend on it, and no other variant's sources can stand in.
      */
     private fun Project.sourcesJarsProvider(archiveCandidates: Array<String>, graph: Provider<ProjectGraph>): Provider<SourcesJars> {
-        fun Project.sourcesJar(variants: Array<out String>) = findSourcesJarTask(*variants).orNull?.outputs?.files.also {
-            if (it == null) missingSources += "$path: ${sourcesJarSetup(variants.firstOrNull().orEmpty())}"
+        fun Project.sourcesJar(variants: Array<out String>, selected: String? = null) = findSourcesJarTask(*variants).orNull?.outputs?.files.also {
+            if (it == null) missingSources += "$path: ${sourcesJarSetup(variants.firstOrNull().orEmpty(), selected)}"
         }
 
         val memo = lazy {
             val g = graph.get()
             SourcesJars(
                 main = listOfNotNull(sourcesJar(archiveCandidates)),
-                merged = g.modules.mapNotNull { it.sourcesJar(g.archiveVariant(it, archiveCandidates)) },
+                merged = g.modules.mapNotNull { it.sourcesJar(g.archiveVariant(it, archiveCandidates), g.variantOf[it.path]) },
             )
         }
         return provider { memo.value }

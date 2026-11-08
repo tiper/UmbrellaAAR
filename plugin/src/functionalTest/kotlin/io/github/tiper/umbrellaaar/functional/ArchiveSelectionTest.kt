@@ -210,7 +210,7 @@ class ArchiveSelectionTest {
         assertTrue(umbrella.mergedSources().any { it.endsWith("Plain.java") }, "Classes and sources must agree")
     }
 
-    /** A module merges as one archive, so whatever else was asked of it could not ship. */
+    /** A module merges through one variant, so whatever else was asked of it could not ship. */
     @Test
     fun `a module reached through its test fixtures fails instead of losing its classes`() = fixture {
         val util = javaLibrary("util") { testFixture("UtilFixture") }
@@ -298,10 +298,11 @@ class ArchiveSelectionTest {
         assertFalse(sources.any { it.endsWith("Util.java") }, sources.toString())
     }
 
-    /** `jar` holds something else entirely, and the variant's own archive cannot be told from its name. */
+    /** `jar` holds something else entirely, and no task is named after the variant. */
     @Test
-    fun `a variant with no archive of its own fails instead of merging the module's jar`() = fixture {
+    fun `a JVM variant merges its own archive, whatever its name`() = fixture {
         val other = javaLibrary("other") {
+            file("src/other/java/com/acme/other/OtherOnly.java", "package com.acme.other;\n\npublic class OtherOnly {}\n")
             buildScript(
                 """
                 val other = sourceSets.create("other")
@@ -319,15 +320,17 @@ class ArchiveSelectionTest {
         val core = javaLibrary("core") { buildScript("dependencies { api(project(\"${other.path}\", \"otherElements\")) }") }
         val umbrella = androidUmbrella { export(core) }
 
-        gradleFails(umbrella.bundleTask()).run {
-            assertLogged("UmbrellaAar cannot find an archive task in project ':other'")
-            assertLogged("otherElementsJar")
-        }
+        val classes = umbrella.bundle().classes
+
+        assertTrue("com.acme.other.OtherOnly" in classes, classes.toString())
+        assertFalse("com.acme.other.Other" in classes, classes.toString())
+        // Its sources jar holds `main`, which is not what ships.
+        gradle(umbrella.sourcesTask()).assertLogged(":other: a sources jar task named 'otherElementsSourcesJar', for its variant 'otherElements'")
     }
 
     /** A consumer of the module gets what its variant declares, as a shaded jar would be, and `jar` does not hold it. */
     @Test
-    fun `a JVM module whose variant ships another archive than its jar fails instead of merging the jar`() = fixture {
+    fun `a JVM module merges the archive its variant ships, not its jar, as in stock`() = fixture {
         val core = javaLibrary("core") {
             file("src/generated/java/com/acme/core/Generated.java", "package com.acme.core;\n\npublic class Generated {}\n")
             buildScript(
@@ -340,11 +343,51 @@ class ArchiveSelectionTest {
         }
         val umbrella = androidUmbrella { export(core) }
 
-        gradleFails(umbrella.bundleTask()).run {
-            assertLogged("UmbrellaAar cannot merge project ':core'")
-            assertLogged("core-1.0.0-full.jar")
-            assertLogged("runtimeElements")
+        val parity = parity(umbrella)
+
+        parity.assertMatchesStock()
+        assertTrue("com.acme.core.Generated" in parity.umbrella.debug.apk.classes, parity.umbrella.debug.apk.classes.toString())
+    }
+
+    /** What else `jar` writes, as a checksum, is no archive its variant ships. */
+    @Test
+    fun `a JVM module merges its jar whatever else the task writes`() = fixture {
+        val core = javaLibrary("core") {
+            buildScript(
+                """
+                tasks.jar {
+                    val checksum = layout.buildDirectory.file("checksums/core.jar.sha256")
+                    outputs.file(checksum)
+                    doLast { checksum.get().asFile.writeText("checksum") }
+                }
+                """,
+            )
         }
+        val umbrella = androidUmbrella { export(core) }
+
+        assertTrue("com.acme.core.Core" in umbrella.bundle().classes, "Expected the module's jar")
+        gradle(umbrella.bundleTask()).assertLogged("Reusing configuration cache")
+    }
+
+    /** As a shaded jar that replaces the module's own does: that task runs, and `jar` does not. */
+    @Test
+    fun `a JVM module merges another task's archive at the path of its jar`() = fixture {
+        val core = javaLibrary("core") {
+            file("src/generated/java/com/acme/core/Generated.java", "package com.acme.core;\n\npublic class Generated {}\n")
+            buildScript(
+                """
+                val generated = sourceSets.create("generated")
+                val fullJar = tasks.register<Jar>("fullJar") { from(sourceSets.main.map { it.output }, generated.output) }
+                configurations.runtimeElements { outgoing.artifacts.clear(); outgoing.artifact(fullJar) }
+                """,
+            )
+        }
+        val umbrella = androidUmbrella { export(core) }
+
+        val build = gradle(umbrella.bundleTask())
+
+        assertTrue("com.acme.core.Generated" in umbrella.bundled().classes, umbrella.bundled().classes.toString())
+        assertEquals(null, build.outcome(":core:jar"))
     }
 
     private companion object {

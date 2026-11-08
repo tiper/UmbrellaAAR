@@ -16,7 +16,7 @@ Each failure says what is wrong, and most print the way out as well.
   *Way out:* use `exclude(group = ..., module = ...)` on `export` to leave it out on purpose. A flavor or fallback only a merged module selects has to be declared on the umbrella too. For a version conflict, align the versions: exclude would take that dependency out of the POM and the `.module` as well.
 - **An export that a substitution rule turned into an external module**, as it would no longer merge. `3.0` ignored the rule and merged the project. A rule pointing at another local module does not fail: that module merges instead.
   *Way out:* drop the rule on the umbrella module, or drop that export and declare the external module with `api(...)`.
-- **A module reached through two variants**, as any `testFixtures(project(...))` is, because a module merges as one archive.
+- **A module reached through two variants**, as any `testFixtures(project(...))` is, because a module merges through one variant.
   *Way out:* depend on one of them, move what the other holds into a module of its own, or exclude the module.
 - **Two local modules with one `group:name`**, or a local module that loses to an external one with its coordinates, as Gradle keeps one of them.
   *Way out:* give one another group or name, or exclude it.
@@ -44,10 +44,10 @@ Each failure says what is wrong, and most print the way out as well.
   *Way out:* rename one.
 - **A build type of yours that a merged module has no match for, in a plain `publish`.** A `com.android.library` umbrella now publishes every build type, where `3.0` published release and debug.
   *Way out:* give the build type `matchingFallbacks`, add it to that module, or disable it through `androidComponents`.
-- **A selected variant with no archive under its name**, rather than ship another archive. A module with an Android plugin is never merged from a `jvmJar` or a `jar`.
+- **An Android module's selected variant with no archive under its name**, rather than ship another archive. A module with an Android plugin is never merged from a `jvmJar` or a `jar`.
   *Way out:* point the dependency at a variant with an archive, or exclude the module.
-- **A JVM module whose selected variant ships another archive than the one under its name**, as a shaded jar put on `runtimeElements` does. `3.0` merged `jar` and stayed green.
-  *Way out:* ship that archive from the variant, or exclude the module.
+- **A JVM module whose selected variant ships something besides jars and AARs**, which cannot be merged.
+  *Way out:* ship only those from the variant, or exclude the module.
 - **A task of a variant disabled through `androidComponents`, if you name it.** `publish`, `publishToMavenLocal` and `publishAllPublicationsTo<Repository>Repository` leave that variant out. If a merged module disabled a variant the umbrella still needs, the umbrella fails naming the module.
   *Way out:* enable the variant, or leave its task out of the run. For a merged module's variant, enable it there, disable it on the umbrella as well, or give the umbrella's build type `matchingFallbacks`.
 - **A KMP umbrella on a merged module left with a build type it did not ask for**, as when that module disabled `release`. `3.0` shipped what Gradle selected, a debug build in a release publication at worst.
@@ -79,6 +79,7 @@ The warning about shared coordinates on every invocation is gone. A run that wou
 
 - Gradle's own resolution now decides, with the umbrella's Android runtime attributes, where `3.0` walked configurations by name. Flavors, `matchingFallbacks` and substitution rules apply, and a `com.android.library` umbrella ships a KMP module's Android side, where `3.0` could merge its `jvmJar`.
 - Each module's AAR and sources jar come from the variant Gradle selected.
+- A JVM module merges what that variant ships, as its consumers get it, and the tasks the variant names build it: a shaded jar put on `runtimeElements`, an archive the variant inherits, or the archive of a variant named after no task. `3.0` merged `jvmJar` or `jar`.
 - Custom build types of a `com.android.library` umbrella now get tasks and a publication, so a plain `publish` covers them too.
 - `umbrellaAar { includeFrameworkExports = true }` is new. It merges what the module's Apple frameworks export.
 
@@ -131,7 +132,7 @@ The warning about shared coordinates on every invocation is gone. A run that wou
 
 **Comparing with `3.0`**
 
-`umbrellaaar.legacyGraph=true` goes back to reading configurations by name, so you can compare `merged-modules.txt` and `external-dependencies.txt` between both graphs on `3.1`, before you rely on the new one. It publishes coordinates alone, and skips what needs the resolved graph: what does not resolve, a module reached through two variants, projects sharing coordinates, and dependencies with no group or version. The refusals of `export(...)`, nested umbrellas and every check of the merge still apply. The [README](README.md#configuration--tasks) says which differences to ignore.
+`umbrellaaar.legacyGraph=true` goes back to reading configurations by name, so you can compare `merged-modules.txt` and `external-dependencies.txt` between both graphs on `3.1`, before you rely on the new one. It publishes coordinates alone, merges a JVM module as its `jvmJar` or `jar` rather than what its variant ships, and skips what needs the resolved graph: what does not resolve, a module reached through two variants, projects sharing coordinates, and dependencies with no group or version. The refusals of `export(...)`, nested umbrellas and every check of the merge still apply. The [README](README.md#configuration--tasks) says which differences to ignore.
 
 ### Fixed
 
@@ -139,6 +140,7 @@ The warning about shared coordinates on every invocation is gone. A run that wou
 - The plugin moves to ASM `9.11.1`. Where AGP sits on a parent classpath its ASM runs instead, and a class too new for it now fails naming the class, its module and the way out.
 - The plugins apply in any order next to Kotlin and Android.
 - A build on top of an earlier one now ends up where a clean one would. Modules trading bytes or project paths used to keep what they held.
+- A file an archive task writes besides its archive, as a checksum, is no longer handed to the merge, where one that sorted first took the module's name and renamed its prefix in the AAR.
 - `R.txt` and `public.txt` no longer hold a blank line. `3.0` left one where the umbrella's own lines met a module's, and one blank line in `R.txt` leaves Android Studio with no field of that AAR's `R`, in a build that stays green.
 
 Tested on AGP `9.0.0` / Kotlin `2.2.10` / Gradle `9.1.0` and on AGP `9.5.0` / Kotlin `2.4.21` / Gradle `9.8.2`. The largest build it was tested on is a generated 203-module one, not a real project of that size.

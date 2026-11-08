@@ -200,7 +200,7 @@ private const val RUNTIME_CLASSPATH = "RuntimeClasspath"
 internal val UnresolvedDependencyResult.rootCause: String
     get() = generateSequence<Throwable>(failure) { it.cause }.last().message.orEmpty()
 
-internal fun variantsMessage(component: ResolvedComponentResult) = "Gradle selected ${component.variants.joinToString { it.displayName }}, and a module merges as one archive, so the rest would not ship.\n" +
+internal fun variantsMessage(component: ResolvedComponentResult) = "Gradle selected ${component.variants.joinToString { it.displayName }}, and a module merges through one variant, so the rest would not ship.\n" +
     "Depend on one of them, or move what the other holds into a module of its own."
 
 internal fun coordinatesMessage(winner: ResolvedComponentResult) = "It has the coordinates of ${winner.id.displayName}, and Gradle keeps one module per group and name, so it would not ship: " +

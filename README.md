@@ -285,16 +285,16 @@ pluginManagement {
    attributes, so every module contributes exactly what it would contribute to an Android app: the
    `api`, `implementation` and `runtimeOnly` dependencies of its Android runtime variant, including
    everything `commonMain` and custom intermediate source sets feed into it. When a module has no
-   Android target, its `jvm()` variant is used instead (it is merged through that target's jar). Test scopes,
+   Android target, its `jvm()` variant is used instead (it merges what that variant ships, the target's jar). Test scopes,
    `compileOnly`, metadata and internal build-graph configurations never take part, and the umbrella
    module itself can never end up inside its own graph.
 
    Each module's AAR and sources jar come from the variant Gradle selected, so `matchingFallbacks`
    and flavor selection apply to the umbrella as they do to any other consumer, and classes and
-   sources never come from different variants. A variant with no archive under its name fails the
-   build rather than shipping another one, and so does a JVM module whose variant ships another
-   archive than that one, as a shaded jar would. A module reached through two variants fails too, as
-   any `testFixtures(project(...))` is, since an AAR can only hold one.
+   sources never come from different variants. A JVM module merges what its variant ships, as a
+   consumer of it gets it, so a shaded jar put there is what ships. An Android variant with no
+   archive under its name fails the build rather than shipping another one. A module reached through
+   two variants fails too, as any `testFixtures(project(...))` is, since an AAR can only hold one.
 
    **What you export ships, or the build fails.** A module declared with `export(...)` that Gradle
    cannot resolve fails the build before any task runs, naming the module, how it was reached and
@@ -346,7 +346,8 @@ pluginManagement {
    > what a module declares about a dependency, no constraints, and no failure on a dependency without
    > a group or a version. A dependency Gradle cannot resolve is left out of the POM with no warning,
    > so read `external-dependencies.txt` before you publish, and the warnings about unexported modules
-   > and dependency attributes do not print.
+   > and dependency attributes do not print. A JVM module merges as its `jvmJar` or `jar`, not as
+   > what its variant ships.
 
    **Keeping the AAR and the XCFramework in sync.** If the same module also builds Apple
    frameworks, it can merge every local module those frameworks export, instead of repeating the
@@ -613,9 +614,10 @@ pluginManagement {
   as they do with stock. Attributes are named in a build warning, as consumers select the variant
   themselves. Constraints keep all of this.
 - **Project isolation is not supported.** Gradle resolves which modules to merge, but each module's
-  AAR and sources jar are still taken from its `bundle<Variant>Aar` / sources-jar task, which means
-  reading sibling projects' tasks. AGP does not hand the published AAR to other modules through
-  dependency resolution — only a lint-specific copy that also carries the module's `R` classes.
+  AAR and sources jar are still taken from its `bundle<Variant>Aar` / sources-jar task, and a JVM
+  module's jar from its variant, which means reading sibling projects' tasks and configurations.
+  AGP does not hand the published AAR to other modules through dependency resolution — only a
+  lint-specific copy that also carries the module's `R` classes.
 - **A resolution rule has to reach a configuration named `classpath`.** That is the one name AGP lets
   resolve while the task graph forms, which is when an umbrella has to. A rule on every configuration
   reaches it, as `configurations.configureEach` does, or an `afterEvaluate` going through
@@ -763,7 +765,8 @@ pluginManagement {
   one by default; `com.android.library` and `java-library` modules do not. A module without one is
   left out of the merged sources jar, its classes still ship and publishing goes on, and a build
   warning names it with the line that adds one — see *Generating Sources JAR* under
-  [Examples](#examples).
+  [Examples](#examples). A JVM module whose variant ships a shaded jar gives its own sources, not
+  those of what the jar bundles.
 
 ### Build messages
 
