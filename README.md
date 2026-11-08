@@ -912,7 +912,7 @@ android {
 
 A `com.android.kotlin.multiplatform.library` umbrella takes plain `com.android.library` modules from their `release` variant for both publications, unless `localDependencySelection` selects another build type, so those modules only need `release`.
 
-A `java-library` module needs `java { withSourcesJar() }`.
+A `java-library` module needs `java { withSourcesJar() }`, which covers its main variant alone. Any other variant the umbrella merges, as a feature reached through `requireCapability`, needs a sources jar task named after it, as `extraSourcesJar` for `extraRuntimeElements`, and the warning names it. For a feature on a source set of its own, `withSourcesJar()` in its `registerFeature` block registers that task.
 
 ---
 

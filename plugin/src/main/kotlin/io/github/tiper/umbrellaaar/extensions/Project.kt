@@ -119,15 +119,23 @@ internal fun Project.findSourcesJarTask(vararg buildTypes: String): Provider<Tas
 }
 
 /**
- * What gives this module a sources jar for [variant], which Gradle selected as [selected]. A variant
- * no plugin made, as one a dependency names, has no sources jar of its own but one named after it.
+ * What gives this module a sources jar for [variant], which Gradle selected as [selected]. A plugin's
+ * own line is given only where it makes the jar looked up for that variant: the Android plugin's for
+ * its variants, the Java plugin's for its own. Any other, as one a dependency names, a feature's,
+ * Shadow's or one made by hand, is told the name looked up, as only that holds whatever made the
+ * variant. So is a Kotlin Multiplatform target, as Kotlin makes each one a sources jar already, and
+ * one is missing only when it is named otherwise, as `jvm("Desktop")`'s `DesktopSourcesJar`.
+ * `singleVariant` takes a variant as AGP spells it, which only the selection keeps as it is.
  */
 internal fun Project.sourcesJarSetup(variant: String, selected: String? = null): String = when {
-    selected?.endsWith(RUNTIME_ELEMENTS, ignoreCase = true) == false -> "a sources jar task named '${variant.replaceFirstChar(Char::lowercaseChar)}SourcesJar', for its variant '$selected'"
-    plugins.hasPlugin("com.android.library") -> "android { publishing { singleVariant(\"${variant.replaceFirstChar(Char::lowercaseChar)}\") { withSourcesJar() } } }"
-    plugins.hasPlugin("java") -> "java { withSourcesJar() }"
-    else -> "kotlin { withSourcesJar() }"
+    selected?.endsWith(RUNTIME_ELEMENTS, ignoreCase = true) == false -> sourcesJarNamed(variant, selected)
+    plugins.hasPlugin("com.android.library") -> "android { publishing { singleVariant(\"${selected?.removeSuffix(RUNTIME_ELEMENTS) ?: variant.replaceFirstChar(Char::lowercaseChar)}\") { withSourcesJar() } } }"
+    plugins.hasPlugin("java") && variant.isEmpty() -> "java { withSourcesJar() }"
+    else -> sourcesJarNamed(variant, selected)
 }
+
+/** A name [sourcesJarTaskCandidates] looks up for a JVM module's [variant]. */
+private fun sourcesJarNamed(variant: String, selected: String?) = "a sources jar task named '${"${variant}SourcesJar".replaceFirstChar(Char::lowercaseChar)}'" + selected?.let { ", for its variant '$it'" }.orEmpty()
 
 internal fun Project.findAar(
     vararg buildTypes: String,

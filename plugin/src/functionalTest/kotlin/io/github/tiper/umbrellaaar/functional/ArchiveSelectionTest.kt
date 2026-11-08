@@ -298,6 +298,40 @@ class ArchiveSelectionTest {
         assertFalse(sources.any { it.endsWith("Util.java") }, sources.toString())
     }
 
+    /**
+     * The module's own `java { withSourcesJar() }` gives a feature none. Gradle names the variant and
+     * the sources jar of a feature on a source set of its own after that source set, not the feature,
+     * so the task the warning names is the one `withSourcesJar()` in its `registerFeature` block
+     * registers, as the README says.
+     */
+    @Test
+    fun `a feature variant with no sources jar is told where to add one, and doing so ships its sources`() = fixture {
+        javaLibrary("util") {
+            file("src/extra/java/com/acme/util/UtilExtra.java", "package com.acme.util;\n\npublic class UtilExtra {}\n")
+            buildScript(
+                """
+                sourceSets.create("extra")
+                java {
+                    registerFeature("extraSupport") {
+                        usingSourceSet(sourceSets["extra"])
+                        if (providers.gradleProperty("featureSources").isPresent) withSourcesJar()
+                    }
+                }
+                """,
+            )
+        }
+        val core = androidLibrary("core") {
+            buildScript("dependencies { api(project(\":util\")) { capabilities { requireCapability(\"$GROUP:util-extra-support\") } } }")
+        }
+        val umbrella = androidUmbrella { export(core) }
+
+        gradle(umbrella.sourcesTask()).assertLoggedOnce(":util: a sources jar task named 'extraSourcesJar', for its variant 'extraRuntimeElements'")
+        gradle(umbrella.sourcesTask(), "-PfeatureSources").assertNotLogged("which have no sources jar")
+        val sources = umbrella.mergedSources("release", "-PfeatureSources")
+
+        assertTrue(sources.any { it.endsWith("UtilExtra.java") }, sources.toString())
+    }
+
     /** `jar` holds something else entirely, and no task is named after the variant. */
     @Test
     fun `a JVM variant merges its own archive, whatever its name`() = fixture {

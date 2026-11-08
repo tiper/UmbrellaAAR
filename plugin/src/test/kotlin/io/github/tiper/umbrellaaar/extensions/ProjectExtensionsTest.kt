@@ -148,6 +148,60 @@ class ProjectExtensionsTest {
         assertEquals("java { withSourcesJar() }", project.sourcesJarSetup(variant.single(), "runtimeElements"))
     }
 
+    /** A feature's, on a source set of its own or on main, or another plugin's, as Shadow's. */
+    @Test
+    fun `any other variant of a Java module is told the sources jar task it needs`() {
+        val project = javaModule()
+
+        listOf("extraRuntimeElements" to "extraSourcesJar", "mongodbSupportRuntimeElements" to "mongodbSupportSourcesJar", "shadowRuntimeElements" to "shadowSourcesJar").forEach { (selected, task) ->
+            val variant = graphSelecting(project, selected).archiveVariant(project, arrayOf("Release"))
+
+            assertEquals("a sources jar task named '$task', for its variant '$selected'", project.sourcesJarSetup(variant.single(), selected))
+        }
+    }
+
+    /** AGP keeps a variant's name as written, so `create("Paid")` makes `PaidRelease`, which `singleVariant` must match exactly. */
+    @Test
+    fun `an Android variant is told the singleVariant Gradle selected, spelled as AGP spells it`() {
+        val project = androidModuleWithTasks()
+
+        listOf("paidReleaseRuntimeElements" to "paidRelease", "PaidReleaseRuntimeElements" to "PaidRelease", "QARuntimeElements" to "QA").forEach { (selected, name) ->
+            val variant = graphSelecting(project, selected).archiveVariant(project, arrayOf("Release"))
+
+            assertEquals("android { publishing { singleVariant(\"$name\") { withSourcesJar() } } }", project.sourcesJarSetup(variant.single(), selected))
+        }
+        assertEquals("android { publishing { singleVariant(\"release\") { withSourcesJar() } } }", project.sourcesJarSetup("Release", null))
+    }
+
+    /** A `java-base` module's feature, or a variant made by hand on a project with no JVM plugin at all. */
+    @Test
+    fun `a JVM module no Java or Kotlin plugin made is told the sources jar task it needs`() {
+        val javaBase = ProjectBuilder.builder().withName("consumer").build().also { it.pluginManager.apply("java-base") }
+        val bare = moduleWithTasks()
+
+        assertEquals("a sources jar task named 'extraSourcesJar', for its variant 'extraRuntimeElements'", javaBase.sourcesJarSetup("Extra", "extraRuntimeElements"))
+        assertEquals("a sources jar task named 'sourcesJar', for its variant 'runtimeElements'", bare.sourcesJarSetup(graphSelecting(bare, "runtimeElements").archiveVariant(bare, arrayOf("Release")).single(), "runtimeElements"))
+        assertEquals("a sources jar task named 'sourcesJar'", bare.sourcesJarSetup("", null))
+    }
+
+    /** Kotlin makes every target a sources jar, so one is missing only when named otherwise, as `jvm("Desktop")`'s `DesktopSourcesJar`. */
+    @Test
+    fun `a Kotlin multiplatform target is told the sources jar task it needs`() {
+        val project = moduleWithTasks("DesktopSourcesJar").also { it.pluginManager.apply("org.jetbrains.kotlin.multiplatform") }
+        val variant = graphSelecting(project, "DesktopRuntimeElements").archiveVariant(project, arrayOf("Release"))
+
+        assertEquals(null, project.findSourcesJarTask(*variant).orNull)
+        assertEquals("a sources jar task named 'desktopSourcesJar', for its variant 'DesktopRuntimeElements'", project.sourcesJarSetup(variant.single(), "DesktopRuntimeElements"))
+    }
+
+    @Test
+    fun `the legacy walk tells a Java module to add the Java plugin's sources jar`() {
+        val project = javaModule()
+        val variant = graphSelecting(project, null).archiveVariant(project, arrayOf("Release"))
+
+        assertEquals("java { withSourcesJar() }", project.sourcesJarSetup(variant.firstOrNull().orEmpty(), null))
+    }
+
     @Test
     fun `the legacy walk still finds the archives of a JVM target`() {
         val project = moduleWithTasks("jvmJar", "jvmSourcesJar")
