@@ -1,6 +1,7 @@
 package io.github.tiper.umbrellaaar.functional
 
 import java.io.File
+import java.util.Properties
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.gradle.testkit.runner.BuildResult
@@ -21,9 +22,7 @@ private val TEST_KIT_DIR = File(System.getProperty("umbrellaaar.testKitDir"))
 internal val ANDROID_SDK: File = listOfNotNull(
     System.getenv("ANDROID_HOME"),
     System.getenv("ANDROID_SDK_ROOT"),
-    File("../local.properties").takeIf { it.isFile }?.useLines { lines ->
-        lines.firstOrNull { it.startsWith("sdk.dir=") }?.substringAfter('=')
-    },
+    File("../local.properties").takeIf { it.isFile }?.reader()?.use { Properties().apply { load(it) }.getProperty("sdk.dir") },
 ).map(::File).firstOrNull { it.isDirectory } ?: error("Set ANDROID_HOME to run the functional tests")
 
 /**
@@ -230,7 +229,7 @@ internal fun File.writeCommonFiles() {
         |
         """.trimMargin(),
     )
-    resolve("local.properties").writeText("sdk.dir=${ANDROID_SDK.path}\n")
+    resolve("local.properties").writeText("sdk.dir=${ANDROID_SDK.invariantSeparatorsPath}\n")
     resolve("build.gradle.kts").writeText(
         """
         |plugins {

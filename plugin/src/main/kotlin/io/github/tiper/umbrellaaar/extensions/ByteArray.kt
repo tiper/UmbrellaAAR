@@ -49,9 +49,11 @@ internal fun ByteArray.transformClass(
         }
 
         override fun mapValue(value: Any?): Any? {
-            if (value is Type && value.sort == Type.OBJECT && value.internalName != reader.className) {
-                val namespace = value.internalName.substringBefore("/R$", "")
-                if (namespace == mainNsInternal || namespace in mergedNamespaces) onRClass(value.internalName, reader.className.replace('/', '.'))
+            // An array class reaches its R through its component type, as `R.raw[].class` does.
+            val taken = (value as? Type)?.let { if (it.sort == Type.ARRAY) it.elementType else it }
+            if (taken?.sort == Type.OBJECT && taken.internalName != reader.className) {
+                val namespace = taken.internalName.substringBefore("/R$", "")
+                if (namespace == mainNsInternal || namespace in mergedNamespaces) onRClass(taken.internalName, reader.className.replace('/', '.'))
             }
             return super.mapValue(value)
         }

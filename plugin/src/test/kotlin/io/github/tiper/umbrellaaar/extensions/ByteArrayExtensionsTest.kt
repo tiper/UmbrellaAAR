@@ -149,6 +149,12 @@ class ByteArrayExtensionsTest {
         assertEquals(emptyMap(), classTaking("com/dep/R\$raw").rFields(), "A class is no field read")
     }
 
+    @Test
+    fun `transformClass reports an R a class takes as an array class, as its component type`() {
+        assertEquals(mapOf("com/dep/R\$raw" to "com.test.TestClass"), classTaking("[[Lcom/dep/R\$raw;").rClassesTaken())
+        assertEquals(emptyMap(), classTaking("[Lcom/thirdparty/R\$raw;").rClassesTaken())
+    }
+
     // ── ASM-based R class remapping tests ──────────────────────────────────
 
     @Test

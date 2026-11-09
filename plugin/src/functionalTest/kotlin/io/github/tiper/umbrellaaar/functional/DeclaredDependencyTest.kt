@@ -317,6 +317,22 @@ class DeclaredDependencyTest {
         assertFalse(umbrella.published().pom.dependencies.any { it.artifact == "okhttp" })
     }
 
+    /** Gradle follows no edge of a module it reaches only through such a path, constraints included. */
+    @Test
+    fun `a local module that is not transitive publishes no constraint or version rule of its own`() = fixture {
+        val core = androidLibrary("core") {
+            implementation("com.squareup.okio:okio", "version { strictly(\"3.6.0\") }")
+            buildScript("dependencies { constraints { api(\"$GSON\") } }")
+        }
+        val feature = androidLibrary("feature") { api(core, "isTransitive = false") }
+        val umbrella = androidUmbrella { export(feature) }
+
+        umbrella.publish().run {
+            assertEquals(emptySet(), pom.managed)
+            assertEquals(emptyList(), moduleMetadata.libraryVariant("java-runtime").constraints)
+        }
+    }
+
     /** Only the export reaches the module, and that says nothing, as it does for a stock consumer of both. */
     @Test
     fun `the umbrella's own exclude on a module it exports binds nothing below it`() = fixture {
