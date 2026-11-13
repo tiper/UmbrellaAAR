@@ -21,4 +21,3 @@ internal class MockModuleComponentIdentifier(
 internal fun id(coordinate: String): ModuleComponentIdentifier = coordinate.split(":").let {
     MockModuleComponentIdentifier(it[0], it[1], it[2])
 }
-

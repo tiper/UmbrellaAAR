@@ -1,5 +1,6 @@
 package io.github.tiper.umbrellaaar.tasks
 
+import io.github.tiper.umbrellaaar.extensions.contentHash
 import io.github.tiper.umbrellaaar.extensions.packageName
 import io.github.tiper.umbrellaaar.extensions.transformClass
 import io.github.tiper.umbrellaaar.extensions.unzip
@@ -11,12 +12,15 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.FileCollection
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Internal
@@ -25,9 +29,17 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity.NONE
 import org.gradle.api.tasks.TaskAction
+import org.gradle.work.Incremental
+import org.gradle.work.InputChanges
 import org.gradle.workers.WorkAction
 import org.gradle.workers.WorkParameters
 import org.gradle.workers.WorkerExecutor
+
+/**
+ * The `R` fields a module's classes read, one `<type>/<field>\t<class>` per line, and the `R`s they
+ * take as a class, one `<namespace>/R$<type>\t<class>`.
+ */
+internal const val R_REFERENCES = ".r-references"
 
 @CacheableTask
 abstract class ExtractDependencies : DefaultTask() {
@@ -35,10 +47,24 @@ abstract class ExtractDependencies : DefaultTask() {
     @get:Input
     abstract val mainNamespace: Property<String>
 
-    // Archives are content-addressed: their absolute location must not affect the result.
+    // Archives are content-addressed: their absolute location must not affect the result. Unlike
+    // any path sensitivity short of an absolute one, this also goes by their order, which is what
+    // pairs each with its entry of folderNames: what lands in a folder ships under that module's
+    // name, and two modules can trade bytes or project paths with no other input changing.
+    @get:Incremental
+    @get:Classpath
+    abstract val dependencies: ConfigurableFileCollection
+
+    /**
+     * [dependencies] byte for byte. A classpath goes by what running it would see, so a build's
+     * `normalization` can hide a file from it, and this packs what it finds and runs none of it.
+     * Gradle takes two incremental properties of one collection for a mistake, hence the filter.
+     */
+    @get:Incremental
     @get:InputFiles
     @get:PathSensitive(NONE)
-    abstract val dependencies: ConfigurableFileCollection
+    internal val shippedBytes: FileCollection
+        get() = dependencies.filter { true }
 
     /**
      * `"<project path>\t<edge that pulled it in>"` for every merged module.
@@ -55,38 +81,49 @@ abstract class ExtractDependencies : DefaultTask() {
     @get:OutputFile
     abstract val reportFile: RegularFileProperty
 
-    @get:Internal
-    abstract val rootDir: DirectoryProperty
+    /**
+     * What the folders were extracted from: a difference in what they all go by forces a full
+     * extraction, and a hash that differs extracts that folder again. Outside [outputDir], which is
+     * what merging takes in, as this changes with every archive and extracted files do not always.
+     */
+    @get:OutputFile
+    abstract val extractionState: RegularFileProperty
 
     /**
-     * Output folder names are derived from [rootDir], which is `@Internal`. Declaring the derived
-     * names as an input stops a relocated build directory from producing a stale-but-up-to-date
-     * result.
+     * `archive -> the folder it extracts to`, see [folderNames], in the order of [dependencies]. An
+     * archive's path belongs to this machine, so only the names of the folders are an input.
      */
+    @get:Internal
+    abstract val archiveFolders: MapProperty<File, String>
+
     @get:Input
     internal val folderNames: Provider<List<String>>
-        get() = dependencies.elements.map { archives ->
-            archives.map { it.asFile }.folderNames(rootDir.get().asFile).values.sorted()
-        }
+        get() = archiveFolders.map { it.values.toList() }
+
+    /** `archive -> the project path of its module`, for a failure to go by, and for nothing else. */
+    @get:Internal
+    abstract val archiveModules: MapProperty<File, String>
 
     @get:Inject
     abstract val workers: WorkerExecutor
 
+    /**
+     * Incremental when only the *content* of some archives changed — the common case of rebuilding
+     * after editing one module: just those archives are extracted again. Which ones the hashes of
+     * the state file say, and not Gradle: with no paths to go by it pairs files by their bytes, so an
+     * archive taking on the bytes another one had looks to it like that archive having moved.
+     *
+     * Every archive's classes are relocated against the namespaces of *all* merged modules, and
+     * folder names are derived from the whole set of archives. So when the set of archives, the
+     * folder names or the namespaces change, every archive is extracted again.
+     */
     @TaskAction
-    fun execute() {
+    fun execute(inputChanges: InputChanges) {
         val baseDir = outputDir.get().asFile
-        baseDir.deleteRecursively()
-        baseDir.mkdirs()
-
         writeReport()
 
         val archives = dependencies.files.toList()
-        if (archives.isEmpty()) {
-            logger.warn("No dependencies to extract")
-            return
-        }
-
-        val folders = archives.folderNames(rootDir.get().asFile)
+        val folders = archiveFolders.get()
 
         // Pass 1 (cheap, parallel): learn which namespaces are actually being merged, so R-class
         // relocation only ever touches those and never a third-party AAR that ships its own R.
@@ -97,22 +134,43 @@ abstract class ExtractDependencies : DefaultTask() {
             .collect(java.util.stream.Collectors.toSet())
         logger.info("[UmbrellaAar] Relocating R classes for ${namespaces.size} merged namespaces")
 
+        val stateFile = extractionState.get().asFile
+        val shared = listOf(mainNamespace.get()) + namespaces.sorted() + folders.values.sorted()
+        val extracted = folders.mapValues { (archive, folder) -> "$folder\t${archive.contentHash()}" }
+        val previous = if (inputChanges.isIncremental && stateFile.isFile) stateFile.readLines() else emptyList()
+        val incremental = previous.take(shared.size) == shared && previous.size == shared.size + extracted.size
+        // Only rewritten once every archive is extracted: an interrupted run must never look complete.
+        stateFile.delete()
+
+        val toExtract = if (incremental) {
+            archives.filter { extracted[it] !in previous }.onEach { File(baseDir, folders.getValue(it)).deleteRecursively() }
+        } else {
+            baseDir.deleteRecursively()
+            archives
+        }
+        baseDir.mkdirs()
+
         val queue = workers.noIsolation()
-        archives.forEach { file ->
+        toExtract.forEach { file ->
             queue.submit(ExtractArchive::class.java) {
                 archive.set(file)
                 target.set(File(baseDir, folders.getValue(file)))
+                module.set(archiveModules.getting(file))
                 mainNamespace.set(this@ExtractDependencies.mainNamespace.get().replace('.', '/'))
                 mergedNamespaces.set(namespaces)
             }
         }
         queue.await()
+        stateFile.writeText((shared + extracted.values).joinToString("\n"))
 
-        logger.lifecycle("Extracted ${archives.size} dependency archives from ${mergedModules.get().size} modules")
+        logger.lifecycle(
+            "Extracted ${toExtract.size} of ${archives.size} dependency archives from ${mergedModules.get().size} modules" +
+                if (incremental) " (incremental)" else "",
+        )
     }
 
     private fun writeReport() = reportFile.get().asFile.apply { parentFile.mkdirs() }.bufferedWriter().use { writer ->
-        writer.appendLine("# Modules merged into the umbrella AAR by $path")
+        writer.appendLine("# Modules merged into the umbrella AAR")
         writer.appendLine("# <project path>\t<first edge that reached it>")
         mergedModules.get().forEach { writer.appendLine(it) }
     }
@@ -126,9 +184,17 @@ abstract class ExtractDependencies : DefaultTask() {
         }
     }.getOrNull()
 
+    private companion object {
+        const val TARGETED_RULES = "META-INF/com.android.tools/"
+
+        /** What AGP reads from a jar: any file right in there, whatever its extension. */
+        val JAR_RULE_FILE = Regex("""META-INF/proguard/[^/\\]+""")
+    }
+
     internal interface ExtractParameters : WorkParameters {
         val archive: RegularFileProperty
         val target: DirectoryProperty
+        val module: Property<String>
         val mainNamespace: Property<String>
         val mergedNamespaces: SetProperty<String>
     }
@@ -139,6 +205,10 @@ abstract class ExtractDependencies : DefaultTask() {
             val out = parameters.target.get().asFile.apply { mkdirs() }
             val namespace = parameters.mainNamespace.get()
             val merged = parameters.mergedNamespaces.get()
+            // The rewrite walks every field read anyway, so a later pass over the classes would only cost.
+            val rReads = java.util.TreeSet<String>()
+            val module = parameters.module.get()
+            val transform = { bytes: ByteArray -> bytes.transformClass(namespace, merged, module, onRClass = { rClass, reader -> rReads += "$rClass\t$reader" }) { field, reader -> rReads += "$field\t$reader" } }
 
             when (file.extension) {
                 "aar" -> try {
@@ -146,13 +216,13 @@ abstract class ExtractDependencies : DefaultTask() {
                         if (entry.name == "classes.jar") {
                             // Streamed straight out of the AAR: no temporary copy on disk.
                             getInputStream(entry).use { input ->
-                                input.unzipStream(File(out, "classes")) { it.transformClass(namespace, merged) }
+                                input.unzipStream(File(out, "classes"), transform)
                             }
                             return@unzip false
                         }
-                        !entry.isDirectory &&
-                            !entry.name.endsWith("aar-metadata.properties") &&
-                            !entry.name.endsWith("classes.jar")
+                        // aar-metadata.properties is kept: MergeDependencies folds every module's
+                        // requirements (minCompileSdk, desugaring, …) into the umbrella's own.
+                        !entry.isDirectory
                     }
                 } catch (e: Exception) {
                     throw GradleException("Failed to extract AAR '${file.name}': ${e.message}", e)
@@ -162,38 +232,48 @@ abstract class ExtractDependencies : DefaultTask() {
                     // Skip MANIFEST.MF — it conflicts with the main manifest.
                     file.unzip(
                         to = File(out, "classes"),
-                        transformer = { it.transformClass(namespace, merged) },
-                    ) { !it.isDirectory && !it.name.endsWith("MANIFEST.MF") }
+                        transformer = transform,
+                    ) { entry ->
+                        val isRuleFile = JAR_RULE_FILE.matches(entry.name)
+                        // Only read from a jar of its own, which this one stops being: as a `.pro`
+                        // file at the root it is merged like a module's other rules. A jar with
+                        // targeted rules has those read instead, and they stay in the classes.
+                        if (isRuleFile && entries().asSequence().none { it.name.startsWith(TARGETED_RULES) }) {
+                            getInputStream(entry).use { input ->
+                                File(out, "${entry.name.substringAfterLast('/')}.pro").outputStream().use { input.copyTo(it) }
+                            }
+                        }
+                        !entry.isDirectory && !isRuleFile && !entry.name.endsWith("MANIFEST.MF")
+                    }
                 } catch (e: Exception) {
                     throw GradleException("Failed to extract JAR '${file.name}': ${e.message}", e)
                 }
 
                 else -> Unit
             }
+
+            if (rReads.isNotEmpty()) File(out, R_REFERENCES).writeText(rReads.joinToString("") { "$it\n" })
         }
     }
 }
 
 /**
- * Stable, readable output folder per archive, keyed off the owning module directory
- * (`sample/jni/sample1/build/outputs/aar/sample1-release.aar` -> `sample_jni_sample1`) rather than
- * the full artifact path. These names end up in the published AAR as `res/values*` file prefixes.
+ * A folder per archive of `archive -> the project path of its module`, keeping this map's order:
+ * `:sample:jni:sample1` -> `sample_jni_sample1`.
+ *
+ * These names end up in the published AAR as prefixes of `res/values*` files, of `.kotlin_module`
+ * files and of rule files under `META-INF/com.android.tools/`, so they come from the project path
+ * and leave out where a checkout, a module or its build directory is. No two may differ by case
+ * alone, as they are folders on a disk that may not tell them apart.
  */
-internal fun List<File>.folderNames(root: File): Map<File, String> {
-    val used = mutableMapOf<String, Int>()
-    return sortedBy { it.invariantSeparatorsPath }.associateWith { file ->
-        val base = file.moduleFolderName(root)
-        val seen = used.merge(base, 1, Int::plus) ?: 1
-        if (seen == 1) base else "$base-$seen"
+internal fun Map<File, String>.folderNames(): Map<File, String> {
+    val used = mutableSetOf<String>()
+    val names = entries.sortedWith(compareBy({ it.value }, { it.key.name })).associate { (file, path) ->
+        val base = path.moduleFolderName()
+        file to generateSequence(1, Int::inc).map { if (it == 1) base else "$base-$it" }.first { used.add(it.lowercase()) }
     }
+    return mapValues { (file) -> names.getValue(file) }
 }
 
-private fun File.moduleFolderName(root: File): String {
-    val relative = runCatching { relativeTo(root).invariantSeparatorsPath }.getOrNull() ?: nameWithoutExtension
-    val moduleDir = relative.substringBefore("/build/", missingDelimiterValue = "")
-    return moduleDir.ifEmpty { relative.removeSuffix(".$extension") }
-        .replace(Regex("[^A-Za-z0-9._-]"), "_")
-        .trim('_')
-        .ifEmpty { nameWithoutExtension }
-}
-
+/** Not a leading dot, which a consumer's resource merge takes for a hidden file and skips in silence. */
+private fun String.moduleFolderName(): String = replace(Regex("[^A-Za-z0-9._-]"), "_").trim('_', '.').ifEmpty { "module" }

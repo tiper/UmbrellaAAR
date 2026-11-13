@@ -5,6 +5,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.gradle.api.GradleException
+import org.gradle.api.file.FileCollection
+import org.gradle.api.tasks.bundling.Jar
+import org.gradle.api.tasks.bundling.Zip
 import org.gradle.testfixtures.ProjectBuilder
 
 class ProjectExtensionsTest {
@@ -64,14 +67,351 @@ class ProjectExtensionsTest {
         assertEquals(null, project.findSourcesJarTask("Release").orNull)
     }
 
-    private fun org.gradle.api.Project.outputFile(relativePath: String, lastModified: Long) =
-        layout.buildDirectory.file(relativePath).get().asFile.apply {
-            parentFile.mkdirs()
-            writeText(relativePath)
-            assertTrue(setLastModified(lastModified), "Could not set timestamp for $absolutePath")
+    @Test
+    fun `archiveVariant follows the variant Gradle selected`() {
+        val project = androidModuleWithTasks("bundleReleaseAar", "bundlePaidReleaseAar")
+
+        assertEquals(listOf("PaidRelease"), graphSelecting(project, "paidReleaseRuntimeElements").archiveVariant(project, arrayOf("Release")).toList())
+    }
+
+    @Test
+    fun `archiveVariant names a Kotlin jvm target's sources jar through the target`() {
+        val project = moduleWithTasks("desktopJar", "desktopSourcesJar")
+        val variant = graphSelecting(project, "desktopRuntimeElements").archiveVariant(project, arrayOf("Release"))
+
+        assertEquals(listOf("Desktop"), variant.toList())
+        assertEquals("desktopSourcesJar", project.findSourcesJarTask(*variant).get().name)
+    }
+
+    @Test
+    fun `archiveVariant falls back to the names it is given when nothing was selected`() {
+        val project = androidModuleWithTasks("bundleReleaseAar", "bundleDebugAar")
+
+        assertEquals(listOf("Debug"), graphSelecting(project, null).archiveVariant(project, arrayOf("Debug", "Release")).toList())
+    }
+
+    @Test
+    fun `archiveVariant never swaps the selected variant for another one`() {
+        val project = androidModuleWithTasks("bundleReleaseAar")
+
+        assertEquals(listOf("Staging"), graphSelecting(project, "stagingRuntimeElements").archiveVariant(project, arrayOf("Release")).toList())
+        assertEquals(listOf("SomeCustomVariant"), graphSelecting(project, "someCustomVariant").archiveVariant(project, arrayOf("Release")).toList())
+    }
+
+    @Test
+    fun `a variant selected in a JVM module takes no sources jar but its own`() {
+        val project = moduleWithTasks("jar", "jvmJar", "sourcesJar", "jvmSourcesJar")
+        val variant = graphSelecting(project, "otherElements").archiveVariant(project, arrayOf("Release"))
+
+        assertEquals(null, project.findSourcesJarTask(*variant).orNull)
+        assertEquals("a sources jar task named 'otherElementsSourcesJar', for its variant 'otherElements'", project.sourcesJarSetup(variant.single(), "otherElements"))
+    }
+
+    @Test
+    fun `archiveVariant picks one variant so a sources jar of another one is out of reach`() {
+        val project = androidModuleWithTasks("bundleReleaseAar", "bundleDebugAar", "sourceDebugJar")
+        val variant = graphSelecting(project, "releaseRuntimeElements").archiveVariant(project, arrayOf("Debug"))
+
+        assertEquals("bundleReleaseAar", project.findAarTask(*variant).get().name)
+        assertEquals(null, project.findSourcesJarTask(*variant).orNull)
+    }
+
+    @Test
+    fun `the legacy walk does not guess a JVM module's archive from Android build types`() {
+        val project = moduleWithTasks("jar", "releaseJar")
+        val variant = graphSelecting(project, null).archiveVariant(project, arrayOf("Release"))
+
+        assertEquals("jar", project.findAarTask(*variant).get().name)
+    }
+
+    @Test
+    fun `the Java plugin's variant takes its own sources jar over a JVM target's`() {
+        val project = moduleWithTasks("jvmJar", "jar", "jvmSourcesJar", "sourcesJar")
+        val variant = graphSelecting(project, "runtimeElements").archiveVariant(project, arrayOf("Release"))
+
+        assertEquals("sourcesJar", project.findSourcesJarTask(*variant).get().name)
+    }
+
+    @Test
+    fun `the Java plugin's variant never falls back on a JVM target's sources jar`() {
+        val project = moduleWithTasks("jvmJar", "jvmSourcesJar")
+        val variant = graphSelecting(project, "runtimeElements").archiveVariant(project, arrayOf("Release"))
+
+        assertEquals(null, project.findSourcesJarTask(*variant).orNull)
+    }
+
+    @Test
+    fun `the Java plugin's variant is told to add the Java plugin's sources jar`() {
+        val project = javaModule()
+        val variant = graphSelecting(project, "runtimeElements").archiveVariant(project, arrayOf("Release"))
+
+        assertEquals("java { withSourcesJar() }", project.sourcesJarSetup(variant.single(), "runtimeElements"))
+    }
+
+    /** A feature's, on a source set of its own or on main, or another plugin's, as Shadow's. */
+    @Test
+    fun `any other variant of a Java module is told the sources jar task it needs`() {
+        val project = javaModule()
+
+        listOf("extraRuntimeElements" to "extraSourcesJar", "mongodbSupportRuntimeElements" to "mongodbSupportSourcesJar", "shadowRuntimeElements" to "shadowSourcesJar").forEach { (selected, task) ->
+            val variant = graphSelecting(project, selected).archiveVariant(project, arrayOf("Release"))
+
+            assertEquals("a sources jar task named '$task', for its variant '$selected'", project.sourcesJarSetup(variant.single(), selected))
         }
+    }
+
+    /** AGP keeps a variant's name as written, so `create("Paid")` makes `PaidRelease`, which `singleVariant` must match exactly. */
+    @Test
+    fun `an Android variant is told the singleVariant Gradle selected, spelled as AGP spells it`() {
+        val project = androidModuleWithTasks()
+
+        listOf("paidReleaseRuntimeElements" to "paidRelease", "PaidReleaseRuntimeElements" to "PaidRelease", "QARuntimeElements" to "QA").forEach { (selected, name) ->
+            val variant = graphSelecting(project, selected).archiveVariant(project, arrayOf("Release"))
+
+            assertEquals("android { publishing { singleVariant(\"$name\") { withSourcesJar() } } }", project.sourcesJarSetup(variant.single(), selected))
+        }
+        assertEquals("android { publishing { singleVariant(\"release\") { withSourcesJar() } } }", project.sourcesJarSetup("Release", null))
+    }
+
+    /** A `java-base` module's feature, or a variant made by hand on a project with no JVM plugin at all. */
+    @Test
+    fun `a JVM module no Java or Kotlin plugin made is told the sources jar task it needs`() {
+        val javaBase = ProjectBuilder.builder().withName("consumer").build().also { it.pluginManager.apply("java-base") }
+        val bare = moduleWithTasks()
+
+        assertEquals("a sources jar task named 'extraSourcesJar', for its variant 'extraRuntimeElements'", javaBase.sourcesJarSetup("Extra", "extraRuntimeElements"))
+        assertEquals("a sources jar task named 'sourcesJar', for its variant 'runtimeElements'", bare.sourcesJarSetup(graphSelecting(bare, "runtimeElements").archiveVariant(bare, arrayOf("Release")).single(), "runtimeElements"))
+        assertEquals("a sources jar task named 'sourcesJar'", bare.sourcesJarSetup("", null))
+    }
+
+    /** Kotlin makes every target a sources jar, so one is missing only when named otherwise, as `jvm("Desktop")`'s `DesktopSourcesJar`. */
+    @Test
+    fun `a Kotlin multiplatform target is told the sources jar task it needs`() {
+        val project = moduleWithTasks("DesktopSourcesJar").also { it.pluginManager.apply("org.jetbrains.kotlin.multiplatform") }
+        val variant = graphSelecting(project, "DesktopRuntimeElements").archiveVariant(project, arrayOf("Release"))
+
+        assertEquals(null, project.findSourcesJarTask(*variant).orNull)
+        assertEquals("a sources jar task named 'desktopSourcesJar', for its variant 'DesktopRuntimeElements'", project.sourcesJarSetup(variant.single(), "DesktopRuntimeElements"))
+    }
+
+    @Test
+    fun `the legacy walk tells a Java module to add the Java plugin's sources jar`() {
+        val project = javaModule()
+        val variant = graphSelecting(project, null).archiveVariant(project, arrayOf("Release"))
+
+        assertEquals("java { withSourcesJar() }", project.sourcesJarSetup(variant.firstOrNull().orEmpty(), null))
+    }
+
+    @Test
+    fun `the legacy walk still finds the archives of a JVM target`() {
+        val project = moduleWithTasks("jvmJar", "jvmSourcesJar")
+        val variant = graphSelecting(project, null).archiveVariant(project, arrayOf("Release"))
+
+        assertEquals("jvmJar", project.findAarTask(*variant).get().name)
+        assertEquals("jvmSourcesJar", project.findSourcesJarTask(*variant).get().name)
+    }
+
+    @Test
+    fun `a module with an Android plugin takes no JVM sources jar`() {
+        val project = androidModuleWithTasks("bundleReleaseAar", "jvmSourcesJar")
+        val variant = graphSelecting(project, "releaseRuntimeElements").archiveVariant(project, arrayOf("Release"))
+
+        assertEquals(null, project.findSourcesJarTask(*variant).orNull)
+    }
+
+    @Test
+    fun `archiveVariant reports every name it tried when the module has no archive at all`() {
+        val project = androidModuleWithTasks()
+        val variant = graphSelecting(project, "paidReleaseRuntimeElements").archiveVariant(project, arrayOf("Release"))
+
+        val error = assertFailsWith<GradleException> { project.findAarTask(*variant).get() }
+
+        assertTrue(error.message?.contains("bundlePaidReleaseAar") == true, error.message)
+    }
+
+    @Test
+    fun `a Java module merges the jar its variant declares`() {
+        val project = javaModule()
+
+        val archive = graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer.jar"), archive.names())
+        assertEquals(setOf("jar"), archive.builders())
+    }
+
+    @Test
+    fun `a JVM module merges its jar alone, whatever else the task writes`() {
+        val project = javaModule()
+        project.tasks.named("jar") { outputs.file(project.layout.buildDirectory.file("libs/consumer.jar.sha256")) }
+
+        val archive = graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer.jar"), archive.names())
+    }
+
+    /** As a shaded jar put on the variant is. */
+    @Test
+    fun `a JVM module merges the archive its variant declares, not its jar`() {
+        val project = javaModule()
+        project.configurations.getByName("runtimeElements").outgoing {
+            artifacts.clear()
+            artifact(project.fullJar())
+        }
+
+        val archive = graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer-full.jar"), archive.names())
+        assertEquals(setOf("fullJar"), archive.builders())
+    }
+
+    @Test
+    fun `a JVM module merges every archive its variant declares`() {
+        val project = javaModule()
+        project.configurations.getByName("runtimeElements").outgoing.artifact(project.fullJar())
+
+        val archive = graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer.jar", "consumer-full.jar"), archive.names())
+        assertEquals(setOf("jar", "fullJar"), archive.builders())
+    }
+
+    /** Consumers get what the variant inherits too. */
+    @Test
+    fun `a JVM module merges an archive its variant inherits`() {
+        val project = javaModule()
+        val inherited = project.configurations.create("inherited")
+        project.artifacts.add(inherited.name, project.fullJar())
+        project.configurations.getByName("runtimeElements").extendsFrom(inherited)
+
+        val archive = graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer.jar", "consumer-full.jar"), archive.names())
+    }
+
+    /** As a shaded jar that replaces the module's own does: that task runs, and `jar` need not. */
+    @Test
+    fun `a JVM module merges another task's archive at the path of its jar, built by that task`() {
+        val project = javaModule()
+        project.configurations.getByName("runtimeElements").outgoing {
+            artifacts.clear()
+            artifact(project.fullJar { archiveClassifier.set("") })
+        }
+
+        val archive = graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer.jar"), archive.names())
+        assertEquals(setOf("fullJar"), archive.builders())
+    }
+
+    /** As one that strips or instruments the jar in place does. */
+    @Test
+    fun `a JVM module's archive is built by every task its variant names`() {
+        val project = javaModule()
+        val rewrite = project.tasks.register("rewriteJar")
+        project.configurations.getByName("runtimeElements").outgoing {
+            artifacts.clear()
+            artifact(project.tasks.named("jar")) { builtBy(rewrite) }
+        }
+
+        val archive = graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer.jar"), archive.names())
+        assertEquals(setOf("jar", "rewriteJar"), archive.builders())
+    }
+
+    @Test
+    fun `a JVM module whose variant ships something besides jars and AARs fails`() {
+        val project = javaModule()
+        val zip = project.tasks.register("zip", Zip::class.java) { archiveFileName.set("consumer.zip") }
+        project.configurations.getByName("runtimeElements").outgoing.artifact(zip)
+
+        val error = assertFailsWith<GradleException> { graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release")) }
+
+        assertTrue(error.message?.contains("its variant 'runtimeElements' gives consumers consumer.zip") == true, error.message)
+    }
+
+    /** As a module wrapping a prebuilt AAR does. */
+    @Test
+    fun `a JVM module merges an AAR its variant ships`() {
+        val project = javaModule()
+        val aar = project.tasks.register("aar", Zip::class.java) { archiveFileName.set("vendor.aar") }
+        project.configurations.getByName("runtimeElements").outgoing.artifact(aar)
+
+        val archive = graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer.jar", "vendor.aar"), archive.names())
+    }
+
+    /** Its consumers get nothing either. */
+    @Test
+    fun `a JVM module whose variant ships nothing merges nothing`() {
+        val project = javaModule()
+        project.configurations.getByName("runtimeElements").outgoing.artifacts.clear()
+
+        val archive = graphSelecting(project, "runtimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(emptySet(), archive.names())
+    }
+
+    @Test
+    fun `an Android module merges its AAR, as AGP declares no archive on a variant`() {
+        val project = androidModuleWithTasks("bundleReleaseAar")
+
+        graphSelecting(project, "releaseRuntimeElements").archiveOf(project, arrayOf("Release"))
+    }
+
+    @Test
+    fun `an Android module merges its AAR alone, whatever else the task writes`() {
+        val project = ProjectBuilder.builder().withName("consumer").build()
+        project.tasks.register("bundleReleaseAar", Zip::class.java) {
+            archiveFileName.set("consumer-release.aar")
+            destinationDirectory.set(project.layout.buildDirectory.dir("outputs/aar"))
+            outputs.file(project.layout.buildDirectory.file("outputs/aar/a.sha256"))
+        }
+        project.pluginManager.apply("com.android.library")
+
+        val archive = graphSelecting(project, "releaseRuntimeElements").archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer-release.aar"), archive.names())
+    }
+
+    @Test
+    fun `the legacy walk merges a jar alone, whatever else the task writes`() {
+        val project = javaModule()
+        project.tasks.named("jar") { outputs.file(project.layout.buildDirectory.file("libs/consumer.jar.sha256")) }
+
+        val archive = graphSelecting(project, null).archiveOf(project, arrayOf("Release"))
+
+        assertEquals(setOf("consumer.jar"), archive.names())
+    }
+
+    private fun FileCollection.names() = files.map { it.name }.toSet()
+
+    private fun FileCollection.builders() = buildDependencies.getDependencies(null).map { it.name }.toSet()
+
+    private fun javaModule() = ProjectBuilder.builder().withName("consumer").build().also { it.pluginManager.apply("java-library") }
+
+    private fun org.gradle.api.Project.fullJar(configure: Jar.() -> Unit = {}) = tasks.register("fullJar", Jar::class.java) {
+        archiveClassifier.set("full")
+        configure()
+    }
+
+    private fun moduleWithTasks(vararg names: String) = ProjectBuilder.builder().withName("consumer").build().also { project ->
+        names.forEach { project.tasks.register(it) }
+    }
+
+    private fun androidModuleWithTasks(vararg names: String) = moduleWithTasks(*names).also { it.pluginManager.apply("com.android.library") }
+
+    private fun graphSelecting(project: org.gradle.api.Project, variant: String?) = ProjectGraph(
+        modules = setOf(project),
+        via = emptyMap(),
+        selfInclusionVia = null,
+        variantOf = listOfNotNull(variant).associateBy { project.path },
+    )
+
+    private fun org.gradle.api.Project.outputFile(relativePath: String, lastModified: Long) = layout.buildDirectory.file(relativePath).get().asFile.apply {
+        parentFile.mkdirs()
+        writeText(relativePath)
+        assertTrue(setLastModified(lastModified), "Could not set timestamp for $absolutePath")
+    }
 }
-
-
-
-

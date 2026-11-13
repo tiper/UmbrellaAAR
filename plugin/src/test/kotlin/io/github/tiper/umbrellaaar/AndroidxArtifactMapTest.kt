@@ -1,5 +1,6 @@
 package io.github.tiper.umbrellaaar
 
+import io.github.tiper.umbrellaaar.pom.androidxArtifactMap
 import io.github.tiper.umbrellaaar.pom.mocks.id
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -74,4 +75,3 @@ class AndroidxArtifactMapTest {
         assertEquals("androidx.compose.ui", map.getValue("ui-android").group)
     }
 }
-

@@ -2,38 +2,22 @@
 
 This sample project demonstrates how to build and consume an `UmbrellaAAR` from a multi-module project.
 
-> **Note**: The UmbrellaAAR plugin is available on **Maven Central** and **Gradle Plugin Portal**. For production use, simply add `id("io.github.tiper.umbrellaaar") version "2.0.0"` to your plugins block.
+> **Note**: The UmbrellaAAR plugin is available on **Maven Central** and **Gradle Plugin Portal**. For production use, simply add `id("io.github.tiper.umbrellaaar") version "$umbrellaVersion"` to your plugins block, replacing `$umbrellaVersion` with the [latest release](https://plugins.gradle.org/plugin/io.github.tiper.umbrellaaar).
 
 ## Using the Latest Changes of the Plugin (Development)
 
-If you want to test the latest unreleased changes from this repository, follow these steps:
-
-1. **Publish the Plugin to Maven Local**:
-   Before using the latest changes of the plugin, you need to publish it to your local Maven repository. Run the following command in the root directory of the project:
-
-   ```bash
-   ./gradlew :plugin:publishToMavenLocal
-   ```
-
-2. **Update the Version in `libs.versions.toml`**:
-   After publishing the plugin, update the version in the `libs.versions.toml` file to match the version you just published. For example:
-
-   ```toml
-   [plugins]
-   umbrella-aar = { id = "io.github.tiper.umbrellaaar", version = "x.x.x-SNAPSHOT" }
-   ```
-
-3. **Sync the Project**:
-   Once the version is updated, sync your Gradle project to apply the changes.
+The sample always builds against the plugin source in this repository. The root `settings.gradle.kts` adds `plugin` as an included build, so a change under `plugin/` applies the next time you run Gradle. There is nothing to publish first, and `libs.versions.toml` declares no plugin version.
 
 ## Testing the `UmbrellaAAR`
 
 1. **Publish the `UmbrellaAAR` to Maven Local**:
-   To test the `UmbrellaAAR`, you need to publish it to your local Maven repository. Run the following command:
+   To test the `UmbrellaAAR`, you need to publish it to your local Maven repository. `sample/app` depends on the published coordinates because a `project(":sample:export")` dependency would get the umbrella module as an ordinary library, not the merged AAR. Run the following command:
 
    ```bash
-   ./gradlew :export:publishToMavenLocal
+   ./gradlew :sample:export:publishAndroidReleaseUmbrellaAarPublicationToMavenLocal
    ```
+
+   This publishes only the umbrella. Don't use `publishToMavenLocal` here: the module's other publications share the umbrella's coordinates, so that run fails before anything is published, naming the publications. See [Configuration & Tasks](../README.md#configuration--tasks) in the main README.
 
 2. **Sync the Project**:
    After publishing the `UmbrellaAAR`, sync your Gradle project to use the locally published artifact.
@@ -64,6 +48,6 @@ If you want to test the latest unreleased changes from this repository, follow t
    }
    ```
 
-- Always verify that the versions in your `libs.versions.toml` file match the versions of the artifacts published to Maven Local.
+- Always verify that the `sample-export` version in your `libs.versions.toml` file matches the version of the artifact published to Maven Local.
 
 - This project includes examples of using AIDL and native code. Refer to the `MainActivity` for details on how these are integrated.
