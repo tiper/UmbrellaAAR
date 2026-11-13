@@ -55,8 +55,47 @@ jobs:
       - name: Run unit tests
         run: ./gradlew :plugin:test --no-daemon --build-cache --parallel
 
-  publish:
+  # A tag can sit on a commit no pull request built, so what the pull requests run, runs here too.
+  functional-test:
     needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        toolchain: [ oldest, newest ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Java
+        uses: actions/setup-java@v4.6.0
+        with:
+          distribution: "jetbrains"
+          java-version: 17
+          cache: "gradle"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Fixtures keep their dependencies in a Gradle user home of their own, which setup-java knows
+      # nothing about, and TestKit downloads their distributions to the real one whatever that home.
+      - name: Cache fixture downloads
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.gradle/umbrellaaar-test-kit/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: ${{ runner.os }}-functional-test-${{ matrix.toolchain }}-${{ hashFiles('plugin/src/functionalTest/**/Toolchain.kt') }}
+          restore-keys: |
+            ${{ runner.os }}-functional-test-${{ matrix.toolchain }}-
+
+      - name: Run functional tests
+        run: |
+          ./gradlew :plugin:functionalTest -Pumbrellaaar.toolchain=${{ matrix.toolchain }} --no-daemon --build-cache
+
+  publish:
+    needs: [ guard, functional-test ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
