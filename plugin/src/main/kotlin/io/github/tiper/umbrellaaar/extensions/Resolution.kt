@@ -277,9 +277,11 @@ internal fun Project.resolveUmbrella(export: Configuration, buildType: String): 
         externalsOf = owners.mapValues { (_, owner) ->
             externalEdges[owner.id].orEmpty().flatMap { it.declaredBy(declarations.getValue(owner.id), inForce[owner.id].orEmpty()) }
         },
-        // Gradle follows no edge of a module every path reaches without its transitives, constraints included.
+        // Gradle follows no edge of a module every path reaches without its transitives, constraints
+        // included. A version rule is its dependency's, and goes where an exclude took that one out.
         constraintsOf = owners.mapValues { (_, owner) ->
-            if (Collector.Exclusion.EVERYTHING in inForce[owner.id].orEmpty()) emptyList() else declarations.getValue(owner.id).run { constraints + versionRules.map { versionRule(it) } }
+            val asked = externalEdges[owner.id].orEmpty().mapNotNullTo(hashSetOf()) { edge -> (edge.requested as? ModuleComponentSelector)?.let { it.group to it.module } }
+            if (Collector.Exclusion.EVERYTHING in inForce[owner.id].orEmpty()) emptyList() else declarations.getValue(owner.id).run { constraints + versionRules.filter { (it.group to it.name) in asked }.map { versionRule(it) } }
         },
         attributedOf = owners.mapValues { (_, owner) -> declarations.getValue(owner.id).attributed },
         pinned = resolved.pinnedBy(components.filterNot { isExcluded(projectPathOf(it)) }).mapNotNull { component ->

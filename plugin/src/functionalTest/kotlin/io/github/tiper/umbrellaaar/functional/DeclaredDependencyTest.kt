@@ -730,6 +730,22 @@ class DeclaredDependencyTest {
         consumerOf(umbrella, "plain-consumer").assemble()
     }
 
+    /** The rule is the dependency's, so where a path leaves the dependency out, stock has no rule left. */
+    @Test
+    fun `a strict version does not outlive an exclude of its dependency, like stock`() = fixture {
+        val core = androidLibrary("core") { implementation("com.squareup.okio:okio", "version { strictly(\"3.6.0\") }") }
+        val feature = androidLibrary("feature") { api(core, "exclude(group = \"com.squareup.okio\")") }
+        val umbrella = androidUmbrella { export(feature) }
+
+        val published = umbrella.publish()
+        gradle(*feature.stockPublishTasks.toTypedArray(), *core.stockPublishTasks.toTypedArray(), "-Pstock")
+
+        assertEquals(emptySet(), published.pom.managed)
+        assertEquals(emptyList(), published.moduleMetadata.libraryVariant("java-runtime").constraints)
+        consumerOf(umbrella, "umbrella-consumer") { alsoDependsOn(OKIO_391) }.assemble()
+        Consumer(dir.resolve("stock-consumer"), stockRepo, listOf(feature.coordinates)).apply { alsoDependsOn(OKIO_391) }.assemble()
+    }
+
     @Test
     fun `a rejected version holds for a consumer, like stock`() = fixture {
         val core = androidLibrary("core") { implementation("com.squareup.okio:okio:3.6.0", "version { reject(\"3.9.1\") }") }
