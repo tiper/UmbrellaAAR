@@ -79,6 +79,22 @@ jobs:
         with:
           path: site
 
+      - name: Wait for Pages artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in {1..15}; do
+            if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+              --jq '[.artifacts[] | select(.name == "github-pages" and .expired == false)] | length' \
+              | grep -q '^1$'; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::Pages artifact was not visible after 30 seconds"
+          exit 1
+
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v5.0.1
