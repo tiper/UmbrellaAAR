@@ -132,6 +132,7 @@ class UnresolvedExportTest {
         build.assertLogged(":ios-only (via :sdk -> includeFrameworkExports)")
         build.assertLogged("No matching variant")
         build.assertLogged("expected of a framework export")
+        build.assertNotLogged("none of its Apple frameworks exports a module")
         assertEquals(setOf(":shared"), umbrella.mergedModules().keys)
         assertTrue("com.acme.shared.Shared" in umbrella.bundled().classes)
     }

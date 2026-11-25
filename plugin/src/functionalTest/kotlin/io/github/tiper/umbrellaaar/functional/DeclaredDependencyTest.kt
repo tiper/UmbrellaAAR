@@ -59,6 +59,36 @@ class DeclaredDependencyTest {
         assertPublishesLikeStock(kmpUmbrella { export(feature) }, feature, "feature-android")
     }
 
+    /** KGP adds the standard library once the variant is read, and the umbrella module is never resolved. */
+    @Test
+    fun `a KMP umbrella's own dependencies are published like stock, the standard library included`() = fixture {
+        val umbrella = kmpUmbrella { implementation(OKHTTP) }
+
+        assertPublishesLikeStock(umbrella, umbrella, "sdk-android")
+        assertTrue(umbrella.externalDependencies().any { it.startsWith("org.jetbrains.kotlin:kotlin-stdlib:") }, umbrella.externalDependencies().toString())
+    }
+
+    /** AGP has tools such as Compose's `ui-tooling` declared there, as its variant does not extend that classpath. */
+    @Test
+    fun `what a KMP umbrella declares on its runtime classpath alone is not published, like stock`() = fixture {
+        val umbrella = kmpUmbrella {
+            implementation(OKHTTP)
+            buildScript("dependencies { \"androidRuntimeClasspath\"(\"$GSON\") }")
+        }
+
+        assertPublishesLikeStock(umbrella, umbrella, "sdk-android")
+        assertFalse(umbrella.externalDependencies().any { it.startsWith("com.google.code.gson:") }, umbrella.externalDependencies().toString())
+    }
+
+    /** Its variant extends its runtime classpath, so there a dependency declared on that one ships. */
+    @Test
+    fun `what a com android library umbrella declares on its runtime classpath is published, like stock`() = fixture {
+        val umbrella = androidUmbrella { buildScript("afterEvaluate { dependencies { \"releaseRuntimeClasspath\"(\"$GSON\") } }") }
+
+        assertPublishesLikeStock(umbrella, umbrella)
+        assertTrue(umbrella.externalDependencies().any { it.startsWith("com.google.code.gson:") }, umbrella.externalDependencies().toString())
+    }
+
     @Test
     fun `an exclude on a configuration of a merged module is published like stock`() = fixture {
         val core = androidLibrary("core") {

@@ -16,8 +16,8 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 ⚠️ **Only merges local modules from your project.** External dependencies (like AndroidX) stay separate.
 
 > ✅ **The current `3.x` line is tested in this repository on AGP `9.0.0` / Kotlin `2.2.10` /
-> Gradle `9.1.0` and on AGP `9.5.0` / Kotlin `2.4.21` / Gradle `9.8.2`. `3.0` was validated downstream
-> on a 160-project Kotlin Multiplatform build with AGP `9.3.1` / Gradle `9.5.1` / Kotlin `2.4.10`.**
+> Gradle `9.1.0` and on AGP `9.5.0` / Kotlin `2.4.21` / Gradle `9.8.2`. `3.1` was validated downstream
+> on a 180-project Kotlin Multiplatform build with AGP `9.3.1` / Gradle `9.5.1` / Kotlin `2.4.10`.**
 > If you need the AGP `8.13.0+` / Gradle `8.x` toolchain, use the `2.x` release line instead.
 >
 > **Upgrading from `3.0`?** [CHANGELOG.md](CHANGELOG.md) lists what now fails, what now warns, what
@@ -30,23 +30,24 @@ Think of it like publishing an XCFramework from KMP, but for Android - you devel
 > | `< 2.x` | `8.0.0 – 8.11.x` | Uses the internal `mergeManifests` function (broke in AGP 8.12.1) |
 > | *(gap)* | `8.12.x – 8.12.x` | ❌ Not supported — AGP removed the internal API; replacement feature not yet available |
 > | `2.x` | `8.13.0+` | Uses the public `ManifestMerger2` builder API with `USES_SDK_IN_MANIFEST_LENIENT_HANDLING` |
-> | `3.x` (this version) | `9.0.0+` | Tested on `9.0.0` and `9.5.0`. `3.0` validated downstream on `9.3.1` |
+> | `3.x` (this version) | `9.0.0+` | Tested on `9.0.0` and `9.5.0`. `3.0` and `3.1` validated downstream on `9.3.1` |
 
 ### Compatibility matrix
 
-| | Minimum | Tested here | Validated downstream (`3.0`) | Notes |
+| | Minimum | Tested here | Validated downstream (`3.1`) | Notes |
 |---|---|---|---|---|
 | Gradle | `9.1.0` | `9.1.0`, `9.8.2` | `9.5.1` | AGP `9.0.0` refuses anything lower. |
 | AGP | `9.0.0` | `9.0.0`, `9.5.0` | `9.3.1` | Both `com.android.library` and `com.android.kotlin.multiplatform.library`. For `androidTarget()`, see the note below. |
 | Kotlin | `2.2.10` | `2.2.10`, `2.4.21` (samples: `2.4.10`) | `2.4.10` | AGP `9.0.0` has a runtime dependency on KGP `2.2.10`, so a lower declared version is upgraded to it. Modules are resolved through their Android runtime variant, so no version-specific configuration names are assumed. A Kotlin plugin whose API this version cannot read fails the build, naming that version, rather than publish less than the modules declare. Use one listed here, or update UmbrellaAAR. |
-| Java toolchain | `17` | `17` | `21` | |
+| Java toolchain | `17` | `17` | `17` | |
 | Configuration cache | supported | ✅ | ✅ | Store **and** reuse verified, including POM generation. Warnings print when the entry is stored, see *Known limitations*. |
 | Project isolation | ❌ not supported | | | Merged modules' AARs are read from their own tasks; see *Known limitations*. |
 
-> The downstream column refers to `3.0.0` on a 160-project build merging 95 modules into one SDK AAR,
-> verified to produce an identical published dependency set to the AGP 8 / `2.x` baseline. `3.1` has
-> not been run on a real build of that size. The largest it was tested on is a generated 203-module
-> build.
+> The downstream column refers to `3.1.0` on a 180-project build merging 109 modules into one SDK AAR.
+> Against that build's AGP 8 / `2.x` baseline it merges the same modules, publishes the same
+> dependency set and ships the same `R.txt`, resources and keep rules, and an app builds and minifies
+> against it. `3.0.0` was validated on the same build when it had 160 projects and merged 95 modules,
+> on Java `21`.
 >
 > `org.jetbrains.kotlin.multiplatform` with `com.android.library` and `androidTarget()` is tested with
 > `android.builtInKotlin=false` and `android.newDsl=false` in `gradle.properties`, as `sample-legacy`
@@ -366,6 +367,10 @@ pluginManagement {
    `export(...)` dependencies keep working alongside it. A framework can export a module with no
    Android or JVM target, which is left out of the AAR with a build warning naming it. With
    `umbrellaaar.legacyGraph=true` such a module fails the build instead.
+
+   Only the frameworks a build declares count. If none of them exports a module, as in a build that
+   leaves out the Apple targets, the AAR holds what `export(...)` declares alone, with a build
+   warning. To ship a module whatever the build, declare it with `export(...)` too.
 
 2. **Publishing Configuration (UmbrellaAarPom)**
 
@@ -711,7 +716,11 @@ pluginManagement {
     `minCompileSdk` with that module's minor, the highest minimum AGP version, core library
     desugaring if any module needs it, and the strictest desugar flavor at the highest version. A key
     with no rule of its own, such as `forceCompileSdkPreview`, keeps the first value, with a warning
-    naming what was dropped.
+    naming what was dropped. AGP 9 writes each module's `compileSdk` as its `minCompileSdk`, so a
+    consumer's `compileSdk` has to be at least the highest of them. To ask for less, set
+    `aarMetadata { minCompileSdk = ... }` in `kotlin { android { } }` or `android { defaultConfig { } }`
+    of the umbrella module and every module it merges, as a convention plugin can. Setting it on the
+    umbrella module alone is not enough.
   - `lint.jar`: an AAR carries only one, so the umbrella's own — or else the first module's — is
     kept, and a warning names the modules whose lint checks are not shipped.
 

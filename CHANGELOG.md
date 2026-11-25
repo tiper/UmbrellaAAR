@@ -69,6 +69,7 @@ Warnings print on the build that did the work, see [Known limitations](README.md
 - Publishing an umbrella with no version, naming the module and its publications, on a configuration cache hit as well.
 - Attributes on a dependency, as they do not ship: consumers get the variant their own attributes select.
 - A framework export with no Android or JVM target, which is left out.
+- `includeFrameworkExports` when no Apple framework of the module exports a module, as in a build that leaves out the Apple targets, so the AAR holds what `export(...)` declares alone.
 - The plugin applied from an `afterEvaluate`, as `publish` and `publishToMavenLocal` then still ask for a variant disabled through `androidComponents`. `3.0` built, and so does this.
 
 The warning about shared coordinates on every invocation is gone. A run that would publish over another publication fails instead.
@@ -90,7 +91,7 @@ The warning about shared coordinates on every invocation is gone. A run that wou
 - A transitive module that a constraint, platform or resolution rule moved is now published directly, at `compile` scope, so the POM can gain entries.
 - A rule on a merged module's configuration that matches a dependency declared on it now takes that dependency out of the POM and the `.module`, as Gradle resolves the module without it. `3.0` listed it, and so does a stock publication.
 - A direct dependency is published at the version the whole umbrella resolves to, so a constraint or a resolution rule of the build can change it.
-- `kotlin-stdlib`, which KGP adds late and `3.0` did not always see, now comes from Gradle's resolution, so the POM can gain that line.
+- `kotlin-stdlib`, which KGP adds late and `3.0` did not always see, is now always published, the umbrella module's own included, so the POM can gain that line.
 - A BOM or a `java-platform` project now stays in the resolution, where it gives versions, and no longer goes out as a library. `platform(project(...))` of an Android library merges that library.
 - An `androidTarget()` module now publishes exclusions for `kotlin-stdlib-common`, `kotlin-test-common` and `kotlin-test-annotations-common`, which KGP puts on its configurations, as a stock `.module` does. A build script that did not change gets a longer POM.
 - A dependency declared as `@aar`, or any other `@ext`, now publishes as not transitive, so consumers no longer get what it depends on from the umbrella. Set `isTransitive = true` on it to keep that.
@@ -104,7 +105,7 @@ The warning about shared coordinates on every invocation is gone. A run that wou
 - Values resources go by their real type, a shared attr ships once, styleables of one name are united, and `R.txt` is merged per symbol.
 - File resources and assets of one name no longer fail. The first stays, with a warning, and the ids of the file that goes ship in `res/values/<module>-overridden-ids.xml`.
 - Two modules' service files, `annotations.zip` and `baseline-prof.txt` are now combined, and a second `lint.jar` is dropped with a warning naming the modules whose checks do not ship. All of these failed the merge.
-- The AAR now carries the strictest `aar-metadata.properties` of all merged modules, where `3.0` kept the umbrella's alone: the highest `minCompileSdk` with that module's minor, the highest minimum AGP version, core library desugaring if any module needs it, and the strictest desugar flavor at the highest version. A consumer can now be held to a requirement `3.0` lost. A key with no rule of its own keeps the first value, with a warning.
+- The AAR now carries the strictest `aar-metadata.properties` of all merged modules, where `3.0` kept the umbrella's alone: the highest `minCompileSdk` with that module's minor, the highest minimum AGP version, core library desugaring if any module needs it, and the strictest desugar flavor at the highest version. A consumer can now be held to a requirement `3.0` lost. A key with no rule of its own keeps the first value, with a warning. AGP 9 writes each module's `compileSdk` as its `minCompileSdk`, so setting `aarMetadata { minCompileSdk = ... }` on the umbrella module alone is no longer enough to lower it: set it in every module it merges as well.
 - Merge rules now match entries exactly, so `assets/HEADER.txt`, `assets/proguard.txt` and `libs/foo-classes.jar` ship as the files they are.
 - Keep rules now follow the umbrella's `R`, in every option and in comments. Rule files in JVM jars under `META-INF/proguard/` join `proguard.txt`. When `classes.jar` holds `META-INF/com.android.tools/` rules, a copy of the merged rules joins them under `META-INF/com.android.tools/r8/`, as a consumer that finds those reads no other rules of the AAR.
 - Rule files under `META-INF/com.android.tools/` stay in the folder that says which R8 reads them, and take a module prefix, `<module>-<file>`, so two JVM modules can ship one name.
@@ -143,4 +144,4 @@ The warning about shared coordinates on every invocation is gone. A run that wou
 - A file an archive task writes besides its archive, as a checksum, is no longer handed to the merge, where one that sorted first took the module's name and renamed its prefix in the AAR.
 - `R.txt` and `public.txt` no longer hold a blank line. `3.0` left one where the umbrella's own lines met a module's, and one blank line in `R.txt` leaves Android Studio with no field of that AAR's `R`, in a build that stays green.
 
-Tested on AGP `9.0.0` / Kotlin `2.2.10` / Gradle `9.1.0` and on AGP `9.5.0` / Kotlin `2.4.21` / Gradle `9.8.2`. The largest build it was tested on is a generated 203-module one, not a real project of that size.
+Tested on AGP `9.0.0` / Kotlin `2.2.10` / Gradle `9.1.0` and on AGP `9.5.0` / Kotlin `2.4.21` / Gradle `9.8.2`, and validated downstream on a 180-project Kotlin Multiplatform build with AGP `9.3.1` / Gradle `9.5.1` / Kotlin `2.4.10`, which merges 109 modules into one AAR.

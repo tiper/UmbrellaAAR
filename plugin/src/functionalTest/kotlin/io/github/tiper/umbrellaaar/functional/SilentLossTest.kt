@@ -831,6 +831,8 @@ class SilentLossTest {
         umbrella.export(core, util)
         implementation(androidLibrary("not-exported"))
         buildScript("configurations.named(\"export\") { exclude(group = \"com.nope\"); exclude(module = \"gone\") }")
+        // No Apple framework to follow, as in a build that leaves out the Apple targets.
+        buildScript("umbrellaAar { includeFrameworkExports = true }")
     }
 
     private fun Build.assertEachOnce() {
@@ -840,6 +842,7 @@ class SilentLossTest {
         assertLoggedOnce(NEITHER_AAR_NOR_POM)
         assertLoggedOnce("in the umbrella graph of :sdk are excluded")
         assertLoggedOnce("depends on local module(s) that are not exported")
+        assertLoggedOnce(NO_FRAMEWORK_EXPORTS)
     }
 
     private fun Fixture.assertWarnsOnce(umbrella: Umbrella) {
@@ -909,5 +912,6 @@ class SilentLossTest {
         const val LEFT_NOTHING_OUT = "left nothing out"
         const val NEITHER_AAR_NOR_POM = "ship in neither the AAR nor the POM"
         const val MERGES_NO_MODULES = "merges no modules"
+        const val NO_FRAMEWORK_EXPORTS = "none of its Apple frameworks exports a module"
     }
 }

@@ -115,8 +115,34 @@ internal fun Project.registerUmbrellaClasspath(export: Configuration, buildType:
     if (NAME_AGP_LEAVES_ALONE !in configurations.names) configurations.resolvable(NAME_AGP_LEAVES_ALONE)
 }
 
-/** The declarable configurations feeding the umbrella module's own runtime classpath. */
-private fun Project.hostDeclarations(buildType: String): List<Configuration> = hostClasspath(buildType)?.hierarchy.orEmpty().filter { it.isCanBeDeclared }
+/**
+ * The declarable configurations behind the umbrella module's own runtime variant, which is what a
+ * stock publication of it reads. The runtime classpath of a `com.android.kotlin.multiplatform.library`
+ * holds more: AGP has tools such as Compose's `ui-tooling` declared there, to keep them from consumers.
+ *
+ * Asking the variant for its dependencies first runs what plugins hold back until then, as publishing
+ * it does. KGP adds the standard library that way, and the umbrella module, unlike what it merges, is
+ * never resolved.
+ */
+private fun Project.hostDeclarations(buildType: String): List<Configuration> {
+    val variant = hostVariant(buildType) ?: hostClasspath(buildType) ?: return emptyList()
+    variant.incoming.dependencies
+    return variant.hierarchy.filter { it.isCanBeDeclared }
+}
+
+/**
+ * The umbrella module's own runtime variant: `<buildType>RuntimeElements` for `com.android.library`,
+ * and the Android target's for `com.android.kotlin.multiplatform.library`.
+ */
+private fun Project.hostVariant(buildType: String): Configuration? {
+    configurations.findByName("$buildType$RUNTIME_ELEMENTS")?.let { return it }
+    val name = readingKotlin("the runtime variant of the Android target", "Its runtime classpath stands in, which publishes what is declared on that alone.") {
+        (extensions.findByName("kotlin") as? KotlinTargetsContainer)?.targets
+            ?.firstOrNull { it.platformType == KotlinPlatformType.androidJvm }
+            ?.runtimeElementsConfigurationName
+    }
+    return name?.let(configurations::findByName)
+}
 
 /**
  * What the umbrella module declares on anything but a local module. These leave the configurations

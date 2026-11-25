@@ -283,6 +283,13 @@ class UmbrellaAar : Plugin<Project> {
             )
         }
 
+        if (extensions.getByType<UmbrellaAarExtension>().includeFrameworkExports.get() && frameworkExports().isEmpty()) {
+            warnOnce(
+                "[UmbrellaAar] $path has includeFrameworkExports = true, but none of its Apple frameworks exports a module, so it merges what export(...) declares alone.\n" +
+                    "  A build that leaves out the Apple targets leaves out their exports too. Declare the frameworks in every build that bundles the AAR, or add those modules with export(...).",
+            )
+        }
+
         // Behaviour change vs 2.x, called out explicitly so it can never be a silent difference
         // in the published artifact.
         graph.compileOnlyOnly.filterKeys { rootProject.findProject(it)?.isExcluded(rules) != true }.takeIf { it.isNotEmpty() }?.let { skipped ->
