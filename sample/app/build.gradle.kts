@@ -33,6 +33,8 @@ dependencies {
     implementation(libs.sample.export)
     implementation(compose.material3)
     implementation(compose.components.resources)
+    // `@Preview` is used in main sources, so every build type needs the annotation, not just debug.
+    implementation(compose.preview)
 
     debugImplementation(compose.uiTooling)
 }

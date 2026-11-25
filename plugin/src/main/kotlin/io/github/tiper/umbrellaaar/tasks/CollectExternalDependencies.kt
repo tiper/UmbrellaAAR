@@ -23,13 +23,8 @@ abstract class CollectExternalDependencies : DefaultTask() {
         val output = outputFile.get().asFile
         output.parentFile.mkdirs()
 
-        // Input is already deduplicated by Collector — just validate, sort, and write.
-        val externalDeps = inputDeps
-            .filter { coord ->
-                val parts = coord.split(":")
-                parts.size == 4 && parts.all { it.isNotBlank() }
-            }
-            .sorted()
+        // Input is already deduplicated by Collector — just sort and write.
+        val externalDeps = inputDeps.sorted()
 
         if (externalDeps.isNotEmpty()) {
             output.writeText(externalDeps.joinToString("\n"))

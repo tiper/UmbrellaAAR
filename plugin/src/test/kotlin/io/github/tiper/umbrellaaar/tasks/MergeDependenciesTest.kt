@@ -1,7 +1,10 @@
 package io.github.tiper.umbrellaaar.tasks
 
+import io.github.tiper.umbrellaaar.extensions.childElements
+import io.github.tiper.umbrellaaar.extensions.parseXml
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -18,12 +21,16 @@ class MergeDependenciesTest {
     private val depsDir = File(root, "deps").apply { mkdirs() }
     private val outDir = File(root, "out")
 
+    /** Modules in the order they are declared, which a test can take as the merge order. */
+    private val moduleOrder = linkedSetOf<String>()
+
     private fun mainAar(vararg files: Pair<String, String>) {
         write(mainDir, "AndroidManifest.xml", manifest("com.example.umbrella"))
         files.forEach { (path, content) -> write(mainDir, path, content) }
     }
 
     private fun module(name: String, namespace: String, vararg files: Pair<String, String>) {
+        moduleOrder += name
         val dir = File(depsDir, name).apply { mkdirs() }
         write(dir, "AndroidManifest.xml", manifest(namespace))
         files.forEach { (path, content) -> write(dir, path, content) }
@@ -32,6 +39,7 @@ class MergeDependenciesTest {
     private fun merge(): File {
         val task = project.tasks.register<MergeDependencies>("merge${counter++}").get()
         task.dependencies.set(depsDir)
+        task.moduleOrder.set(moduleOrder)
         task.mainAarDir.set(mainDir)
 
         task.mergedAarDir.set(outDir)
@@ -54,12 +62,78 @@ class MergeDependenciesTest {
     }
 
     @Test
+    fun `a rule on the members of a module's R goes by all that read it`() {
+        mainAar("R.txt" to "int string a_only 0x0")
+        module(
+            "moduleA",
+            "com.example.a",
+            "R.txt" to "int string a_only 0x0",
+            ".r-references" to "string/a_only\tcom.example.a.Second\nstring/a_only\tcom.example.a.First\n",
+            "proguard.txt" to "-keepclassmembers class com.example.a.R\$* { *; }",
+        )
+        module("moduleB", "com.example.b", "R.txt" to "int string b_only 0x0", "proguard.txt" to "-keepclassmembers class com.example.b.R\$* { *; }")
+
+        assertEquals(
+            listOf("-if class com.example.a.First,com.example.a.Second", "-keepclassmembers class com.example.umbrella.R\$string { *** a_only; }"),
+            File(merge(), "proguard.txt").readLines().filter(String::isNotBlank),
+        )
+    }
+
+    @Test
+    fun `a rule on the members of a module's R that a class takes as a class goes behind no if`() {
+        mainAar("R.txt" to "int raw beep 0x0")
+        module(
+            "moduleA",
+            "com.example.a",
+            "R.txt" to "int raw beep 0x0",
+            ".r-references" to "com/example/a/R\$raw\tcom.example.a.Sounds\n",
+            "proguard.txt" to "-keepclassmembers class com.example.a.R\$raw { *; }",
+        )
+        module("moduleB", "com.example.b", "R.txt" to "int raw boop 0x0", ".r-references" to "raw/boop\tcom.example.b.B\n", "proguard.txt" to "-keepclassmembers class com.example.b.R\$raw { *; }")
+
+        assertEquals(
+            listOf("-keepclassmembers class com.example.umbrella.R\$raw { *** beep; }", "-if class com.example.b.B", "-keepclassmembers class com.example.umbrella.R\$raw { *** boop; }"),
+            File(merge(), "proguard.txt").readLines().filter(String::isNotBlank),
+        )
+    }
+
+    @Test
+    fun `a rule on every field of a module's R keeps what that R txt lists and the merge left`() {
+        mainAar("R.txt" to "int string own 0x0")
+        module(
+            "moduleA",
+            "com.example.a",
+            "R.txt" to "int string a_only 0x0\nint id one 0x0",
+            "res/values/values.xml" to resources(attr("mode", "string")),
+            "proguard.txt" to "-keep class com.example.a.** { *; }",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "R.txt" to "int string b_only 0x0\nint attr mode 0x0\nint id gone 0x0",
+            "res/values/values.xml" to resources(attr("mode", children = "<enum name=\"gone\" value=\"1\"/>")),
+            "proguard.txt" to "-keep class com.example.b.R\$id { *; }",
+        )
+
+        val rules = File(merge(), "proguard.txt").readLines().filter(String::isNotBlank)
+
+        assertEquals(
+            listOf(
+                "-keep class com.example.a.** { *; }",
+                "-keep class com.example.umbrella.R\$id { *** one; }",
+                "-keep class com.example.umbrella.R\$string { *** a_only; }",
+            ),
+            rules,
+        )
+    }
+
+    @Test
     fun `R txt symbols are de-duplicated`() {
         mainAar("R.txt" to "int string shared 0x0\nint string umbrella_only 0x0")
         module("moduleA", "com.example.a", "R.txt" to "int string shared 0x0\nint string a_only 0x0")
         module("moduleB", "com.example.b", "R.txt" to "int string shared 0x0\nint string b_only 0x0")
 
-        val lines = File(merge(), "R.txt").readLines().filter { it.isNotBlank() }
+        val lines = File(merge(), "R.txt").readLines()
 
         assertEquals(lines.distinct(), lines, "R.txt must not contain duplicated symbols")
         assertEquals(
@@ -69,15 +143,40 @@ class MergeDependenciesTest {
     }
 
     @Test
-    fun `duplicate resource names do not fail the build`() {
+    fun `a resource declared by two modules is kept once, from the first`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to values("app_name" to "A", "a_only" to "A"))
+        module("moduleB", "com.example.b", "res/values/values.xml" to values("app_name" to "B", "b_only" to "B"))
+
+        // Every values file lands in one AAR, i.e. one resource set for the consumer, where a
+        // resource declared twice fails the build with "Duplicate resources".
+        val out = File(merge(), "res/values")
+
+        assertEquals(listOf("moduleA-values.xml", "moduleB-values.xml"), out.list()!!.sorted())
+        assertEquals(listOf("string/a_only", "string/app_name"), File(out, "moduleA-values.xml").readText().declaredResourceNames().sorted())
+        assertEquals(listOf("string/b_only"), File(out, "moduleB-values.xml").readText().declaredResourceNames())
+    }
+
+    @Test
+    fun `the umbrella's own declaration of a resource wins`() {
+        mainAar("res/values/values.xml" to values("app_name" to "Umbrella"))
+        module("moduleA", "com.example.a", "res/values/values.xml" to values("app_name" to "A"))
+
+        val out = File(merge(), "res/values")
+
+        assertTrue("Umbrella" in File(out, "values.xml").readText())
+        assertEquals(emptyList(), File(out, "moduleA-values.xml").readText().declaredResourceNames())
+    }
+
+    @Test
+    fun `the same resource in different qualifiers is not a duplicate`() {
         mainAar()
         module("moduleA", "com.example.a", "res/values/values.xml" to values("app_name" to "A"))
-        module("moduleB", "com.example.b", "res/values/values.xml" to values("app_name" to "B"))
+        module("moduleB", "com.example.b", "res/values-pt/values-pt.xml" to values("app_name" to "B"))
 
-        // Reported as a warning; AAPT2 in the consumer resolves it last-one-wins, same as AGP.
-        val files = File(merge(), "res/values").list()!!.sorted()
+        val out = merge()
 
-        assertEquals(listOf("moduleA-values.xml", "moduleB-values.xml"), files)
+        assertEquals(listOf("string/app_name"), File(out, "res/values-pt/moduleB-values-pt.xml").readText().declaredResourceNames())
     }
 
     @Test
@@ -94,14 +193,209 @@ class MergeDependenciesTest {
     @Test
     fun `conflicting duplicate files name both contributors`() {
         mainAar()
-        module("moduleA", "com.example.a", "assets/config.json" to """{"owner":"a"}""")
-        module("moduleB", "com.example.b", "assets/config.json" to """{"owner":"b"}""")
+        module("moduleA", "com.example.a", "libs/config.jar" to """{"owner":"a"}""")
+        module("moduleB", "com.example.b", "libs/config.jar" to """{"owner":"b"}""")
 
         val error = assertFailsWith<GradleException> { merge() }
 
-        assertTrue("assets/config.json" in error.message.orEmpty())
+        assertTrue("libs/config.jar" in error.message.orEmpty())
         assertTrue("First contributor : moduleA" in error.message.orEmpty(), error.message.orEmpty())
         assertTrue("Second contributor: moduleB" in error.message.orEmpty(), error.message.orEmpty())
+    }
+
+    @Test
+    fun `a clash of any other file says what can be done about it`() {
+        mainAar()
+        module("moduleA", "com.example.a", "data/config.json" to "a")
+        module("moduleB", "com.example.b", "data/config.json" to "b")
+
+        val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("exclude(...) one of them from export" in error, error)
+        assertFalse("umbrellaAar configuration" in error, error)
+    }
+
+    @Test
+    fun `a clash of names that differ by case names the first contributor too`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/Note.txt" to "a")
+        module("moduleB", "com.example.b", "assets/note.txt" to "b")
+        val diskIgnoresCase = File(depsDir, "moduleA/ASSETS/note.TXT").exists()
+
+        if (diskIgnoresCase) {
+            val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+            assertTrue("First contributor : moduleA" in error, error)
+        } else {
+            assertEquals(setOf("Note.txt", "note.txt"), File(merge(), "assets").list()!!.toSet())
+        }
+    }
+
+    private val diskIgnoresCase by lazy { File(root, "case-probe").mkdirs() && File(root, "CASE-PROBE").exists() }
+
+    /** Both [paths] stay where the disk can hold them. Where it cannot they fail the merge, by [variants]. */
+    private fun assertHeldApart(variants: Pair<String, String>, paths: List<String>, first: String = "moduleA") {
+        if (diskIgnoresCase) {
+            val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+            assertTrue("'${variants.first}' and '${variants.second}' differ by case alone" in error, error)
+            assertTrue("First contributor : $first" in error, error)
+            assertTrue("Second contributor: moduleB" in error, error)
+            assertTrue("Rename one in its module, or build on a case-sensitive disk" in error, error)
+        } else {
+            val out = merge()
+            paths.forEach { assertTrue(File(out, it).isFile, it) }
+        }
+    }
+
+    @Test
+    fun `assets in folders that differ by case fail where the disk cannot hold both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/Foo/a.txt" to "a")
+        module("moduleB", "com.example.b", "assets/foo/b.txt" to "b")
+
+        assertHeldApart("assets/Foo" to "assets/foo", listOf("assets/Foo/a.txt", "assets/foo/b.txt"))
+    }
+
+    @Test
+    fun `the same bytes under names that differ by case are two paths all the same`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/Note.txt" to "same")
+        module("moduleB", "com.example.b", "assets/note.txt" to "same")
+
+        assertHeldApart("assets/Note.txt" to "assets/note.txt", listOf("assets/Note.txt", "assets/note.txt"))
+    }
+
+    @Test
+    fun `assets that differ by case from the umbrella's own name it`() {
+        mainAar("assets/Foo/a.txt" to "a")
+        module("moduleB", "com.example.b", "assets/foo/b.txt" to "b")
+
+        assertHeldApart("assets/Foo" to "assets/foo", listOf("assets/Foo/a.txt", "assets/foo/b.txt"), first = MAIN)
+    }
+
+    @Test
+    fun `resources in folders that differ by case fail where the disk cannot hold both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/drawable-HDPI/a.xml" to "<a/>")
+        module("moduleB", "com.example.b", "res/drawable-hdpi/b.xml" to "<b/>")
+
+        assertHeldApart("res/drawable-HDPI" to "res/drawable-hdpi", listOf("res/drawable-HDPI/a.xml", "res/drawable-hdpi/b.xml"))
+    }
+
+    @Test
+    fun `values in folders that differ by case fail where the disk cannot hold both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values-PT/a.xml" to values("a" to "a"))
+        module("moduleB", "com.example.b", "res/values-pt/b.xml" to values("b" to "b"))
+
+        assertHeldApart("res/values-PT" to "res/values-pt", listOf("res/values-PT/moduleA-a.xml", "res/values-pt/moduleB-b.xml"))
+    }
+
+    @Test
+    fun `jars in folders that differ by case fail where the disk cannot hold both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "libs/Foo/a.jar" to "a")
+        module("moduleB", "com.example.b", "libs/foo/b.jar" to "b")
+
+        assertHeldApart("libs/Foo" to "libs/foo", listOf("libs/Foo/a.jar", "libs/foo/b.jar"))
+    }
+
+    @Test
+    fun `a values file takes no path from another, as it goes under its module's name`() {
+        mainAar("res/values/Strings.xml" to values("a" to "a"))
+        module("moduleB", "com.example.b", "res/values/strings.xml" to values("b" to "b"))
+
+        val out = merge()
+
+        assertTrue(File(out, "res/values/moduleB-strings.xml").isFile)
+    }
+
+    @Test
+    fun `what the first module overrides takes no path at all`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/drawable/a.png" to "a")
+        module("moduleB", "com.example.b", "res/drawable/a.PNG" to "b")
+
+        val out = merge()
+
+        assertEquals("a", File(out, "res/drawable/a.png").readText())
+    }
+
+    private fun assertFileAndFolder(path: String, at: String, first: String = "moduleA") {
+        val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+        assertTrue("UmbrellaAar cannot merge '$path': '$at' is a file in one module and a folder in the other" in error, error)
+        assertTrue("First contributor : $first" in error, error)
+        assertTrue("Second contributor: moduleB" in error, error)
+        assertTrue("Rename the file or the folder in one of the modules" in error, error)
+    }
+
+    @Test
+    fun `a folder where a module before has a file names both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/foo" to "a file")
+        module("moduleB", "com.example.b", "assets/foo/bar.txt" to "in a folder")
+
+        assertFileAndFolder("assets/foo/bar.txt", at = "assets/foo")
+    }
+
+    @Test
+    fun `a file where a module before has a folder names both`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/foo/bar.txt" to "in a folder")
+        module("moduleB", "com.example.b", "assets/foo" to "a file")
+
+        assertFileAndFolder("assets/foo", at = "assets/foo")
+    }
+
+    @Test
+    fun `a file any number of folders up is found`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/foo" to "a file")
+        module("moduleB", "com.example.b", "assets/foo/a/b/bar.txt" to "in a folder")
+
+        assertFileAndFolder("assets/foo/a/b/bar.txt", at = "assets/foo")
+    }
+
+    @Test
+    fun `a file over what a module before has further down names that module`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/foo/a/bar.txt" to "in a folder")
+        module("moduleB", "com.example.b", "assets/foo/a" to "a file")
+
+        assertFileAndFolder("assets/foo/a", at = "assets/foo/a")
+    }
+
+    @Test
+    fun `a folder where the umbrella has a file names it`() {
+        mainAar("assets/foo" to "a file")
+        module("moduleB", "com.example.b", "assets/foo/bar.txt" to "in a folder")
+
+        assertFileAndFolder("assets/foo/bar.txt", at = "assets/foo", first = MAIN)
+    }
+
+    @Test
+    fun `a file where the umbrella has a folder names it`() {
+        mainAar("assets/foo/bar.txt" to "in a folder")
+        module("moduleB", "com.example.b", "assets/foo" to "a file")
+
+        assertFileAndFolder("assets/foo", at = "assets/foo", first = MAIN)
+    }
+
+    @Test
+    fun `a file and a folder clash away from assets as well`() {
+        mainAar()
+        module("moduleA", "com.example.a", "jni/arm64-v8a" to "a file")
+        module("moduleB", "com.example.b", "jni/arm64-v8a/liba.so" to "in a folder")
+
+        assertFileAndFolder("jni/arm64-v8a/liba.so", at = "jni/arm64-v8a")
+    }
+
+    @Test
+    fun `a file and a folder that differ by case go by the case`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/FOO" to "a file")
+        module("moduleB", "com.example.b", "assets/foo/bar.txt" to "in a folder")
+
+        assertHeldApart("assets/FOO" to "assets/foo", listOf("assets/FOO", "assets/foo/bar.txt"))
     }
 
     @Test
@@ -109,10 +403,84 @@ class MergeDependenciesTest {
         mainAar()
         module("moduleA", "com.example.a", "assets/shared.json" to """{"shared":true}""")
         module("moduleB", "com.example.b", "assets/shared.json" to """{"shared":true}""")
+        module("moduleC", "com.example.c", "libs/shared.jar" to "same")
+        module("moduleD", "com.example.d", "libs/shared.jar" to "same")
 
         val out = merge()
 
         assertEquals("""{"shared":true}""", File(out, "assets/shared.json").readText())
+        assertEquals("same", File(out, "libs/shared.jar").readText())
+    }
+
+    @Test
+    fun `the first module keeps a file resource under any extension`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/drawable/ic.9.png" to "nine patch")
+        module("moduleB", "com.example.b", "res/drawable/ic.xml" to "<shape/>")
+        module("moduleC", "com.example.c", "res/drawable-hdpi/ic.xml" to "<shape/>")
+
+        val out = merge()
+
+        assertEquals(listOf("ic.9.png"), File(out, "res/drawable").list()!!.toList())
+        assertEquals(listOf("ic.xml"), File(out, "res/drawable-hdpi").list()!!.toList())
+    }
+
+    @Test
+    fun `the first module keeps an asset`() {
+        mainAar()
+        module("moduleA", "com.example.a", "assets/config.json" to "a")
+        module("moduleB", "com.example.b", "assets/config.json" to "b", "assets/config.txt" to "b")
+
+        val out = merge()
+
+        assertEquals("a", File(out, "assets/config.json").readText())
+        assertEquals("b", File(out, "assets/config.txt").readText())
+    }
+
+    @Test
+    fun `two modules with deep links are told that renaming is no way out`() {
+        mainAar()
+        module("moduleA", "com.example.a", "navigation.json" to "[a]")
+        module("moduleB", "com.example.b", "navigation.json" to "[b]")
+
+        val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("generates" in error && "deep links" in error, error)
+        assertFalse("Rename" in error, error)
+    }
+
+    @Test
+    fun `two modules with prefab are told that renaming is no way out`() {
+        mainAar()
+        module("moduleA", "com.example.a", "prefab/prefab.json" to "{a}")
+        module("moduleB", "com.example.b", "prefab/prefab.json" to "{b}")
+
+        val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("generates" in error && "prefab" in error, error)
+        assertFalse("Rename" in error, error)
+    }
+
+    @Test
+    fun `a file in the classes of two modules is not called a class`() {
+        mainAar()
+        module("moduleA", "com.example.a", "classes/config/shared.properties" to "a")
+        module("moduleB", "com.example.b", "classes/config/shared.properties" to "b")
+
+        val error = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertFalse("same class" in error, error)
+    }
+
+    @Test
+    fun `a native library of two modules still fails`() {
+        mainAar()
+        module("moduleA", "com.example.a", "jni/arm64-v8a/libshared.so" to "a")
+        module("moduleB", "com.example.b", "jni/arm64-v8a/libshared.so" to "b")
+
+        val error = assertFailsWith<GradleException> { merge() }
+
+        assertTrue("native library" in error.message.orEmpty(), error.message.orEmpty())
     }
 
     // ── classes.jar is streamed straight from the extracted module folders ────────────────────
@@ -131,6 +499,43 @@ class MergeDependenciesTest {
         )
         // The exploded tree must not survive into the packaged AAR.
         assertFalse(File(out, "classes").exists())
+    }
+
+    @Test
+    fun `classes jar holds its entries uncompressed, as the AAR deflates the jar as a whole`() {
+        mainAar("classes/com/example/Main.class" to "same bytes ".repeat(1_000))
+        module("feature", "com.example.feature", "classes/com/example/Feature.class" to "more bytes ".repeat(1_000))
+
+        java.util.zip.ZipFile(File(merge(), "classes.jar")).use { zip ->
+            zip.entries().asSequence().forEach { assertTrue(it.compressedSize >= it.size, "${it.name} was compressed") }
+        }
+    }
+
+    @Test
+    fun `module descriptors stay out of classes jar, whichever release they are for`() {
+        mainAar()
+        listOf("a", "b").forEach { name ->
+            module(
+                "module$name",
+                "com.example.$name",
+                "classes/module-info.class" to name,
+                "classes/META-INF/versions/9/module-info.class" to name,
+                "classes/META-INF/versions/9/com/example/$name/A.class" to name,
+            )
+        }
+
+        assertEquals(
+            listOf("META-INF/versions/9/com/example/a/A.class", "META-INF/versions/9/com/example/b/A.class"),
+            jarEntries(File(merge(), "classes.jar")),
+        )
+    }
+
+    @Test
+    fun `a class that only ends in module-info is no descriptor`() {
+        mainAar()
+        module("moduleA", "com.example.a", "classes/nested/module-info.class" to "a")
+
+        assertEquals(listOf("nested/module-info.class"), jarEntries(File(merge(), "classes.jar")))
     }
 
     @Test
@@ -201,10 +606,66 @@ class MergeDependenciesTest {
             "public.txt" to "string a_name\nstring b_name",
         )
 
-        val lines = File(merge(), "public.txt").readLines().filter { it.isNotBlank() }
+        val lines = File(merge(), "public.txt").readLines()
 
         assertEquals(listOf("string a_name", "string b_name", "string umbrella_name"), lines.sorted())
         assertEquals(lines.distinct(), lines)
+    }
+
+    @Test
+    fun `tables read on past the umbrella's own lines, as a blank line loses all of them`() {
+        mainAar(
+            "res/values/values.xml" to values("umbrella_name" to "U"),
+            "R.txt" to "int string umbrella_name 0x0\n",
+            "public.txt" to "string umbrella_name\n",
+        )
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to values("a_name" to "A"),
+            "R.txt" to "int string a_name 0x0\n",
+            "public.txt" to "string a_name\n",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to values("b_name" to "B"),
+            "R.txt" to "\nint string b_name 0x0\n\n",
+            "public.txt" to "\nstring b_name\n\n",
+        )
+
+        val out = merge()
+
+        assertEquals(listOf("int string a_name 0x0", "int string b_name 0x0", "int string umbrella_name 0x0"), File(out, "R.txt").readLines().sorted())
+        assertEquals(listOf("string a_name", "string b_name", "string umbrella_name"), File(out, "public.txt").readLines().sorted())
+    }
+
+    @Test
+    fun `a blank line of the umbrella's own stays out of public txt`() {
+        mainAar("public.txt" to "string first\n\nstring second\n")
+
+        assertEquals("string first\nstring second\n", File(merge(), "public.txt").readText())
+    }
+
+    @Test
+    fun `a public txt that lost every line is empty, not a blank line`() {
+        mainAar()
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to resources(attr("mode", "string")),
+            "R.txt" to "int attr mode 0x0\n",
+            "public.txt" to "",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to resources(attr("mode", children = ONE)),
+            "R.txt" to "int attr mode 0x0\nint id one 0x0\n",
+            "public.txt" to "id one\n",
+        )
+
+        assertEquals("", File(merge(), "public.txt").readText())
     }
 
     @Test
@@ -235,16 +696,834 @@ class MergeDependenciesTest {
         // Code only — contributes no resources, so it has no public surface to lose.
         module("moduleB", "com.example.b", "classes/com/example/b/B.class" to "b")
 
-        assertEquals(listOf("string a_name"), File(merge(), "public.txt").readLines().filter { it.isNotBlank() })
+        assertEquals(listOf("string a_name"), File(merge(), "public.txt").readLines())
+    }
+
+    // ── R.txt is keyed by symbol, not by line ────────────────────────────────────────────────
+
+    @Test
+    fun `the same symbol with different placeholder IDs is written once`() {
+        mainAar("R.txt" to "int string umbrella_only 0x7f010000")
+        module("moduleA", "com.example.a", "R.txt" to "int string shared 0x7f0e0001\nint[] styleable Shared { 0x7f040001 }")
+        module("moduleB", "com.example.b", "R.txt" to "int string shared 0x7f0e0042\nint[] styleable Shared { 0x7f040009 }")
+
+        val lines = File(merge(), "R.txt").readLines()
+
+        assertEquals(
+            listOf("int string shared 0x7f0e0001", "int string umbrella_only 0x7f010000", "int[] styleable Shared { 0x7f040001 }"),
+            lines.sorted(),
+        )
+    }
+
+    // ── A values resource is told apart by its real type ─────────────────────────────────────
+
+    @Test
+    fun `every spelling of a resource is one resource`() {
+        val spellings = listOf(
+            """<string-array name="%s"><item>a</item></string-array>""" to """<integer-array name="%s"><item>1</item></integer-array>""",
+            """<array name="%s"><item>a</item></array>""" to """<string-array name="%s"><item>b</item></string-array>""",
+            """<integer-array name="%s"><item>1</item></integer-array>""" to """<array name="%s"><item>2</item></array>""",
+            """<string name="%s">a</string>""" to """<item name="%s" type="string">b</item>""",
+            """<bool name="%s">true</bool>""" to """<item name="%s" type="bool">false</item>""",
+            """<color name="%s">#ff0000</color>""" to """<item name="%s" type="color">#00ff00</item>""",
+            """<dimen name="%s">1dp</dimen>""" to """<item name="%s" type="dimen">2dp</item>""",
+            """<integer name="%s">1</integer>""" to """<item name="%s" type="integer">2</item>""",
+            """<fraction name="%s">1%%</fraction>""" to """<item name="%s" type="fraction">2%%</item>""",
+            """<id name="%s"/>""" to """<item name="%s" type="id"/>""",
+            """<drawable name="%s">#ff0000</drawable>""" to """<item name="%s" type="drawable">#00ff00</item>""",
+            """<style name="%s"/>""" to """<item name="%s" type="style">@style/Other</item>""",
+            """<plurals name="%s"><item quantity="other">a</item></plurals>""" to """<item name="%s" type="plurals">@string/other</item>""",
+        )
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(spellings.mapIndexed { index, (first, _) -> first.format("r$index") }.joinToString("")))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(spellings.mapIndexed { index, (_, second) -> second.format("r$index") }.joinToString("")))
+
+        merge()
+
+        assertEquals(spellings.size, valuesOf("moduleA").declaredResourceNames().size)
+        assertEquals(emptyList(), valuesOf("moduleB").declaredResourceNames())
+    }
+
+    @Test
+    fun `one name in two types is two resources`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources("""<string name="c">a</string><array name="d"><item>a</item></array>"""))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources("""<item name="c" type="color">#ff0000</item><string name="d">a</string>"""))
+
+        merge()
+
+        assertEquals(listOf("color/c", "string/d"), valuesOf("moduleB").declaredResourceNames())
+    }
+
+    @Test
+    fun `a public declaration is not the resource it names`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources("""<string name="c">a</string>"""))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources("""<public name="c" type="string"/><public name="c" type="color"/>"""))
+        module("moduleC", "com.example.c", "res/values/values.xml" to resources("""<public name="c" type="string"/>"""))
+
+        merge()
+
+        assertEquals(2, valuesOf("moduleB").declaredResourceNames().size)
+        assertEquals(emptyList(), valuesOf("moduleC").declaredResourceNames())
+    }
+
+    @Test
+    fun `a values file nothing changed is copied as it is`() {
+        mainAar()
+        val xml = "<resources>\n  <!-- kept -->\n  <string name=\"a\">a</string>\n</resources>\n"
+        module("moduleA", "com.example.a", "res/values/values.xml" to xml)
+
+        merge()
+
+        assertEquals(xml, valuesOf("moduleA"))
+    }
+
+    // ── An attr is one attr, however many styleables define it ───────────────────────────────
+
+    @Test
+    fun `a nested attr defined twice is left defined once`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Header", attr("title", "string"))))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(styleable("Footer", attr("title", "string"))))
+
+        merge()
+
+        assertTrue(attr("title", "string") in valuesOf("moduleA").withoutSpaces(), valuesOf("moduleA"))
+        assertTrue(attr("title") in valuesOf("moduleB").withoutSpaces(), valuesOf("moduleB"))
+    }
+
+    @Test
+    fun `of nested definitions that fit, the one in the last styleable by name stays, as aapt2 reads it last`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Alpha", attr("title", "reference|string"))))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(styleable("Zeta", attr("title", "string"))))
+
+        merge()
+
+        assertTrue(attr("title") in valuesOf("moduleA").withoutSpaces(), valuesOf("moduleA"))
+        assertTrue(attr("title", "string") in valuesOf("moduleB").withoutSpaces(), valuesOf("moduleB"))
+    }
+
+    @Test
+    fun `the umbrella's own file is settled where it is`() {
+        mainAar("res/values/values.xml" to resources(styleable("Alpha", attr("title", "string"))))
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Zeta", attr("title", "string"))))
+
+        val out = merge()
+
+        assertTrue(attr("title") in File(out, "res/values/values.xml").readText().withoutSpaces())
+        assertTrue(attr("title", "string") in valuesOf("moduleA").withoutSpaces(), valuesOf("moduleA"))
+    }
+
+    @Test
+    fun `a top-level attr keeps its definition over a nested one, wherever it is`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Header", attr("ahead", "string"), attr("behind", "string")) + attr("top", "string")))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(attr("behind", "string") + styleable("Footer", attr("top", "string"))))
+
+        merge()
+
+        val first = valuesOf("moduleA").withoutSpaces()
+        val second = valuesOf("moduleB").withoutSpaces()
+        assertTrue(attr("behind") in first && attr("ahead", "string") in first && attr("top", "string") in first, first)
+        assertTrue(attr("behind", "string") in second && attr("top") in second, second)
+    }
+
+    @Test
+    fun `only the first of two top-level attrs stays, even if they differ`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(attr("mode", "string")))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(attr("mode", children = ONE)))
+
+        merge()
+
+        assertEquals(listOf("attr/mode"), valuesOf("moduleA").declaredResourceNames())
+        assertEquals(emptyList(), valuesOf("moduleB").declaredResourceNames())
+    }
+
+    @Test
+    fun `the enum of a definition goes with it`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Header", attr("mode", children = ONE))))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(styleable("Footer", attr("mode", children = ONE))))
+
+        merge()
+
+        assertTrue("enum" in valuesOf("moduleA"), valuesOf("moduleA"))
+        assertFalse("enum" in valuesOf("moduleB"), valuesOf("moduleB"))
+        assertTrue(attr("mode") in valuesOf("moduleB").withoutSpaces(), valuesOf("moduleB"))
+    }
+
+    @Test
+    fun `definitions that do not fit fail the merge, naming both modules and what to do`() {
+        mainAar()
+        listOf(
+            styleable("A", attr("x", "string")) to styleable("B", attr("x", "color")),
+            styleable("A", attr("x", "string|color")) to styleable("B", attr("x", "string")),
+            styleable("A", attr("x", "string")) to styleable("B", attr("x", "reference")),
+            styleable("A", attr("x", children = ONE)) to styleable("B", attr("x", children = TWO)),
+            styleable("A", attr("x", children = ONE)) to styleable("B", attr("x", "string")),
+            styleable("A", attr("x", children = """<flag name="one" value="1"/>""")) to styleable("B", attr("x", children = ONE)),
+            attr("x") to styleable("B", attr("x", "string")),
+            attr("x", "string") to styleable("B", attr("x", "color")),
+            attr("x", "string") to styleable("B", attr("x", children = ONE)),
+        ).forEach { (first, second) ->
+            module("moduleA", "com.example.a", "res/values/values.xml" to resources(first))
+            module("moduleB", "com.example.b", "res/values/values.xml" to resources(second))
+
+            val failure = assertFailsWith<GradleException>(first) { merge() }
+
+            val message = failure.message.orEmpty()
+            assertTrue("res/values/attr/x" in message && "moduleA" in message && "moduleB" in message, message)
+            assertTrue("Declare it once" in message, message)
+        }
+    }
+
+    @Test
+    fun `a top-level attr that lost never meets a nested one`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(attr("x", "color")))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(attr("x", "string")))
+        module("moduleC", "com.example.c", "res/values/values.xml" to resources(styleable("C", attr("x", "color"))))
+
+        merge()
+
+        assertEquals(emptyList(), valuesOf("moduleB").declaredResourceNames())
+    }
+
+    @Test
+    fun `an attr is settled folder by folder`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("A", attr("x", "string"))))
+        module("moduleB", "com.example.b", "res/values-land/values.xml" to resources(styleable("B", attr("x", "color"))))
+
+        val out = merge()
+
+        assertTrue("color" in File(out, "res/values-land/moduleB-values.xml").readText())
+    }
+
+    @Test
+    fun `a framework attr defines nothing`() {
+        mainAar()
+        val styleable = styleable("A", attr("android:text"))
+        val other = styleable("B", """<attr name="android:text" format="string"/>""")
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(other))
+
+        merge()
+
+        assertEquals(resources(other), valuesOf("moduleB"))
+    }
+
+    // ── A styleable shared by name is the union of them ──────────────────────────────────────
+
+    @Test
+    fun `styleables of one name unite, in the resources and in R txt alike`() {
+        mainAar()
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to resources(styleable("Shared", attr("android:text"), attr("p", "string"))),
+            "R.txt" to "int attr p 0x0\nint[] styleable Shared { 0x101014f, 0x0 }\nint styleable Shared_android_text 0\nint styleable Shared_p 1\n",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to resources(styleable("Shared", attr("android:gravity"), attr("android:text"), attr("q", "color"))),
+            "R.txt" to "int attr q 0x0\nint[] styleable Shared { 0x10100af, 0x101014f, 0x0 }\nint styleable Shared_android_gravity 0\nint styleable Shared_android_text 1\nint styleable Shared_q 2\n",
+        )
+
+        val out = merge()
+
+        val first = valuesOf("moduleA").withoutSpaces()
+        listOf(attr("android:text"), attr("android:gravity"), attr("p", "string"), attr("q", "color")).forEach { assertEquals(1, first.split(it).size - 1, "$it in $first") }
+        assertEquals(emptyList(), valuesOf("moduleB").declaredResourceNames())
+        assertEquals(
+            listOf(
+                "int attr p 0x0",
+                "int[] styleable Shared { 0x10100af, 0x101014f, 0x0, 0x0 }",
+                "int styleable Shared_android_gravity 0",
+                "int styleable Shared_android_text 1",
+                "int styleable Shared_p 2",
+                "int styleable Shared_q 3",
+                "int attr q 0x0",
+            ),
+            File(out, "R.txt").readLines(),
+        )
+    }
+
+    @Test
+    fun `a child two styleables of one name define is the last module's`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Shared", attr("p", "string"), attr("r", "string"))))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(styleable("Shared", attr("p", "color"))))
+        module("moduleC", "com.example.c", "res/values/values.xml" to resources(styleable("Shared", attr("r"))))
+
+        merge()
+
+        val merged = valuesOf("moduleA").withoutSpaces()
+        assertTrue(attr("p", "color") in merged && attr("r") in merged, merged)
+        assertFalse("string" in merged, merged)
+    }
+
+    @Test
+    fun `styleables are united before attrs are settled`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(styleable("Shared", attr("x", "string"))))
+        module("moduleB", "com.example.b", "res/values/values.xml" to resources(styleable("Shared", attr("x", "color"))))
+        module("moduleC", "com.example.c", "res/values/values.xml" to resources(styleable("Other", attr("x", "color"))))
+
+        merge()
+
+        assertTrue(attr("x", "color") in valuesOf("moduleA").withoutSpaces() || attr("x", "color") in valuesOf("moduleC").withoutSpaces())
+        assertFalse("string" in valuesOf("moduleA"), valuesOf("moduleA"))
+    }
+
+    @Test
+    fun `a styleable both modules declare alike is written to R txt as it was`() {
+        mainAar()
+        val block = "int[] styleable Shared { 0x0, 0x7f040001 }\nint styleable Shared_a 0\nint styleable Shared_b 1"
+        module("moduleA", "com.example.a", "R.txt" to "$block\nint string a 0x0\n")
+        module("moduleB", "com.example.b", "R.txt" to "int[] styleable Shared { 0x0, 0x7f040009 }\nint styleable Shared_a 0\nint styleable Shared_b 1\n")
+
+        assertEquals("$block\nint string a 0x0\n", File(merge(), "R.txt").readText())
+    }
+
+    @Test
+    fun `a line that only looks like the child of a styleable stays a symbol of its own`() {
+        mainAar()
+        module("moduleA", "com.example.a", "R.txt" to "int string a 0x0\nint styleable Stray_a 0\nint[] styleable Next { 0x0 }\nint styleable Next_b 0\n")
+
+        assertEquals(
+            listOf("int string a 0x0", "int styleable Stray_a 0", "int[] styleable Next { 0x0 }", "int styleable Next_b 0"),
+            File(merge(), "R.txt").readLines(),
+        )
+    }
+
+    // ── R.txt says what the resources say ────────────────────────────────────────────────────
+
+    @Test
+    fun `an enum id whose definition lost leaves R txt and public txt`() {
+        mainAar()
+        module(
+            "moduleA",
+            "com.example.a",
+            "res/values/values.xml" to resources(attr("mode", "string")),
+            "R.txt" to "int attr mode 0x0\n",
+            "public.txt" to "attr mode\n",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to resources(attr("mode", children = ONE)),
+            "R.txt" to "int attr mode 0x0\nint id one 0x0\n",
+            "public.txt" to "attr mode\nid one\n",
+        )
+
+        val out = merge()
+
+        assertEquals(listOf("int attr mode 0x0"), File(out, "R.txt").readLines())
+        assertEquals(listOf("attr mode"), File(out, "public.txt").readLines())
+    }
+
+    @Test
+    fun `an enum id something else still declares stays in R txt`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(attr("a", "string") + attr("b", "string") + attr("c", "string")), "R.txt" to "int attr a 0x0\nint attr b 0x0\nint attr c 0x0\n")
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to resources(attr("a", children = """<enum name="in_values" value="1"/>""") + attr("b", children = """<enum name="in_layout" value="1"/>""") + attr("c", children = """<enum name="in_land" value="1"/>""") + """<item name="in_values" type="id"/>"""),
+            "res/values-land/values.xml" to resources(attr("c", children = """<enum name="in_land" value="1"/>""")),
+            "res/layout/panel.xml" to """<View xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/in_layout"/>""",
+            "R.txt" to "int attr a 0x0\nint attr b 0x0\nint attr c 0x0\nint id in_values 0x0\nint id in_layout 0x0\nint id in_land 0x0\nint layout panel 0x0\n",
+        )
+
+        val symbols = File(merge(), "R.txt").readLines()
+
+        assertTrue(listOf("int id in_values 0x0", "int id in_layout 0x0", "int id in_land 0x0").all { it in symbols }, "$symbols")
+    }
+
+    @Test
+    fun `the ids of an overridden file stay, as they do in a consumer`() {
+        mainAar()
+        val layout = { ids: String -> """<View xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/$ids"/>""" }
+        module("moduleA", "com.example.a", "res/layout/shared.xml" to layout("kept"), "res/raw/data.xml" to layout("in_raw"), "R.txt" to "int id kept 0x0\nint layout shared 0x0\n")
+        module("moduleB", "com.example.b", "res/layout/shared.xml" to layout("only_b"), "res/raw/data.xml" to layout("in_raw_too"), "R.txt" to "int id only_b 0x0\nint layout shared 0x0\n")
+        module("moduleC", "com.example.c", "res/layout/shared.xml" to layout("kept"), "R.txt" to "int id kept 0x0\nint layout shared 0x0\n")
+
+        val out = merge()
+
+        assertEquals(listOf("kept"), File(out, "res/layout/shared.xml").readText().let { Regex("@\\+id/(\\w+)").findAll(it).map { match -> match.groupValues[1] }.toList() })
+        assertEquals(listOf("id/only_b"), File(out, "res/values/moduleB-overridden-ids.xml").readText().declaredResourceNames())
+        assertEquals(listOf("moduleB-overridden-ids.xml"), File(out, "res/values").list()!!.toList())
+        assertTrue("int id only_b 0x0" in File(out, "R.txt").readLines())
+    }
+
+    // ── What classes read from the umbrella's R has to be there ──────────────────────────────
+
+    @Test
+    fun `a field a module's class reads and nothing declares fails the merge`() {
+        mainAar()
+        module("moduleA", "com.example.a", "R.txt" to "int string real 0x0\n", R_REFERENCES to "string/real\tcom.example.a.A\nstring/ghost\tcom.example.a.A\$Inner\n")
+
+        val failure = assertFailsWith<GradleException> { merge() }
+
+        val message = failure.message.orEmpty()
+        assertTrue("string/ghost read by com.example.a.A\$Inner in moduleA" in message, message)
+        assertFalse("string/real" in message, message)
+        assertTrue("NoSuchFieldError" in message, message)
+        assertTrue("Declare" in message, message)
+    }
+
+    @Test
+    fun `a field another module declares passes, styleables included`() {
+        mainAar("R.txt" to "int string own 0x0\n")
+        module(
+            "moduleA",
+            "com.example.a",
+            R_REFERENCES to "string/own\tcom.example.a.A\nstring/b\tcom.example.a.A\nstyleable/Shared\tcom.example.a.A\nstyleable/Shared_android_text\tcom.example.a.A\nattr/p\tcom.example.a.A\n",
+        )
+        module("moduleB", "com.example.b", "R.txt" to "int string b 0x0\nint attr p 0x0\nint[] styleable Shared { 0x101014f }\nint styleable Shared_android_text 0\n")
+
+        val out = merge()
+
+        assertFalse(File(out, R_REFERENCES).exists(), "What classes read is for this check alone, and has no place in an AAR")
+    }
+
+    @Test
+    fun `a dropped resource is caught, whichever way it was lost`() {
+        mainAar()
+        module("moduleA", "com.example.a", "res/values/values.xml" to resources(attr("mode", "string")), "R.txt" to "int attr mode 0x0\n")
+        module(
+            "moduleB",
+            "com.example.b",
+            "res/values/values.xml" to resources(attr("mode", children = ONE)),
+            "R.txt" to "int attr mode 0x0\nint id one 0x0\n",
+            R_REFERENCES to "id/one\tcom.example.b.B\n",
+        )
+
+        val message = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("id/one read by com.example.b.B in moduleB" in message, message)
+    }
+
+    @Test
+    fun `a field the umbrella's own class reads is held to the same check`() {
+        mainAar()
+        writeBytes(mainDir, "classes/com/example/umbrella/Facade.class", classReadingField("com/example/umbrella/Facade", "com/example/a/R\$string"))
+        module("moduleA", "com.example.a", "R.txt" to "int string other 0x0\n")
+
+        val message = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("string/label read by com.example.umbrella.Facade in <main module>" in message, message)
+    }
+
+    @Test
+    fun `a long list of missing fields is cut short`() {
+        mainAar()
+        module("moduleA", "com.example.a", "R.txt" to "int string real 0x0\n", R_REFERENCES to (1..25).joinToString("") { "string/ghost$it\tcom.example.a.A\n" })
+
+        val message = assertFailsWith<GradleException> { merge() }.message.orEmpty()
+
+        assertTrue("and 5 more" in message, message)
+    }
+
+    // ── The umbrella's own classes follow the merged R ───────────────────────────────────────
+
+    @Test
+    fun `umbrella classes referencing a merged module R are relocated to the umbrella R`() {
+        mainAar()
+        writeBytes(mainDir, "classes/com/example/umbrella/Facade.class", classReadingField("com/example/umbrella/Facade", "com/example/a/R\$string"))
+        module("moduleA", "com.example.a", "classes/com/example/a/A.class" to "a", "R.txt" to "int string label 0x0\n")
+
+        val owners = fieldOwners(jarEntry(File(merge(), "classes.jar"), "com/example/umbrella/Facade.class"))
+
+        assertEquals(setOf("com/example/umbrella/R\$string"), owners)
+    }
+
+    /** The umbrella's classes come before the rules in the jar, so a targeted rule goes by them too. */
+    @Test
+    fun `a targeted rule on a module's R that the umbrella's own class takes as a class goes behind no if`() {
+        mainAar("R.txt" to "int raw beep 0x0")
+        writeBytes(mainDir, "classes/com/example/umbrella/Sounds.class", classTaking("com/example/umbrella/Sounds", "com/example/a/R\$raw"))
+        module("moduleA", "com.example.a", "R.txt" to "int raw beep 0x0", "classes/META-INF/com.android.tools/r8/rules.pro" to "-keepclassmembers class com.example.a.R\$raw { *; }")
+
+        val rules = jarEntry(File(merge(), "classes.jar"), "META-INF/com.android.tools/r8/moduleA-rules.pro").decodeToString()
+
+        assertEquals(listOf("-keepclassmembers class com.example.umbrella.R\$raw { *** beep; }"), rules.lines().filter(String::isNotBlank))
+    }
+
+    @Test
+    fun `umbrella classes referencing a third-party R are left alone`() {
+        mainAar()
+        writeBytes(mainDir, "classes/com/example/umbrella/Facade.class", classReadingField("com/example/umbrella/Facade", "com/vendor/R\$string"))
+        module("moduleA", "com.example.a", "classes/com/example/a/A.class" to "a")
+
+        val owners = fieldOwners(jarEntry(File(merge(), "classes.jar"), "com/example/umbrella/Facade.class"))
+
+        assertEquals(setOf("com/vendor/R\$string"), owners)
+    }
+
+    // ── AAR metadata keeps the strictest requirement of every module ─────────────────────────
+
+    @Test
+    fun `aar metadata of merged modules is folded into the umbrella's`() {
+        mainAar(AAR_METADATA to metadata("minCompileSdk" to "21", "minAndroidGradlePluginVersion" to "1.0.0"))
+        module("moduleA", "com.example.a", AAR_METADATA to metadata("minCompileSdk" to "35", "coreLibraryDesugaringEnabled" to "true"))
+        module("moduleB", "com.example.b", AAR_METADATA to metadata("minCompileSdk" to "34", "minAndroidGradlePluginVersion" to "8.6.0"))
+
+        val merged = File(merge(), AAR_METADATA).readText()
+
+        assertTrue("minCompileSdk=35" in merged, merged)
+        assertTrue("minAndroidGradlePluginVersion=8.6.0" in merged, merged)
+        assertTrue("coreLibraryDesugaringEnabled=true" in merged, merged)
+        assertTrue("aarFormatVersion=1.0" in merged, merged)
+    }
+
+    // ── Files every module may legitimately ship ─────────────────────────────────────────────
+
+    @Test
+    fun `a baseline profile reads on past the umbrella's own lines`() {
+        mainAar("baseline-prof.txt" to "HSPLcom/example/umbrella/Main;-><init>()V\n")
+        module("moduleA", "com.example.a", "baseline-prof.txt" to "HSPLcom/example/a/A;-><init>()V\n")
+
+        assertEquals(listOf("HSPLcom/example/umbrella/Main;-><init>()V", "HSPLcom/example/a/A;-><init>()V"), File(merge(), "baseline-prof.txt").readLines())
+    }
+
+    @Test
+    fun `baseline profiles are concatenated without duplicates`() {
+        mainAar("baseline-prof.txt" to "HSPLcom/example/umbrella/Main;-><init>()V")
+        module("moduleA", "com.example.a", "baseline-prof.txt" to "HSPLcom/example/a/A;-><init>()V\nLkotlin/Unit;")
+        module("moduleB", "com.example.b", "baseline-prof.txt" to "HSPLcom/example/b/B;-><init>()V\nLkotlin/Unit;")
+
+        val lines = File(merge(), "baseline-prof.txt").readLines()
+
+        assertEquals(
+            listOf("HSPLcom/example/a/A;-><init>()V", "HSPLcom/example/b/B;-><init>()V", "HSPLcom/example/umbrella/Main;-><init>()V", "Lkotlin/Unit;"),
+            lines.sorted(),
+        )
+    }
+
+    @Test
+    fun `service provider files from several modules are merged`() {
+        mainAar("classes/META-INF/services/com.example.Plugin" to "com.example.umbrella.MainPlugin")
+        module("moduleA", "com.example.a", "classes/META-INF/services/com.example.Plugin" to "# provided by a\ncom.example.a.APlugin")
+        module("moduleB", "com.example.b", "classes/META-INF/services/com.example.Plugin" to "com.example.b.BPlugin\ncom.example.a.APlugin")
+
+        val providers = jarEntry(File(merge(), "classes.jar"), "META-INF/services/com.example.Plugin").decodeToString().lines().filter { it.isNotBlank() }
+
+        assertEquals(listOf("com.example.umbrella.MainPlugin", "com.example.a.APlugin", "com.example.b.BPlugin"), providers)
+    }
+
+    @Test
+    fun `typedef annotations of every module are kept`() {
+        mainAar()
+        moduleWithZip("moduleA", "com.example.a", "annotations.zip", "com/example/a/annotations.xml" to annotations("com.example.a.A void set(int) 0"))
+        moduleWithZip(
+            "moduleB",
+            "com.example.b",
+            "annotations.zip",
+            "com/example/b/annotations.xml" to annotations("com.example.b.B void set(int) 0"),
+            // Same package as moduleA: the items of both must survive.
+            "com/example/a/annotations.xml" to annotations("com.example.a.Other int get() 0"),
+        )
+
+        val zip = File(merge(), "annotations.zip")
+
+        assertEquals(listOf("com/example/a/annotations.xml", "com/example/b/annotations.xml"), jarEntries(zip))
+        val shared = jarEntry(zip, "com/example/a/annotations.xml").decodeToString()
+        assertTrue("com.example.a.A void set(int) 0" in shared, shared)
+        assertTrue("com.example.a.Other int get() 0" in shared, shared)
+    }
+
+    @Test
+    fun `a second lint jar is dropped instead of failing the merge`() {
+        mainAar("lint.jar" to "umbrella-checks")
+        module("moduleA", "com.example.a", "lint.jar" to "a-checks")
+
+        assertEquals("umbrella-checks", File(merge(), "lint.jar").readText())
+    }
+
+    // ── Special files are only special at the AAR root ───────────────────────────────────────
+
+    @Test
+    fun `a file whose name only ends in R txt is copied, not merged as a symbol table`() {
+        mainAar("R.txt" to "int string umbrella_only 0x0")
+        module(
+            "moduleA",
+            "com.example.a",
+            "R.txt" to "int string a_only 0x0",
+            "assets/HEADER.txt" to "first\n\nsecond",
+            "assets/docs/R.txt" to "not a\n\nsymbol table",
+        )
+
+        val out = merge()
+
+        assertEquals("first\n\nsecond", File(out, "assets/HEADER.txt").readText())
+        assertEquals("not a\n\nsymbol table", File(out, "assets/docs/R.txt").readText())
+        assertEquals(
+            listOf("int string a_only 0x0", "int string umbrella_only 0x0"),
+            File(out, "R.txt").readLines().sorted(),
+        )
+    }
+
+    @Test
+    fun `rules outside the AAR root are copied, not moved into proguard txt`() {
+        val files = arrayOf(
+            "assets/rules.pro" to "-dontwarn assets.pro",
+            "assets/proguard.txt" to "-dontwarn assets.proguard",
+            "assets/legacy-proguard.txt" to "-dontwarn assets.legacy",
+            "res/raw/rules.pro" to "-dontwarn raw.pro",
+            "legacy-proguard.txt" to "-dontwarn root.legacy",
+        )
+        mainAar("proguard.txt" to "-keep class com.example.umbrella.** { *; }")
+        module("moduleA", "com.example.a", "proguard.txt" to "-keep class com.example.a.A { *; }", *files)
+
+        val out = merge()
+
+        files.forEach { (path, content) -> assertEquals(content, File(out, path).readText(), path) }
+        assertEquals(
+            listOf("-keep class com.example.a.A { *; }", "-keep class com.example.umbrella.** { *; }"),
+            File(out, "proguard.txt").readLines().filter { it.isNotBlank() }.sorted(),
+        )
+    }
+
+    @Test
+    fun `a manifest outside the AAR root is copied, not sent to the manifest merger`() {
+        val template = """
+            <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.template">
+                <uses-permission android:name="com.example.TEMPLATE_ONLY" />
+            </manifest>
+        """.trimIndent()
+        val paths = listOf("assets/template/AndroidManifest.xml", "assets/SampleAndroidManifest.xml", "GeneratedAndroidManifest.xml")
+        mainAar()
+        module("moduleA", "com.example.a", *paths.map { it to template }.toTypedArray())
+
+        val out = merge()
+
+        paths.forEach { assertEquals(template, File(out, it).readText(), it) }
+        val manifest = File(out, "AndroidManifest.xml").readText()
+        assertFalse("TEMPLATE_ONLY" in manifest, manifest)
+    }
+
+    @Test
+    fun `targeted rules take the merged ones with them`() {
+        mainAar()
+        module("moduleA", "com.example.a", "proguard.txt" to "-keep class com.example.a.R\$string")
+        module("moduleB", "com.example.b", "classes/META-INF/com.android.tools/r8/b.pro" to "-keep class com.example.b.B")
+
+        val classes = File(merge(), "classes.jar")
+
+        assertEquals("-keep class com.example.b.B", jarEntry(classes, "META-INF/com.android.tools/r8/moduleB-b.pro").decodeToString())
+        assertEquals("-keep class com.example.umbrella.R\$string\n", jarEntry(classes, "META-INF/com.android.tools/r8/umbrella-merged.pro").decodeToString())
+    }
+
+    @Test
+    fun `a targeted rule file gets a name of its module's, in the folder that targets it`() {
+        mainAar("classes/META-INF/com.android.tools/r8/rules.pro" to "-keep class com.example.umbrella.U")
+        module(
+            "moduleA",
+            "com.example.a",
+            "classes/META-INF/com.android.tools/r8/rules.pro" to "-keep class com.example.a.A",
+            "classes/META-INF/com.android.tools/r8-from-1.0.0/rules.pro" to "-keep class com.example.a.From",
+        )
+        module(
+            "moduleB",
+            "com.example.b",
+            "classes/META-INF/com.android.tools/r8/rules.pro" to "-keep class com.example.b.B",
+            "classes/META-INF/com.android.tools/r8-from-1.0.0-upto-9.0.0/rules.pro" to "-keep class com.example.b.Range",
+        )
+
+        val classes = File(merge(), "classes.jar")
+
+        assertEquals(
+            mapOf(
+                "r8/rules.pro" to "-keep class com.example.umbrella.U",
+                "r8/moduleA-rules.pro" to "-keep class com.example.a.A",
+                "r8/moduleB-rules.pro" to "-keep class com.example.b.B",
+                "r8-from-1.0.0/moduleA-rules.pro" to "-keep class com.example.a.From",
+                "r8-from-1.0.0-upto-9.0.0/moduleB-rules.pro" to "-keep class com.example.b.Range",
+            ),
+            jarEntries(classes).associate { it.removePrefix("META-INF/com.android.tools/") to jarEntry(classes, it).decodeToString() },
+        )
+    }
+
+    @Test
+    fun `targeted rules two modules share word for word are read from either`() {
+        val shared = "classes/META-INF/com.android.tools/r8/rules.pro" to "-keep class com.example.Shared"
+        mainAar()
+        module("moduleA", "com.example.a", shared)
+        module("moduleB", "com.example.b", shared)
+
+        val classes = File(merge(), "classes.jar")
+
+        assertEquals(
+            listOf("META-INF/com.android.tools/r8/moduleA-rules.pro", "META-INF/com.android.tools/r8/moduleB-rules.pro"),
+            jarEntries(classes),
+        )
+        jarEntries(classes).forEach { assertEquals("-keep class com.example.Shared", jarEntry(classes, it).decodeToString()) }
+    }
+
+    @Test
+    fun `a targeted rule on a merged R follows it under the module's name too`() {
+        val rules = "classes/META-INF/com.android.tools/r8/rules.pro"
+        mainAar()
+        module("moduleA", "com.example.a", rules to "-keep class com.example.a.R\$string")
+        module("moduleB", "com.example.b", rules to "-keep class com.example.a.R\$id")
+
+        val classes = File(merge(), "classes.jar")
+
+        assertEquals("-keep class com.example.umbrella.R\$string", jarEntry(classes, "META-INF/com.android.tools/r8/moduleA-rules.pro").decodeToString())
+        assertEquals("-keep class com.example.umbrella.R\$id", jarEntry(classes, "META-INF/com.android.tools/r8/moduleB-rules.pro").decodeToString())
+    }
+
+    @Test
+    fun `merged rules take a name nothing else holds`() {
+        mainAar(
+            "proguard.txt" to "-keep class com.example.umbrella.Merged",
+            "classes/META-INF/com.android.tools/r8/umbrella-merged.pro" to "-keep class com.example.umbrella.Own",
+        )
+        module("umbrella", "com.example.a", "classes/META-INF/com.android.tools/r8/merged-2.pro" to "-keep class com.example.a.A")
+
+        val classes = File(merge(), "classes.jar")
+
+        assertEquals(
+            mapOf(
+                "umbrella-merged.pro" to "-keep class com.example.umbrella.Own",
+                "umbrella-merged-2.pro" to "-keep class com.example.a.A",
+                "umbrella-merged-3.pro" to "-keep class com.example.umbrella.Merged",
+            ),
+            jarEntries(classes).associate { it.substringAfter("r8/") to jarEntry(classes, it).decodeToString() },
+        )
+    }
+
+    @Test
+    fun `no targeted rules leave the merged ones at the root alone`() {
+        mainAar()
+        module("moduleA", "com.example.a", "proguard.txt" to "-keep class com.example.a.R\$string")
+
+        val out = merge()
+
+        assertEquals("-keep class com.example.umbrella.R\$string\n", File(out, "proguard.txt").readText())
+        assertEquals(emptyList(), jarEntries(File(out, "classes.jar")))
+    }
+
+    @Test
+    fun `a jar whose name only ends in classes jar survives extraction`() {
+        val embedded = zipOf(listOf("com/vendor/Foo.class" to "foo".encodeToByteArray()))
+        mainAar()
+        extractedModule(
+            "moduleA",
+            "com.example.a",
+            "classes.jar" to zipOf(listOf("com/example/a/A.class" to "a".encodeToByteArray())),
+            "libs/foo-classes.jar" to embedded,
+            "libs/classes.jar" to embedded,
+        )
+
+        val out = merge()
+
+        assertContentEquals(embedded, File(out, "libs/foo-classes.jar").readBytes())
+        assertContentEquals(embedded, File(out, "libs/classes.jar").readBytes())
+        // Only the AAR's own classes.jar is exploded and rebuilt.
+        assertEquals(listOf("com/example/a/A.class"), jarEntries(File(out, "classes.jar")))
     }
 
     private fun jarEntries(jar: File): List<String> = java.util.zip.ZipFile(jar).use { zip ->
         zip.entries().asSequence().map { it.name }.sorted().toList()
     }
 
+    private fun jarEntry(jar: File, name: String): ByteArray = java.util.zip.ZipFile(jar).use { zip ->
+        zip.getInputStream(requireNotNull(zip.getEntry(name)) { "$name not in ${jarEntries(jar)}" }).readBytes()
+    }
+
     private fun write(dir: File, path: String, content: String) = File(dir, path).apply {
         parentFile.mkdirs()
         writeText(content)
+    }
+
+    private fun writeBytes(dir: File, path: String, content: ByteArray) = File(dir, path).apply {
+        parentFile.mkdirs()
+        writeBytes(content)
+    }
+
+    private fun moduleWithZip(name: String, namespace: String, zipName: String, vararg entries: Pair<String, String>) {
+        module(name, namespace)
+        writeBytes(File(depsDir, name), zipName, zipOf(entries.map { (entry, content) -> entry to content.encodeToByteArray() }))
+    }
+
+    /** Lays [name] out with the real extraction, from an AAR made of [entries]. */
+    private fun extractedModule(name: String, namespace: String, vararg entries: Pair<String, ByteArray>) {
+        moduleOrder += name
+        val aar = writeBytes(root, "$name.aar", zipOf(listOf("AndroidManifest.xml" to manifest(namespace).encodeToByteArray()) + entries))
+        val extraction = project.objects.newInstance(ExtractDependencies.ExtractParameters::class.java).apply {
+            archive.set(aar)
+            target.set(File(depsDir, name))
+            module.set(":$name")
+            mainNamespace.set("com/example/umbrella")
+            mergedNamespaces.set(emptySet<String>())
+        }
+        object : ExtractDependencies.ExtractArchive() {
+            override fun getParameters() = extraction
+        }.execute()
+    }
+
+    private fun zipOf(entries: List<Pair<String, ByteArray>>): ByteArray = java.io.ByteArrayOutputStream().also { bytes ->
+        java.util.zip.ZipOutputStream(bytes).use { zos ->
+            entries.forEach { (entry, content) ->
+                zos.putNextEntry(java.util.zip.ZipEntry(entry))
+                zos.write(content)
+                zos.closeEntry()
+            }
+        }
+    }.toByteArray()
+
+    private fun metadata(vararg entries: Pair<String, String>) = (listOf("aarFormatVersion" to "1.0", "aarMetadataVersion" to "1.0") + entries).joinToString("\n") { (k, v) -> "$k=$v" }
+
+    private fun annotations(item: String) = """<root><item name="$item"><annotation name="androidx.annotation.IntDef"/></item></root>"""
+
+    /** A class `name` whose single method reads a static int field of [owner]. */
+    private fun classReadingField(name: String, owner: String): ByteArray {
+        val cw = org.objectweb.asm.ClassWriter(0)
+        cw.visit(org.objectweb.asm.Opcodes.V1_8, org.objectweb.asm.Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null)
+        cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, "label", "()I", null, null).apply {
+            visitCode()
+            visitFieldInsn(org.objectweb.asm.Opcodes.GETSTATIC, owner, "label", "I")
+            visitInsn(org.objectweb.asm.Opcodes.IRETURN)
+            visitMaxs(1, 1)
+            visitEnd()
+        }
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** A class `name` whose single method takes [type] as a class, as `R.raw::class.java` does. */
+    private fun classTaking(name: String, type: String): ByteArray {
+        val cw = org.objectweb.asm.ClassWriter(0)
+        cw.visit(org.objectweb.asm.Opcodes.V1_8, org.objectweb.asm.Opcodes.ACC_PUBLIC, name, null, "java/lang/Object", null)
+        cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, "type", "()Ljava/lang/Class;", null, null).apply {
+            visitCode()
+            visitLdcInsn(org.objectweb.asm.Type.getObjectType(type))
+            visitInsn(org.objectweb.asm.Opcodes.ARETURN)
+            visitMaxs(1, 1)
+            visitEnd()
+        }
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    private fun fieldOwners(bytecode: ByteArray): Set<String> = buildSet {
+        org.objectweb.asm.ClassReader(bytecode).accept(
+            object : org.objectweb.asm.ClassVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                override fun visitMethod(access: Int, name: String?, descriptor: String?, signature: String?, exceptions: Array<out String>?) = object : org.objectweb.asm.MethodVisitor(org.objectweb.asm.Opcodes.ASM9) {
+                    override fun visitFieldInsn(opcode: Int, owner: String, name: String?, descriptor: String?) {
+                        add(owner)
+                    }
+                }
+            },
+            0,
+        )
     }
 
     private fun manifest(packageName: String) = """
@@ -254,6 +1533,23 @@ class MergeDependenciesTest {
         </manifest>
     """.trimIndent()
 
+    private fun resources(xml: String) = "<resources>$xml</resources>"
+
+    private fun styleable(name: String, vararg children: String) = "<declare-styleable name=\"$name\">${children.joinToString("")}</declare-styleable>"
+
+    private fun attr(name: String, format: String? = null, children: String = ""): String {
+        val type = format?.let { " format=\"$it\"" }.orEmpty()
+        return if (children.isEmpty()) "<attr$type name=\"$name\"/>" else "<attr$type name=\"$name\">$children</attr>"
+    }
+
+    /** The XML serializer puts attributes in its own order, and [attr] writes them in that one. */
+    private fun String.withoutSpaces() = replace(Regex(">\\s+<"), "><")
+
+    private fun valuesOf(module: String) = File(outDir, "res/values/$module-values.xml").readText()
+
+    /** `<type>/<name>` of every element right under `<resources>`. */
+    private fun String.declaredResourceNames() = parseXml()?.childElements().orEmpty().map { "${it.getAttribute("type").ifBlank { it.tagName }}/${it.getAttribute("name")}" }
+
     private fun values(vararg entries: Pair<String, String>) = buildString {
         appendLine("<resources>")
         entries.forEach { (name, value) -> appendLine("""    <string name="$name">$value</string>""") }
@@ -262,6 +1558,8 @@ class MergeDependenciesTest {
 
     private companion object {
         var counter = 0
+        const val ONE = "<enum name=\"one\" value=\"1\"/>"
+        const val TWO = "<enum name=\"two\" value=\"2\"/>"
+        const val AAR_METADATA = "META-INF/com/android/build/gradle/aar-metadata.properties"
     }
 }
-

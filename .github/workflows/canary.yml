@@ -1,0 +1,64 @@
+name: Canary
+
+# Runs the functional tests on toolchains newer than the ones the release was tested on. It runs on
+# a schedule and not on pull requests, so a new AGP breaking the plugin warns the maintainer without
+# blocking anyone's work.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  functional-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        agp: [ stable, preview ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Java
+        uses: actions/setup-java@v4.6.0
+        with:
+          distribution: "jetbrains"
+          java-version: 17
+          cache: "gradle"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Find the newest versions
+        id: versions
+        run: |
+          agp_metadata=$(curl -fsSL https://dl.google.com/android/maven2/com/android/tools/build/gradle/maven-metadata.xml)
+          kgp_metadata=$(curl -fsSL https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin/maven-metadata.xml)
+          newest_stable() { grep -oE '<version>[0-9]+\.[0-9]+\.[0-9]+</version>' | sed 's/<[^>]*>//g' | sort -V | tail -1; }
+          if [ "${{ matrix.agp }}" = preview ]; then
+            agp=$(sed -n 's:.*<latest>\(.*\)</latest>.*:\1:p' <<< "$agp_metadata")
+          else
+            agp=$(newest_stable <<< "$agp_metadata")
+          fi
+          {
+            echo "agp=$agp"
+            echo "kgp=$(newest_stable <<< "$kgp_metadata")"
+            echo "gradle=$(curl -fsSL https://services.gradle.org/versions/current | jq -r .version)"
+          } | tee -a "$GITHUB_OUTPUT"
+
+      - name: Run functional tests
+        run: |
+          ./gradlew :plugin:functionalTest --rerun --no-daemon --build-cache \
+            -Pumbrellaaar.toolchain=newest \
+            -Pumbrellaaar.agp=${{ steps.versions.outputs.agp }} \
+            -Pumbrellaaar.kgp=${{ steps.versions.outputs.kgp }} \
+            -Pumbrellaaar.gradle=${{ steps.versions.outputs.gradle }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: canary-results-${{ matrix.agp }}
+          path: |
+            plugin/build/reports/tests/functionalTest/**
+            plugin/build/test-results/functionalTest/**

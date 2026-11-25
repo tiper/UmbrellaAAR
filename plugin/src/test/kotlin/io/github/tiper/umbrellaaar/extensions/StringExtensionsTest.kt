@@ -53,7 +53,6 @@ class StringExtensionsTest {
         assertEquals("mylib", "mylib".cleanPlatformSuffixes())
     }
 
-
     @Test
     fun `matches returns true when both group and module match`() {
         val rule = "com.example" to "library"

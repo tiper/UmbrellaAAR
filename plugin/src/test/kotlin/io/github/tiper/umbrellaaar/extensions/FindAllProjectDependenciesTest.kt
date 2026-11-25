@@ -99,6 +99,32 @@ class FindAllProjectDependenciesTest {
     }
 
     @Test
+    fun `does not follow a platform, which ships nothing`() {
+        val root = rootProject()
+        val module = root.subproject("module")
+        val bom = root.subproject("bom").also { it.pluginManager.apply("java-platform") }
+        val config = root.exportConfig().apply {
+            dependencies.add(root.dependencies.create(module))
+        }
+        module.declarationConfig("api").dependencies.add(module.dependencies.platform(module.dependencies.create(bom)))
+
+        assertEquals(setOf(module), root.findAllProjectDependencies(config))
+    }
+
+    @Test
+    fun `follows a platform of a library, as Gradle does for an Android one`() {
+        val root = rootProject()
+        val module = root.subproject("module")
+        val library = root.subproject("library")
+        val config = root.exportConfig().apply {
+            dependencies.add(root.dependencies.create(module))
+        }
+        module.declarationConfig("api").dependencies.add(module.dependencies.platform(module.dependencies.create(library)))
+
+        assertEquals(setOf(module, library), root.findAllProjectDependencies(config))
+    }
+
+    @Test
     fun `does not follow resolvable configurations`() {
         val root = rootProject()
         val moduleA = root.subproject("moduleA")

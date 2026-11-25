@@ -1,3 +1,5 @@
+import java.time.Duration
+import java.util.concurrent.Callable
 import org.gradle.jvm.toolchain.JavaLanguageVersion.of
 
 plugins {
@@ -5,10 +7,17 @@ plugins {
     id("com.gradle.plugin-publish") version "2.0.0"
     id("signing")
     alias(libs.plugins.vanniktech.maven.publish)
+    alias(libs.plugins.ktlint)
 }
 
 group = "io.github.tiper"
-version = "3.0.0"
+version = "3.1.0"
+
+// Fixtures resolve the plugin from here by version, as a real build would. TestKit's
+// withPluginClasspath would load it apart from the AGP and KGP the fixture applies.
+val pluginUnderTestRepo = layout.buildDirectory.dir("plugin-under-test")
+
+fun functionalTestProperty(name: String) = providers.gradleProperty("umbrellaaar.$name")
 
 java {
     toolchain {
@@ -19,13 +28,47 @@ java {
 dependencies {
     compileOnly(libs.android.gradle.plugin)
     compileOnly(libs.kotlin.gradle.plugin)
+    compileOnly(libs.android.tools.common)
     implementation(libs.asm.commons)
-    implementation(libs.android.tools.common)
 
     testImplementation(kotlin("test"))
     testImplementation(gradleTestKit())
     testRuntimeOnly(libs.android.gradle.plugin)
-    testRuntimeOnly(libs.kotlin.gradle.plugin)
+    testImplementation(libs.kotlin.gradle.plugin)
+}
+
+testing {
+    suites {
+        register<JvmTestSuite>("functionalTest") {
+            useJUnit()
+            dependencies {
+                implementation(gradleTestKit())
+                implementation(localGroovy())
+                implementation("org.jetbrains.kotlin:kotlin-test-junit:$embeddedKotlinVersion")
+            }
+            targets.configureEach {
+                testTask {
+                    dependsOn("publishAllPublicationsToPluginUnderTestRepository")
+                    // The publish tasks always run and stamp maven-metadata.xml, so only the
+                    // artifacts themselves can say whether the plugin under test changed.
+                    inputs.files(fileTree(pluginUnderTestRepo) { exclude("**/maven-metadata.xml*") })
+                        .withPropertyName("pluginUnderTest")
+                        .withPathSensitivity(PathSensitivity.RELATIVE)
+                    // SigningGuardTest runs this very script.
+                    inputs.file("build.gradle.kts").withPropertyName("ownBuildScript").withPathSensitivity(PathSensitivity.NONE)
+                    systemProperty("umbrellaaar.version", version.toString())
+                    systemProperty("umbrellaaar.pluginRepo", pluginUnderTestRepo.get().asFile.path)
+                    systemProperty("umbrellaaar.fixturesDir", layout.buildDirectory.dir("functional-test").get().asFile.path)
+                    systemProperty("umbrellaaar.testKitDir", functionalTestProperty("testKitDir").getOrElse(gradle.gradleUserHomeDir.resolve("umbrellaaar-test-kit").path))
+                    listOf("toolchain", "agp", "kgp", "gradle").forEach { name ->
+                        functionalTestProperty(name).orNull?.let { systemProperty("umbrellaaar.$name", it) }
+                    }
+                    // Below the CI job's limit, so a wedged fixture still leaves a report behind.
+                    timeout = Duration.ofMinutes(80)
+                }
+            }
+        }
+    }
 }
 
 gradlePlugin {
@@ -79,10 +122,23 @@ publishing {
                 password = providers.environmentVariable("GITHUB_TOKEN").orNull
             }
         }
+        maven {
+            name = "PluginUnderTest"
+            url = uri(pluginUnderTestRepo)
+        }
     }
 }
 
 signing {
+    // Contributors and the functional tests publish without keys. Anything that leaves this machine
+    // must not, whatever the environment says, so a release fails instead of shipping unsigned. This
+    // is asked as each signature comes up: the root builds this plugin's jar to configure itself, and
+    // that is the only graph whenReady would ever see here.
+    setRequired(
+        Callable {
+            gradle.taskGraph.allTasks.any { it.name == "publishPlugins" || (it is PublishToMavenRepository && it.repository.name != "PluginUnderTest") }
+        },
+    )
     useInMemoryPgpKeys(
         providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKey").orNull,
         providers.environmentVariable("ORG_GRADLE_PROJECT_signingInMemoryKeyPassword").orNull,
@@ -116,4 +172,8 @@ mavenPublishing {
             developerConnection = "scm:git:ssh://github.com/tiper/UmbrellaAAR.git"
         }
     }
+}
+
+ktlint {
+    version = libs.versions.ktlint.asProvider()
 }

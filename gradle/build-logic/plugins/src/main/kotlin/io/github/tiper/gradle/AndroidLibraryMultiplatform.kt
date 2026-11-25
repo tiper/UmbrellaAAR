@@ -3,6 +3,7 @@ package io.github.tiper.gradle
 import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryTarget
 import io.github.tiper.gradle.extensions.CompileSdk
 import io.github.tiper.gradle.extensions.MinSdk
+import io.github.tiper.gradle.extensions.createAndroidApisConfiguration
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
@@ -11,6 +12,7 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 class AndroidLibraryMultiplatform : Plugin<Project> {
     override fun apply(target: Project) = with(target) {
         pluginManager.apply("com.android.kotlin.multiplatform.library")
+        createAndroidApisConfiguration()
         extensions.configure<KotlinMultiplatformExtension> {
             extensions.configure<KotlinMultiplatformAndroidLibraryTarget> {
                 compileSdk(CompileSdk)

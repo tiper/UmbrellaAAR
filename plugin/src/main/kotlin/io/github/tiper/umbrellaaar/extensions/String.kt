@@ -7,7 +7,6 @@ internal fun String.capitalize() = replaceFirstChar { it.uppercaseChar() }
 
 internal fun String.cleanPlatformSuffixes() = listOf("-android", "-jvm", "-java8").fold(this) { acc, suffix -> acc.removeSuffix(suffix) }
 
-
 internal fun Pair<String, String>.matches(group: String?, module: String?): Boolean = when {
     first.isNotEmpty() && second.isNotEmpty() -> first == group && second == module
     first.isNotEmpty() -> first == group
@@ -26,24 +25,60 @@ internal fun String.packageName(): String? = parseXml()
     ?.getAttribute("package")
     ?.takeIf { it.isNotBlank() }
 
+/** The field of a resource called this in `R`, where its dots are no longer allowed. */
+internal fun String.fieldName() = replace('.', '_').replace(':', '_').replace('-', '_')
+
+/** Every id this `res/` file declares in passing, with `@+id/`. Empty when it is not parseable XML. */
+internal fun String.inlineIds(): Set<String> {
+    val ids = sortedSetOf<String>()
+    fun visit(element: org.w3c.dom.Element) {
+        val attributes = element.attributes
+        (0 until attributes.length).map { attributes.item(it).nodeValue }.filter { it.startsWith(INLINE_ID) }.mapTo(ids) { it.removePrefix(INLINE_ID) }
+        element.childElements().forEach(::visit)
+    }
+    parseXml()?.let(::visit)
+    return ids
+}
+
+private const val INLINE_ID = "@+id/"
+
 /**
- * `"<type>/<name>"` for every resource declared *directly* under `<resources>`.
+ * Appends to this document's root every direct child of [other]'s root whose [keyAttribute] it does
+ * not declare yet, keeping the first declaration of each key.
  *
- * Parsed rather than regex-matched so that nested elements — `<item>` inside `<style>`, `<enum>` and
- * `<flag>` inside `<declare-styleable>` — are not mistaken for resource declarations.
+ * Used for `annotations.zip`: two modules sharing a package each ship an `annotations.xml` for it,
+ * and the merged AAR must carry the typedef annotations of both. Returns `null` when either side is
+ * not parseable XML, so the caller can report a real conflict instead.
  */
-internal fun String.declaredResourceNames(): List<String> {
-    val root = parseXml() ?: return emptyList()
-    val children = root.childNodes
-    return (0 until children.length).mapNotNull { index ->
-        val node = children.item(index) as? org.w3c.dom.Element ?: return@mapNotNull null
-        val name = node.getAttribute("name").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-        val type = node.getAttribute("type").takeIf { it.isNotBlank() } ?: node.tagName
-        "$type/$name"
+internal fun String.mergeXmlChildren(other: String, keyAttribute: String = "name"): String? {
+    val target = parseXml() ?: return null
+    val source = other.parseXml() ?: return null
+    val document = target.ownerDocument
+    val keys = target.childElements().mapTo(mutableSetOf()) { it.getAttribute(keyAttribute) }
+    source.childElements()
+        .filter { keys.add(it.getAttribute(keyAttribute)) }
+        .forEach { target.appendChild(document.importNode(it, true)) }
+    return document.serialize()
+}
+
+internal fun org.w3c.dom.Document.serialize(): String = java.io.StringWriter().also { writer ->
+    transformerFactory.newTransformer().transform(
+        javax.xml.transform.dom.DOMSource(this),
+        javax.xml.transform.stream.StreamResult(writer),
+    )
+}.toString()
+
+internal fun org.w3c.dom.Element.childElements(): List<org.w3c.dom.Element> = (0 until childNodes.length).mapNotNull { childNodes.item(it) as? org.w3c.dom.Element }
+
+private val transformerFactory by lazy {
+    javax.xml.transform.TransformerFactory.newInstance().apply {
+        runCatching { setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true) }
+        runCatching { setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "") }
+        runCatching { setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "") }
     }
 }
 
-private fun String.parseXml(): org.w3c.dom.Element? = runCatching {
+internal fun String.parseXml(): org.w3c.dom.Element? = runCatching {
     documentBuilder.get().run {
         reset()
         parse(byteInputStream()).documentElement
@@ -67,4 +102,3 @@ private val documentBuilder = ThreadLocal.withInitial {
         isExpandEntityReferences = false
     }.newDocumentBuilder()
 }
-

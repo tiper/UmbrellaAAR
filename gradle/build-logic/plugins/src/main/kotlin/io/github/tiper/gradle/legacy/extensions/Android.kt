@@ -4,6 +4,7 @@ import com.android.build.api.dsl.LibraryExtension
 import com.android.build.gradle.BaseExtension
 import com.android.build.gradle.LibraryPlugin
 import com.android.build.gradle.tasks.BundleAar
+import io.github.tiper.gradle.extensions.createAndroidApisConfiguration
 import io.github.tiper.gradle.extensions.fixArchiveName
 import io.github.tiper.gradle.extensions.libraryName
 import org.gradle.api.JavaVersion.VERSION_1_8
@@ -14,6 +15,7 @@ import org.gradle.kotlin.dsl.withType
 private val TASK_REGEX = Regex("(?=[A-Z])")
 
 internal fun Project.configureAndroid() {
+    createAndroidApisConfiguration()
     extensions.configure<BaseExtension> {
         compileSdkVersion(35)
         defaultConfig {

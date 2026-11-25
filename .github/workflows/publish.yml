@@ -11,7 +11,91 @@ permissions:
   packages: write
 
 jobs:
+  # A version that reached a repository cannot be taken back, so this stands between the tag and the
+  # upload. A manual run from a branch has no tag to answer to, and fails too.
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Java
+        uses: actions/setup-java@v4.6.0
+        with:
+          distribution: "jetbrains"
+          java-version: 17
+          cache: "gradle"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.konan
+            /usr/local/lib/android/sdk/ndk
+          key: ${{ runner.os }}-kotlin-native-ndk-${{ hashFiles(
+            'gradle/libs.versions.toml',
+            'gradle.properties'
+            ) }}
+          restore-keys: |
+            ${{ runner.os }}-kotlin-native-ndk-
+
+      # What goes out is named by the build, whatever the tag says.
+      - name: Compare the tag with the project version
+        run: |
+          version="$(./gradlew :plugin:properties --property version --quiet --no-daemon | sed -n 's/^version: //p')"
+          if [ "$GITHUB_REF_TYPE" != tag ] || [ "$GITHUB_REF_NAME" != "$version" ]; then
+            echo "::error::Not publishing: $GITHUB_REF_TYPE '$GITHUB_REF_NAME' is not the version of :plugin, '$version'. Set version in plugin/build.gradle.kts and tag that commit."
+            exit 1
+          fi
+
+      - name: Run unit tests
+        run: ./gradlew :plugin:test --no-daemon --build-cache --parallel
+
+  # A tag can sit on a commit no pull request built, so what the pull requests run, runs here too.
+  functional-test:
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        toolchain: [ oldest, newest ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Java
+        uses: actions/setup-java@v4.6.0
+        with:
+          distribution: "jetbrains"
+          java-version: 17
+          cache: "gradle"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Fixtures keep their dependencies in a Gradle user home of their own, which setup-java knows
+      # nothing about, and TestKit downloads their distributions to the real one whatever that home.
+      - name: Cache fixture downloads
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            ~/.gradle/umbrellaaar-test-kit/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: ${{ runner.os }}-functional-test-${{ matrix.toolchain }}-${{ hashFiles('plugin/src/functionalTest/**/Toolchain.kt') }}
+          restore-keys: |
+            ${{ runner.os }}-functional-test-${{ matrix.toolchain }}-
+
+      - name: Run functional tests
+        run: |
+          ./gradlew :plugin:functionalTest -Pumbrellaaar.toolchain=${{ matrix.toolchain }} --no-daemon --build-cache
+
   publish:
+    needs: [ guard, functional-test ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

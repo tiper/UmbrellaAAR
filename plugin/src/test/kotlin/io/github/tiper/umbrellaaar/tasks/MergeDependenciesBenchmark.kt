@@ -40,8 +40,14 @@ class MergeDependenciesBenchmark {
         val modules = 95
         val classesPerModule = 31
 
-        val mainDir = File(root, "bench-main-$label").apply { deleteRecursively(); mkdirs() }
-        val depsDir = File(root, "bench-deps-$label").apply { deleteRecursively(); mkdirs() }
+        val mainDir = File(root, "bench-main-$label").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        val depsDir = File(root, "bench-deps-$label").apply {
+            deleteRecursively()
+            mkdirs()
+        }
         val outDir = File(root, "bench-out-$label")
 
         write(mainDir, "AndroidManifest.xml", manifest("com.example.umbrella", index = -1))
@@ -76,6 +82,7 @@ class MergeDependenciesBenchmark {
     private fun runMerge(mainDir: File, depsDir: File, outDir: File) {
         val task = project.tasks.register<MergeDependencies>("benchMerge${counter++}").get()
         task.dependencies.set(depsDir)
+        task.moduleOrder.set(depsDir.list()!!.sorted())
         task.mainAarDir.set(mainDir)
         task.mergedAarDir.set(outDir)
         task.execute()
@@ -113,6 +120,3 @@ class MergeDependenciesBenchmark {
         var counter = 0
     }
 }
-
-
-

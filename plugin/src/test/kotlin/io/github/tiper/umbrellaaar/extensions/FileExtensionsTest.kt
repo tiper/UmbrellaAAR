@@ -86,6 +86,83 @@ class FileExtensionsTest {
         assertTrue(zipFile.length() != oldSize)
     }
 
+    private fun caseVariants() = tempDir.resolve("variants.jar").also { jar ->
+        ZipOutputStream(jar.outputStream()).use { zos ->
+            listOf("com/acme/A.class", "com/acme/a.class").forEach { name ->
+                zos.putNextEntry(ZipEntry(name))
+                zos.write(name.toByteArray())
+                zos.closeEntry()
+            }
+        }
+    }
+
+    private fun folderVariants() = tempDir.resolve("folders.jar").also { jar ->
+        ZipOutputStream(jar.outputStream()).use { zos ->
+            listOf("com/acme/Foo/A.txt", "com/acme/foo/B.txt", "com/acme/foo/C.txt").forEach { name ->
+                zos.putNextEntry(ZipEntry(name))
+                zos.write(name.toByteArray())
+                zos.closeEntry()
+            }
+        }
+    }
+
+    private val diskIgnoresCase by lazy {
+        tempDir.resolve("probe").writeText("")
+        tempDir.resolve("PROBE").exists()
+    }
+
+    private fun assertCaseVariants(extract: (File) -> Unit) {
+        val out = tempDir.resolve("out")
+        if (diskIgnoresCase) {
+            val message = assertFailsWith<IllegalArgumentException> { extract(out) }.message.orEmpty()
+            assertTrue("com/acme/A.class" in message && "com/acme/a.class" in message, message)
+        } else {
+            extract(out)
+            assertEquals(setOf("A.class", "a.class"), out.resolve("com/acme").list()!!.toSet())
+        }
+    }
+
+    @Test
+    fun `entries that differ by case alone fail where the disk cannot hold both`() = assertCaseVariants { caseVariants().unzip(it) }
+
+    @Test
+    fun `a stream of entries that differ by case alone fails where the disk cannot hold both`() = assertCaseVariants { to ->
+        caseVariants().inputStream().use { it.unzipStream(to) }
+    }
+
+    private fun assertFolderVariants(extract: (File) -> Unit) {
+        val out = tempDir.resolve("out")
+        if (diskIgnoresCase) {
+            val message = assertFailsWith<IllegalArgumentException> { extract(out) }.message.orEmpty()
+            assertTrue("com/acme/Foo" in message && "com/acme/foo" in message, message)
+        } else {
+            extract(out)
+            assertEquals(setOf("Foo", "foo"), out.resolve("com/acme").list()!!.toSet())
+        }
+    }
+
+    @Test
+    fun `folders that differ by case alone fail where the disk cannot hold both`() = assertFolderVariants { folderVariants().unzip(it) }
+
+    @Test
+    fun `a stream of folders that differ by case alone fails where the disk cannot hold both`() = assertFolderVariants { to ->
+        folderVariants().inputStream().use { it.unzipStream(to) }
+    }
+
+    @Test
+    fun `extracting over an earlier extraction is no case variant`() {
+        val zipFile = tempDir.resolve("test.zip")
+        ZipOutputStream(zipFile.outputStream()).use {
+            it.putNextEntry(ZipEntry("file.txt"))
+            it.write("content".toByteArray())
+            it.closeEntry()
+        }
+
+        repeat(2) { zipFile.unzip(tempDir.resolve("extracted")) }
+
+        assertEquals("content", tempDir.resolve("extracted/file.txt").readText())
+    }
+
     @Test
     fun `unzip extracts all files from zip`() {
         val zipFile = tempDir.resolve("test.zip")
